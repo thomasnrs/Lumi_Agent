@@ -39,6 +39,26 @@ let lockPassthrough = false; // trava manual: atravessa cliques sempre (Ctrl+Shi
 // segue usável em vez de ficar 100% inclicável. Ctrl+Shift+C atravessa quando quiser.
 let hoverIgnore = IS_LINUX ? false : true;
 
+// LINUX: fonte global de cursor via uiohook (XRecord). O getCursorScreenPoint fica
+// ESTÁTICO sob XWayland (só enxerga o cursor sobre janelas X11) — o hook entrega
+// o movimento global de verdade e devolve o click-through inteligente.
+let linuxCursor = { x: 0, y: 0 };
+let linuxCursorAt = 0; // timestamp do último movimento vindo do hook
+let linuxHookCursor = false;
+function startLinuxCursorHook() {
+  if (!IS_LINUX || !hookOk || linuxHookCursor) return;
+  try {
+    uIOhook.on('mousemove', (e) => {
+      linuxCursor = { x: e.x, y: e.y };
+      linuxCursorAt = Date.now();
+    });
+    uIOhook.start();
+    linuxHookCursor = true;
+  } catch (e) {
+    console.error('[lumi/linux] hook de cursor indisponível:', e.message);
+  }
+}
+
 // estado do hook global de mouse
 let cursorOverBody = false; // cursor sobre o corpo da avatar (vem do renderer)
 let footPixelY = 0; // posicao dos pes em pixels (vem do renderer, p/ sentar na taskbar)
@@ -2967,9 +2987,11 @@ app.whenReady().then(() => {
   let lastCx = null;
   let lastCy = null;
   let cursorPollMoves = 0; // diagnóstico (Linux): o polling global do cursor está vivo?
+  startLinuxCursorHook(); // Linux: liga a fonte global de cursor (no-op nas outras plataformas)
   cursorTimer = setInterval(() => {
     if (!win || win.isDestroyed() || !win.isVisible()) return;
-    const p = screen.getCursorScreenPoint();
+    // Linux: usa o hook se ele entregou movimento nos últimos 2s; senão tenta o polling normal
+    const p = linuxHookCursor && Date.now() - linuxCursorAt < 2000 ? linuxCursor : screen.getCursorScreenPoint();
     if (dragging) {
       win.setPosition(
         Math.round(dragStartWin.x + (p.x - dragStartCursor.x)),
@@ -2991,12 +3013,13 @@ app.whenReady().then(() => {
   if (IS_LINUX) {
     setTimeout(() => {
       const sess = process.env.XDG_SESSION_TYPE || '?';
+      const hookAlive = linuxHookCursor && Date.now() - linuxCursorAt < 9000;
+      const fonte = hookAlive ? 'uiohook (global) ✅' : cursorPollMoves > 2 ? 'getCursorScreenPoint' : 'NENHUMA ⚠';
       console.log('──────────────────────────────────────────────');
-      console.log('[lumi/linux] sessão: ' + sess + '  ·  cursor global: ' + (cursorPollMoves > 2 ? 'OK (' + cursorPollMoves + ' mov.)' : 'MORTO ⚠'));
-      if (cursorPollMoves <= 2) {
-        console.log('[lumi/linux] o polling do cursor não está funcionando → click-through inteligente');
-        console.log('             desativado; a janela fica sempre clicável (Ctrl+Shift+C pra atravessar).');
-        console.log('             Se a sessão for "wayland", tente logar numa sessão X11/Xorg.');
+      console.log('[lumi/linux] sessão: ' + sess + '  ·  fonte do cursor: ' + fonte + '  ·  ' + cursorPollMoves + ' mov. entregues');
+      if (!hookAlive && cursorPollMoves <= 2) {
+        console.log('[lumi/linux] nenhuma fonte global de cursor → click-through inteligente desativado;');
+        console.log('             a janela fica sempre clicável (Ctrl+Shift+C pra atravessar).');
       }
       console.log('──────────────────────────────────────────────');
     }, 8000);
