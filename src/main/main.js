@@ -33,7 +33,11 @@ let win;
 let tray;
 let cursorTimer;
 let lockPassthrough = false; // trava manual: atravessa cliques sempre (Ctrl+Shift+C / menu)
-let hoverIgnore = true; // do click-through inteligente: ignora cliques fora do corpo dela
+// Click-through inteligente: ignora cliques fora do corpo dela.
+// LINUX: começa CAPTURADO (clicável) — se o polling global do cursor funcionar, o hover
+// inteligente assume e devolve o click-through; se não funcionar (Wayland etc.), a janela
+// segue usável em vez de ficar 100% inclicável. Ctrl+Shift+C atravessa quando quiser.
+let hoverIgnore = IS_LINUX ? false : true;
 
 // estado do hook global de mouse
 let cursorOverBody = false; // cursor sobre o corpo da avatar (vem do renderer)
@@ -2962,6 +2966,7 @@ app.whenReady().then(() => {
   // Tambem move a janela durante o arrasto. So envia quando o cursor muda.
   let lastCx = null;
   let lastCy = null;
+  let cursorPollMoves = 0; // diagnóstico (Linux): o polling global do cursor está vivo?
   cursorTimer = setInterval(() => {
     if (!win || win.isDestroyed() || !win.isVisible()) return;
     const p = screen.getCursorScreenPoint();
@@ -2977,9 +2982,25 @@ app.whenReady().then(() => {
     if (rx !== lastCx || ry !== lastCy) {
       lastCx = rx;
       lastCy = ry;
+      cursorPollMoves++;
       win.webContents.send('cursor', { x: rx, y: ry });
     }
   }, 33);
+
+  // LINUX: relatório de saúde do input no terminal (ajuda a diagnosticar X11/Wayland)
+  if (IS_LINUX) {
+    setTimeout(() => {
+      const sess = process.env.XDG_SESSION_TYPE || '?';
+      console.log('──────────────────────────────────────────────');
+      console.log('[lumi/linux] sessão: ' + sess + '  ·  cursor global: ' + (cursorPollMoves > 2 ? 'OK (' + cursorPollMoves + ' mov.)' : 'MORTO ⚠'));
+      if (cursorPollMoves <= 2) {
+        console.log('[lumi/linux] o polling do cursor não está funcionando → click-through inteligente');
+        console.log('             desativado; a janela fica sempre clicável (Ctrl+Shift+C pra atravessar).');
+        console.log('             Se a sessão for "wayland", tente logar numa sessão X11/Xorg.');
+      }
+      console.log('──────────────────────────────────────────────');
+    }, 8000);
+  }
 
   globalShortcut.register('CommandOrControl+Shift+C', () => {
     lockPassthrough = !lockPassthrough;

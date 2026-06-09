@@ -1601,6 +1601,14 @@ window.api.onCursor((p) => {
   mouseY = p.y;
   lastCursorMove = performance.now(); // o main so emite quando o cursor mexe
 });
+// FALLBACK (Linux/Wayland): se o polling global do cursor não funcionar, os mousemove
+// locais alimentam o look-at e o hover — funciona porque lá a janela começa capturada.
+// No Windows é redundante e inofensivo (mesmas coordenadas).
+window.addEventListener('mousemove', (e) => {
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+  lastCursorMove = performance.now();
+});
 
 // ---- acoes vindas do menu de contexto (clique direito) ----
 window.api.onOpenSettings(() => openSettings());
