@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sobre</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 20px;
+      }
+      .ver {
+        color: var(--accent);
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+      .card {
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .done {
+        color: #7ee0a0;
+      }
+      .next {
+        color: #9aa;
+      }
+      footer {
+        margin-top: 18px;
+        font-size: 11px;
+        color: #666;
+      }
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Lumi ✨</h1>
+    <div class="ver">versão 0.1.0 — sua luz na tela</div>
+
+    <div class="card">
+      Companheira 3D persistente na área de trabalho, com cérebro de I.A.<br /><br />
+      <span class="done">✓ Avatar VRM vivo (arrastar, olhar, emoções)</span><br />
+      <span class="done">✓ Conversa com I.A. (voz, visão, ferramentas)</span><br />
+      <span class="done">✓ Memória persistente</span><br />
+      <span class="next">• Empacotamento / Steam</span>
+    </div>
+
+    <footer>
+      Esta é uma janela separada — feche-a quando quiser, que o avatar continua na tela.
+    </footer>
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+  </body>
+</html>

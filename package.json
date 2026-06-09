@@ -1,0 +1,91 @@
+{
+  "name": "ai-desktop-mate",
+  "version": "1.0.0",
+  "description": "Lumi - AI-powered desktop companion (3D VRM avatar)",
+  "main": "src/main/main.js",
+  "scripts": {
+    "build": "esbuild src/renderer/main.js --bundle --outfile=src/renderer/renderer.bundle.js --format=iife --platform=browser",
+    "watch": "esbuild src/renderer/main.js --bundle --outfile=src/renderer/renderer.bundle.js --format=iife --platform=browser --watch",
+    "start": "npm run build && electron .",
+    "electron": "electron .",
+    "icon": "node scripts/make-icon.js",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "node scripts/dist.js"
+  },
+  "author": "thomasnrs <thomasnrs@hotmail.com>",
+  "license": "MIT",
+  "build": {
+    "appId": "com.lumi.desktop",
+    "productName": "Lumi",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "!src/renderer/main.js",
+      "!**/*.map",
+      "!**/*.bak"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "**/*.vrm"
+        ]
+      },
+      {
+        "from": "animations",
+        "to": "animations",
+        "filter": [
+          "**/*.vrma"
+        ]
+      },
+      "icone.png"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lumi"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "synopsis": "Sua companheira de desktop com IA",
+      "maintainer": "thomasnrs <thomasnrs@hotmail.com>"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.2",
+    "esbuild": "^0.21.0",
+    "javascript-obfuscator": "^5.4.3",
+    "jimp": "^0.22.12",
+    "png-to-ico": "^3.0.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "@pixiv/three-vrm": "^3.4.0",
+    "@pixiv/three-vrm-animation": "^3.5.3",
+    "three": "^0.169.0",
+    "uiohook-napi": "^1.5.5",
+    "ws": "^8.21.0"
+  }
+}

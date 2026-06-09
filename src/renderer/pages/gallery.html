@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Galeria</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 15px;
+        flex: 1;
+      }
+      header button {
+        border: none;
+        border-radius: 8px;
+        background: var(--border);
+        color: #fff;
+        padding: 7px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      /* masonry: colunas que respeitam a proporção real de cada imagem */
+      #grid {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+        columns: 3 170px;
+        column-gap: 8px;
+      }
+      #grid img {
+        width: 100%;
+        display: block;
+        border-radius: 8px;
+        cursor: zoom-in;
+        background: var(--surface-2);
+        margin-bottom: 8px;
+        break-inside: avoid;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      #grid img:hover {
+        transform: scale(1.02);
+        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+      }
+      #empty {
+        margin: auto;
+        color: #666;
+        font-size: 13px;
+        text-align: center;
+        padding: 40px 10px;
+      }
+      /* lightbox (visualização em tela cheia) */
+      #lightbox {
+        position: fixed;
+        inset: 0;
+        background: rgba(8, 8, 12, 0.92);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 500;
+        backdrop-filter: blur(6px);
+      }
+      #lightbox[hidden] { display: none; }
+      #lbImg {
+        max-width: calc(100vw - 120px);
+        max-height: calc(100vh - 90px);
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 14px 60px rgba(0, 0, 0, 0.7);
+        animation: lbIn 0.18s ease;
+      }
+      @keyframes lbIn {
+        from { opacity: 0; transform: scale(0.96); }
+        to { opacity: 1; transform: none; }
+      }
+      #lightbox .nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 44px;
+        height: 44px;
+        border: none;
+        border-radius: 50%;
+        background: rgba(40, 40, 52, 0.8);
+        color: var(--text);
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #lightbox .nav:hover { background: var(--accent); color: var(--accent-text); }
+      #lbPrev { left: 14px; }
+      #lbNext { right: 14px; }
+      #lbBar {
+        position: absolute;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        background: rgba(20, 20, 28, 0.85);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: #bbc;
+      }
+      #lbBar button {
+        border: none;
+        border-radius: 14px;
+        background: var(--border);
+        color: #fff;
+        padding: 5px 12px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #lbBar button:hover { background: var(--accent); color: var(--accent-text); }
+      #lbClose {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        width: 38px;
+        height: 38px;
+        border: none;
+        border-radius: 50%;
+        background: rgba(40, 40, 52, 0.8);
+        color: var(--text);
+        font-size: 15px;
+        cursor: pointer;
+      }
+      #lbClose:hover { background: #e0556e; color: #fff; }
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #33333f;
+        border-radius: 6px;
+      }
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;vertical-align:-3px;margin-right:6px"><path d="M18 22H4a2 2 0 0 1-2-2V6"/><path d="m22 13-1.296-1.296a2.41 2.41 0 0 0-3.408 0L11 18"/><circle cx="12" cy="8" r="2"/><rect width="16" height="16" x="6" y="2" rx="2"/></svg>Galeria de imagens</h1>
+      <button id="refresh">↻ Atualizar</button>
+      <button id="openFolder">📂 Abrir pasta</button>
+    </header>
+    <div id="grid"></div>
+    <div id="lightbox" hidden>
+      <img id="lbImg" alt="" />
+      <button id="lbPrev" class="nav" title="Anterior (←)">‹</button>
+      <button id="lbNext" class="nav" title="Próxima (→)">›</button>
+      <button id="lbClose" title="Fechar (Esc)">✕</button>
+      <div id="lbBar"><span id="lbName"></span><button id="lbSave">⬇ Baixar</button><button id="lbCopy">📋 Copiar</button></div>
+    </div>
+
+    <script>
+      const grid = document.getElementById('grid');
+      const lightbox = document.getElementById('lightbox');
+      const lbImg = document.getElementById('lbImg');
+      const lbName = document.getElementById('lbName');
+      let gallery = [];
+      let lbIdx = -1;
+
+      async function load() {
+        gallery = (await window.api.getGallery()) || [];
+        grid.innerHTML = '';
+        if (!gallery.length) {
+          grid.innerHTML = '<div id="empty">Nenhuma imagem ainda.<br>Peça à assistente para gerar uma! 🎨</div>';
+          return;
+        }
+        gallery.forEach((it, i) => {
+          const im = document.createElement('img');
+          im.src = it.url;
+          im.title = it.name;
+          im.loading = 'lazy';
+          im.onclick = () => openLb(i);
+          grid.appendChild(im);
+        });
+      }
+
+      // ---- lightbox ----
+      function openLb(i) {
+        lbIdx = ((i % gallery.length) + gallery.length) % gallery.length;
+        const it = gallery[lbIdx];
+        lbImg.src = it.url;
+        lbName.textContent = it.name + '  ·  ' + (lbIdx + 1) + '/' + gallery.length;
+        lightbox.hidden = false;
+      }
+      function closeLb() {
+        lightbox.hidden = true;
+        lbImg.src = '';
+      }
+      document.getElementById('lbPrev').onclick = () => openLb(lbIdx - 1);
+      document.getElementById('lbNext').onclick = () => openLb(lbIdx + 1);
+      document.getElementById('lbClose').onclick = closeLb;
+      lightbox.addEventListener('click', (e) => {
+        if (e.target === lightbox) closeLb(); // clique no fundo fecha
+      });
+      document.getElementById('lbSave').onclick = () => {
+        const a = document.createElement('a');
+        a.href = lbImg.src;
+        a.download = (gallery[lbIdx] && gallery[lbIdx].name) || 'imagem.png';
+        a.click();
+        if (window.__lumiToast) window.__lumiToast('Salvo em Downloads ⬇');
+      };
+      document.getElementById('lbCopy').onclick = async () => {
+        try {
+          const blob = await (await fetch(lbImg.src)).blob();
+          await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+          if (window.__lumiToast) window.__lumiToast('Imagem copiada! 📋');
+        } catch (e) {
+          if (window.__lumiToast) window.__lumiToast('Não consegui copiar', false);
+        }
+      };
+      window.addEventListener('keydown', (e) => {
+        if (lightbox.hidden) return;
+        if (e.key === 'Escape') closeLb();
+        else if (e.key === 'ArrowLeft') openLb(lbIdx - 1);
+        else if (e.key === 'ArrowRight') openLb(lbIdx + 1);
+      });
+
+      document.getElementById('refresh').onclick = load;
+      document.getElementById('openFolder').onclick = () => window.api.openGalleryFolder();
+      load();
+    </script>
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+  </body>
+</html>

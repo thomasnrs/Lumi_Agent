@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Desktop Mate</title>
+    <style>
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        cursor: default;
+        user-select: none;
+        font-family: "Segoe UI", sans-serif;
+      }
+      #c {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        z-index: 0;
+      }
+
+      /* balao de fala */
+      #bubble {
+        position: absolute;
+        top: 12px;
+        left: 16px;
+        right: 16px;
+        max-height: 38%;
+        overflow-y: auto;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(20, 20, 28, 0.82);
+        color: #fff;
+        font-size: 14px;
+        line-height: 1.4;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+        opacity: 0;
+        transition: opacity 0.3s;
+        white-space: pre-wrap;
+        word-break: break-word;
+        pointer-events: none;
+        z-index: 5;
+      }
+
+      /* barra de baixo */
+      #bar {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+        z-index: 10;
+      }
+      #input {
+        flex: 1;
+        min-width: 0;
+        padding: 9px 12px;
+        border: none;
+        border-radius: 18px;
+        background: rgba(20, 20, 28, 0.85);
+        color: #fff;
+        font-size: 13px;
+        font-family: inherit;
+        line-height: 1.35;
+        outline: none;
+        resize: none;
+        max-height: 96px;
+        overflow-y: auto;
+      }
+      #input::placeholder {
+        color: #aaa;
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+        pointer-events: none;
+      }
+      .btn {
+        flex: 0 0 auto;
+        width: 38px;
+        height: 38px;
+        border: none;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .btn:hover {
+        background: var(--accent);
+      }
+      #gear {
+        background: rgba(40, 40, 52, 0.9);
+      }
+      .btn.rec {
+        background: #e0556e !important;
+        animation: pulse 1s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.55;
+        }
+      }
+
+      /* painel de configuracao */
+      #settings {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 20;
+      }
+      #settings .card {
+        width: 92%;
+        max-height: 92%;
+        overflow-y: auto;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+        color: var(--text);
+      }
+      #settings h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+      #settings label {
+        display: block;
+        font-size: 11px;
+        color: #9aa;
+        margin: 10px 0 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+      #settings input,
+      #settings select,
+      #settings textarea {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-2);
+        color: #fff;
+        font-size: 13px;
+        outline: none;
+      }
+      #settings textarea {
+        resize: vertical;
+        min-height: 64px;
+        font-family: inherit;
+      }
+      #settings .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      #settings .row button {
+        flex: 1;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #save {
+        background: var(--accent);
+        color: #fff;
+      }
+      #close {
+        background: var(--border);
+        color: #ccc;
+      }
+      #reset {
+        background: transparent;
+        color: #888;
+        border: 1px solid var(--border) !important;
+      }
+      /* abas das configuracoes (controle segmentado, 1 linha responsiva) */
+      #settings .tabs {
+        display: flex;
+        gap: 3px;
+        margin-bottom: 14px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 3px;
+      }
+      #settings .tab {
+        flex: 1 1 0;
+        min-width: 0;
+        padding: 7px 2px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: #9aa;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transition: background 0.15s, color 0.15s;
+      }
+      #settings .tab:hover {
+        color: #fff;
+      }
+      #settings .tab.active {
+        background: var(--accent);
+        color: #fff;
+      }
+      /* barra de rolagem discreta */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #33333f;
+        border-radius: 6px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #44444f;
+      }
+      #settings .panel {
+        display: none;
+      }
+      #settings .panel.active {
+        display: block;
+      }
+      #settings .hint {
+        font-size: 11px;
+        color: #777;
+        margin: 2px 0 0;
+      }
+      #settings .profiles {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      #settings .profiles select,
+      #settings .profiles input {
+        flex: 1;
+        min-width: 0;
+      }
+      #settings .profiles button {
+        flex: 0 0 auto;
+        padding: 8px 10px;
+        border: none;
+        border-radius: 8px;
+        background: var(--border);
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #settings .profiles #profileSave {
+        background: var(--accent);
+      }
+      #testVoice {
+        margin-top: 10px;
+        width: 100%;
+        padding: 9px;
+        border: none;
+        border-radius: 8px;
+        background: var(--border);
+        color: #fff;
+        cursor: pointer;
+      }
+      /* editor de tema */
+      #settings .themeRow {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 6px 0;
+      }
+      #settings .themeRow label {
+        margin: 0;
+        flex: 1;
+        text-transform: none;
+        font-size: 12px;
+        letter-spacing: 0;
+      }
+      #settings input[type='color'] {
+        width: 46px;
+        height: 30px;
+        padding: 2px;
+        border-radius: 6px;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+      #settings .presetRow {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      #settings .presetRow button {
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-2);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #themeReset {
+        width: 100%;
+        padding: 9px;
+        border: none;
+        border-radius: 8px;
+        background: var(--border);
+        color: #fff;
+        cursor: pointer;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="bubble"></div>
+
+    <div id="bar">
+      <textarea id="input" rows="1" placeholder="Fale com ela..."></textarea>
+      <button id="mic" class="btn" title="Falar (microfone)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+      </button>
+      <button id="send" class="btn" title="Enviar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+      </button>
+      <button id="skipVoice" class="btn" title="Pular a voz">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/></svg>
+      </button>
+      <button id="gear" class="btn" title="Configurações">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+
+    <div id="settings">
+      <div class="card">
+        <h2>Configurações</h2>
+
+        <!-- PERFIS -->
+        <div class="profiles">
+          <select id="profileSelect">
+            <option value="">— Perfis salvos —</option>
+          </select>
+          <button id="profileLoad">Carregar</button>
+          <button id="profileDel" title="Excluir perfil">🗑</button>
+        </div>
+        <div class="profiles">
+          <input id="profileName" type="text" placeholder="Nome do novo perfil" />
+          <button id="profileSave">Salvar atual</button>
+        </div>
+        <div id="profileMsg" class="hint" style="margin-bottom: 10px"></div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="ia">I.A.</button>
+          <button class="tab" data-tab="tts">Voz</button>
+          <button class="tab" data-tab="stt">Mic</button>
+          <button class="tab" data-tab="audio">Áudio</button>
+          <button class="tab" data-tab="video">Vídeo</button>
+          <button class="tab" data-tab="perms">Acesso</button>
+          <button class="tab" data-tab="theme">Tema</button>
+        </div>
+
+        <!-- ABA: I.A. -->
+        <div class="panel active" data-panel="ia">
+          <label>Provedor (preset)</label>
+          <select id="preset"></select>
+
+          <label>Tipo de API</label>
+          <select id="provider">
+            <option value="openai">OpenAI-compatível (OpenAI, OpenRouter, Qwen, Groq, local...)</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+          </select>
+
+          <label>Base URL</label>
+          <input id="baseUrl" type="text" />
+
+          <label>Chave de API (fica só na sua máquina)</label>
+          <input id="apiKey" type="password" placeholder="sk-..." />
+
+          <label>Modelo (digite para buscar, ou 🔄 para listar)</label>
+          <div style="display: flex; gap: 6px">
+            <input id="model" type="text" list="modelsDatalist" placeholder="ex: gpt-4o-mini" style="flex: 1" />
+            <button id="fetchModels" type="button" title="Buscar modelos do endpoint"
+              style="flex: 0 0 auto; width: 42px; border: none; border-radius: 8px; background: var(--border); color: #fff; cursor: pointer; font-size: 15px">🔄</button>
+          </div>
+          <datalist id="modelsDatalist"></datalist>
+          <div id="modelsStatus" class="hint"></div>
+
+          <label>Temperatura (criatividade): <span id="tempVal"></span></label>
+          <input id="temperature" type="range" min="0" max="1.5" step="0.1" />
+
+          <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px">
+            <input id="toolsEnabled" type="checkbox" style="width: auto; margin: 0" />
+            Ferramentas / agente (abrir links, hora, emoções, memória)
+          </label>
+          <p class="hint">Requer um modelo com suporte a tool calling (gpt-4o, claude, llama-3.x, qwen...).</p>
+
+          <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px">
+            <input id="memoryEnabled" type="checkbox" style="width: auto; margin: 0" />
+            Memória persistente (lembra conversas e fatos)
+          </label>
+          <p class="hint">Desligar economiza tokens: não injeta os fatos no contexto nem salva o histórico.</p>
+          <button id="clearFacts" type="button"
+            style="margin-top: 4px; width: 100%; padding: 8px; border: none; border-radius: 8px; background: #3a2030; color: #ffb4b4; cursor: pointer">
+            Apagar memória de longo prazo (fatos)
+          </button>
+
+          <p class="hint">🎨 Geração de imagens fica em "Gerar imagem" (clique direito → Gerar imagem).</p>
+
+          <label>Busca na web (precisão)</label>
+          <select id="searchProvider">
+            <option value="duckduckgo">DuckDuckGo — sem chave (básico)</option>
+            <option value="tavily">Tavily — precisa p/ IA, com resposta + fontes (chave grátis) ⭐</option>
+            <option value="brave">Brave Search (chave grátis)</option>
+          </select>
+          <input id="searchApiKey" type="password" placeholder="chave da busca (Tavily: tvly-...  •  Brave)" />
+          <p class="hint">Pra busca <b>precisa</b>, use <b>Tavily</b> (resposta já sintetizada + fontes) — chave grátis em <b>tavily.com</b>. DuckDuckGo funciona sem chave, mas é básico.</p>
+
+          <label>Personalidade (system prompt)</label>
+          <textarea id="systemPrompt"></textarea>
+        </div>
+
+        <!-- ABA: VOZ (TTS) -->
+        <div class="panel" data-panel="tts">
+          <label>Provedor de voz</label>
+          <select id="ttsProvider">
+            <option value="off">Desligado</option>
+            <option value="edge">Edge — grátis, sem chave! 🆓</option>
+            <option value="gemini">Google Gemini — grátis (preview), expressiva! 🆓✨</option>
+            <option value="xtts">XTTS v2 — seu servidor (Google Colab) 🎙️</option>
+            <option value="elevenlabs">ElevenLabs</option>
+            <option value="openai">OpenAI-compatível</option>
+          </select>
+
+          <label>URL do servidor de voz (XTTS / OpenAI-compatível)</label>
+          <input id="ttsBaseUrl" type="text" placeholder="https://...trycloudflare.com  (XTTS no Colab)" />
+
+          <label>Chave da API de voz (Edge/XTTS não precisam)</label>
+          <input id="ttsApiKey" type="password" placeholder="xi-... (ElevenLabs)  •  AIza... (Gemini)" />
+          <p class="hint" id="ttsHint">
+            <b>Gemini:</b> chave grátis em <b>aistudio.google.com/apikey</b>; voz padrão <b>Laomedeia</b>;
+            interpreta tags como <code>[laughs]</code>, <code>[whispering]</code>, <code>[sighs]</code>.<br />
+            <b>XTTS v2:</b> cole acima a URL do seu Colab (cloudflared). A Lumi chama
+            <code>POST /tts</code> com <code>{"text": "..."}</code> e espera um WAV de volta.
+          </p>
+
+          <label>Voz</label>
+          <input id="ttsVoice" type="text" list="voicesDatalist"
+            placeholder="Gemini: Laomedeia  •  Edge: pt-BR-FranciscaNeural  •  OpenAI: alloy..." />
+          <datalist id="voicesDatalist">
+            <option value="Laomedeia">Gemini — Laomedeia (expressiva)</option>
+            <option value="Kore">Gemini — Kore (firme)</option>
+            <option value="Aoede">Gemini — Aoede (leve)</option>
+            <option value="Leda">Gemini — Leda (jovem)</option>
+            <option value="Zephyr">Gemini — Zephyr (brilhante)</option>
+            <option value="Puck">Gemini — Puck (animada)</option>
+            <option value="Charon">Gemini — Charon (informativa)</option>
+            <option value="Callirrhoe">Gemini — Callirrhoe (tranquila)</option>
+            <option value="pt-BR-FranciscaNeural">Edge pt-BR feminina (Francisca)</option>
+            <option value="pt-BR-ThalitaNeural">Edge pt-BR feminina (Thalita)</option>
+            <option value="pt-BR-AntonioNeural">Edge pt-BR masculina (Antonio)</option>
+            <option value="ja-JP-NanamiNeural">Edge japonesa (Nanami)</option>
+            <option value="en-US-AriaNeural">Edge inglês (Aria)</option>
+          </datalist>
+
+          <label>Modelo de voz (opcional — Edge não usa)</label>
+          <input id="ttsModel" type="text" placeholder="gemini-3.1-flash-tts-preview  •  eleven_multilingual_v2  •  gpt-4o-mini-tts" />
+
+          <button id="testVoice" type="button">🔊 Testar voz</button>
+        </div>
+
+        <!-- ABA: MICROFONE (STT) -->
+        <div class="panel" data-panel="stt">
+          <label>Serviço de transcrição (falar com a I.A.)</label>
+          <select id="sttPreset"></select>
+          <p class="hint" id="sttHint">Groq é grátis e rápido: crie uma chave em console.groq.com e cole abaixo.</p>
+
+          <label>Chave da API</label>
+          <input id="sttApiKey" type="password" placeholder="gsk_... (Groq)  •  sk-... (OpenAI)" />
+
+          <label>Base URL (preenchido pelo serviço)</label>
+          <input id="sttBaseUrl" type="text" placeholder="preenchido automaticamente" />
+          <label>Modelo (preenchido pelo serviço)</label>
+          <input id="sttModel" type="text" placeholder="preenchido automaticamente" />
+        </div>
+
+        <!-- ABA: AUDIO -->
+        <div class="panel" data-panel="audio">
+          <label>Microfone (entrada)</label>
+          <select id="audioInput"></select>
+          <label>Alto-falante / saída</label>
+          <select id="audioOutput"></select>
+          <p class="hint">Use isto se tiver VoiceMeeter, várias placas de som, fones USB, etc.</p>
+        </div>
+
+        <!-- ABA: VIDEO -->
+        <div class="panel" data-panel="video">
+          <label>Qualidade gráfica</label>
+          <select id="gfxQuality">
+            <option value="performance">Performance — máquinas fracas (leve)</option>
+            <option value="balanced">Equilibrado — padrão</option>
+            <option value="quality">Qualidade — máquinas fortes (nítido)</option>
+          </select>
+          <p class="hint">Reduz resolução/FPS e tamanho das texturas para aliviar a GPU.</p>
+
+          <label>Tamanho da avatar (<span id="avatarScaleVal">100</span>%)</label>
+          <input id="avatarScale" type="range" min="60" max="200" step="5" value="100" />
+          <p class="hint">Dica: passe o <b>scroll do mouse</b> em cima da avatar para aumentar/diminuir na hora.</p>
+        </div>
+
+        <!-- ABA: ACESSO (permissoes do agente) -->
+        <div class="panel" data-panel="perms">
+          <p class="hint">
+            Controle o que a assistente pode fazer com as ferramentas. <b>Perguntar</b> = confirma a cada vez;
+            <b>Permitir</b> = libera sem perguntar (bypass); <b>Bloquear</b> = nunca deixa.
+          </p>
+          <label>Ler arquivos</label>
+          <select id="permRead">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Criar / editar arquivos</label>
+          <select id="permWrite">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Apagar arquivos</label>
+          <select id="permDelete">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Executar comandos (terminal)</label>
+          <select id="permExec">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Internet (requisições)</label>
+          <select id="permNetwork">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Abrir sites / links</label>
+          <select id="permOpen">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Ferramentas MCP (externas)</label>
+          <select id="permMcp">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Ver a tela (captura de tela)</label>
+          <select id="permScreen">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+          <label>Controlar o PC (mouse/teclado) ⚠️</label>
+          <select id="permControl">
+            <option value="ask">Perguntar</option><option value="allow">Permitir</option><option value="deny">Bloquear</option>
+          </select>
+        </div>
+
+        <!-- ABA: TEMA (cores da UI) -->
+        <div class="panel" data-panel="theme">
+          <p class="hint">Personalize as cores da interface. As mudanças aplicam <b>na hora</b> em todas as janelas. 🎨</p>
+          <div class="themeRow"><label>Fundo</label><input type="color" id="thBg" /></div>
+          <div class="themeRow"><label>Superfície (balões/cartões)</label><input type="color" id="thSurface" /></div>
+          <div class="themeRow"><label>Caixas / campos</label><input type="color" id="thSurface2" /></div>
+          <div class="themeRow"><label>Destaque</label><input type="color" id="thAccent" /></div>
+          <div class="themeRow"><label>Texto do destaque</label><input type="color" id="thAccentText" /></div>
+          <div class="themeRow"><label>Texto</label><input type="color" id="thText" /></div>
+          <div class="themeRow"><label>Bordas</label><input type="color" id="thBorder" /></div>
+          <label>Predefinições</label>
+          <div id="themePresets" class="presetRow"></div>
+          <button id="themeReset" type="button">Restaurar padrão</button>
+        </div>
+
+        <div class="row">
+          <button id="save">Salvar</button>
+          <button id="close">Fechar (Esc)</button>
+        </div>
+        <div class="row">
+          <button id="reset">Nova conversa (limpar memória)</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="./pages/theme.js"></script>
+    <script src="./renderer.bundle.js"></script>
+  </body>
+</html>

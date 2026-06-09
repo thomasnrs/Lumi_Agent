@@ -1,0 +1,20 @@
+# dependências e artefatos de build
+node_modules/
+release/
+build/
+dist/
+src/renderer/renderer.bundle.js
+*.log
+*.bak
+
+# modelos e animações de terceiros (licença! cada um baixa os seus — o app "nasce vazio")
+assets/*.vrm
+assets/desativado/
+animations/*.vrma
+animations/emotions/*.vrma
+animations/*.rar
+animations/*.zip
+
+# diagnósticos locais
+memory-report.txt
+*.backup

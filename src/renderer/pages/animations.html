@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Animações</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 15px;
+      }
+      .hint {
+        font-size: 11px;
+        color: #888;
+        line-height: 1.4;
+      }
+      #list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px 14px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--surface);
+      }
+      .name {
+        flex: 1;
+        font-size: 13px;
+        word-break: break-all;
+      }
+      .play {
+        flex: 0 0 auto;
+        width: 36px;
+        height: 32px;
+        border: none;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .tag {
+        font-size: 10px;
+        color: #7ee0a0;
+      }
+      footer {
+        padding: 10px 14px;
+        border-top: 1px solid var(--border);
+      }
+      #stop {
+        width: 100%;
+        padding: 9px;
+        border: none;
+        border-radius: 8px;
+        background: var(--border);
+        color: #ccc;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .empty {
+        color: #666;
+        font-size: 13px;
+      }
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;vertical-align:-3px;margin-right:6px"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>Testador de animações</h1>
+      <div class="hint">
+        Clique ▶ pra ver cada uma na avatar. Descubra qual é qual e renomeie o arquivo:
+        coloque <b>idle</b> no nome da parada, <b>sit</b>/<b>squat</b> na de sentar.
+        O resto vira gesto (toca ao cutucar).
+      </div>
+    </header>
+    <div id="list"></div>
+    <footer>
+      <button id="stop">⏹ Parar (voltar ao idle)</button>
+    </footer>
+
+    <script>
+      const list = document.getElementById('list');
+
+      function tagFor(it) {
+        if (it.emotion) return ' <span class="tag">[emoção]</span>';
+        if (/idle/i.test(it.name)) return ' <span class="tag">[idle]</span>';
+        if (/greet|hello|wave/i.test(it.name)) return ' <span class="tag">[saudação]</span>';
+        if (/bored|sleep|relax/i.test(it.name)) return ' <span class="tag">[entediada]</span>';
+        if (/sit|squat|seiza/i.test(it.name)) return ' <span class="tag">[sentar]</span>';
+        return '';
+      }
+
+      window.api.getVrmaPaths().then((items) => {
+        if (!items || !items.length) {
+          list.innerHTML =
+            '<p class="empty">Nenhum arquivo .vrma na pasta animations/.<br>Baixe da BOOTH e coloque lá.</p>';
+          return;
+        }
+        items.forEach((it) => {
+          const row = document.createElement('div');
+          row.className = 'row';
+
+          const name = document.createElement('span');
+          name.className = 'name';
+          name.innerHTML = it.name + tagFor(it);
+
+          const btn = document.createElement('button');
+          btn.className = 'play';
+          btn.textContent = '▶';
+          btn.title = 'Tocar';
+          btn.onclick = () => window.api.previewAnim(it.name);
+
+          row.appendChild(name);
+          row.appendChild(btn);
+          list.appendChild(row);
+        });
+      });
+
+      document.getElementById('stop').onclick = () => window.api.stopPreview();
+    </script>
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+  </body>
+</html>

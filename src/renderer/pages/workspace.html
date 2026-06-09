@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Workspace</title>
+    <style>
+      * { box-sizing: border-box; }
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+      html, body {
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        flex: 0 0 auto;
+      }
+      #top .path { flex: 1; font-size: 12px; color: #9aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #top button {
+        border: none; border-radius: 6px; background: var(--border); color: #fff;
+        padding: 6px 10px; font-size: 12px; cursor: pointer;
+      }
+      #save { background: var(--accent); }
+      #main { flex: 1; display: flex; min-height: 0; }
+      #side {
+        width: 250px; flex: 0 0 auto; display: flex; flex-direction: column;
+        background: var(--surface-2); border-right: 1px solid var(--border);
+      }
+      #sidebar {
+        display: flex; align-items: center; gap: 2px; padding: 5px 8px;
+        border-bottom: 1px solid var(--border); font-size: 11px; color: #9aa; text-transform: uppercase; letter-spacing: 0.3px;
+      }
+      #sidebar .ttl { flex: 1; }
+      #sidebar .tb {
+        width: 24px; height: 24px; border: none; background: transparent; color: #9aa; cursor: pointer;
+        border-radius: 5px; display: flex; align-items: center; justify-content: center;
+      }
+      #sidebar .tb:hover { background: var(--surface); color: var(--text); }
+      #sidebar .tb svg { width: 15px; height: 15px; }
+      #tree { flex: 1; overflow: auto; padding: 4px 0; font-size: 13px; }
+      .item {
+        display: flex; align-items: center; gap: 4px; padding: 2px 8px; cursor: pointer;
+        white-space: nowrap; overflow: hidden; user-select: none; height: 24px;
+      }
+      .item:hover { background: var(--surface); }
+      .item.active { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+      .item.drop-target { background: color-mix(in srgb, var(--accent) 38%, transparent); outline: 1px dashed var(--accent); outline-offset: -2px; }
+      .item.dragging { opacity: 0.45; }
+      #tree.drop-root { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: 6px; }
+      .item .chev { width: 14px; height: 14px; flex: 0 0 auto; color: #889; display: flex; align-items: center; justify-content: center; transition: transform 0.12s; }
+      .item .chev.open { transform: rotate(90deg); }
+      .item .chev svg { width: 12px; height: 12px; }
+      .item .ic { width: 16px; height: 16px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      .item .ic svg { width: 15px; height: 15px; }
+      .item.dir .ic { color: var(--accent); }
+      .item:not(.dir) .ic { color: #8fa3b8; }
+      .item .nm { overflow: hidden; text-overflow: ellipsis; }
+      #edcol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      #editor { flex: 1; min-width: 0; min-height: 0; }
+      /* abas de arquivos (estilo VS Code) */
+      #tabs {
+        display: flex;
+        overflow-x: auto;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        flex: 0 0 auto;
+        scrollbar-width: thin;
+      }
+      #tabs:empty { display: none; }
+      .tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 7px 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        border-right: 1px solid var(--border);
+        white-space: nowrap;
+        color: #9aa;
+        max-width: 190px;
+        user-select: none;
+      }
+      .tab:hover { background: var(--surface); }
+      .tab.active {
+        background: var(--bg);
+        color: var(--text);
+        box-shadow: inset 0 2px 0 var(--accent);
+      }
+      .tab .ticon svg { width: 13px; height: 13px; display: block; }
+      .tab .tname { overflow: hidden; text-overflow: ellipsis; }
+      .tab .tx {
+        border: none;
+        background: transparent;
+        color: #778;
+        width: 17px;
+        height: 17px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 10px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+      }
+      .tab .tx:hover { background: var(--border); color: var(--text); }
+      .tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: none; flex: 0 0 auto; margin: 0 4px; }
+      .tab.dirty .dot { display: block; }
+      .tab.dirty .tx { display: none; }
+      .tab.dirty:hover .tx { display: flex; }
+      .tab.dirty:hover .dot { display: none; }
+      /* barra de status (linha/coluna, linguagem) */
+      #statusbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 10px;
+        height: 22px;
+        font-size: 11px;
+        color: #9aa;
+        background: var(--surface-2);
+        border-top: 1px solid var(--border);
+        flex: 0 0 auto;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      #sbLeft { overflow: hidden; text-overflow: ellipsis; }
+      /* painel do chat (iframe reaproveitando chat.html) */
+      #chatresize {
+        width: 5px; flex: 0 0 auto; cursor: col-resize; background: var(--border);
+        transition: background 0.15s;
+      }
+      #chatresize:hover { background: var(--accent); }
+      #chatpane {
+        width: 400px; flex: 0 0 auto; display: flex; flex-direction: column;
+        border-left: 1px solid var(--border); background: var(--bg); min-width: 0;
+      }
+      #chatpane.hidden, #chatresize.hidden { display: none; }
+      #chatframe { flex: 1; width: 100%; border: none; background: var(--bg); }
+      #toggleChat.on { background: var(--accent); }
+      #preview {
+        flex: 1; min-width: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
+        gap: 10px; overflow: auto; padding: 16px; background: var(--surface-2);
+        background-image: linear-gradient(45deg, #1c1c26 25%, transparent 25%), linear-gradient(-45deg, #1c1c26 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #1c1c26 75%), linear-gradient(-45deg, transparent 75%, #1c1c26 75%);
+        background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+      }
+      #preview img { max-width: 100%; max-height: calc(100% - 30px); object-fit: contain; border-radius: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
+      #previewMeta { font-size: 12px; color: #9aa; background: rgba(0, 0, 0, 0.4); padding: 4px 10px; border-radius: 6px; }
+      #empty { margin: 16px auto; color: #667; font-size: 13px; text-align: center; padding: 10px; }
+      /* menu de contexto */
+      .ctxmenu {
+        position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border);
+        border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); min-width: 140px; font-size: 13px;
+      }
+      .ctxmenu .mi { padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+      .ctxmenu .mi:hover { background: var(--accent); color: var(--accent-text); }
+      .ctxmenu .mi.danger { color: #ff9b9b; }
+      .ctxmenu .mi.danger:hover { background: #3a2030; color: #ffb4b4; }
+      /* modal de nome */
+      .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 300; }
+      .modal .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; width: 320px; max-width: 90%; }
+      .modal .t { font-size: 13px; margin-bottom: 10px; color: var(--text); }
+      .modal input { width: 100%; padding: 9px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 13px; font-family: inherit; outline: none; }
+      .modal .b { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+      .modal .b button { border: none; border-radius: 7px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+      .modal .b .cancel { background: var(--border); color: #fff; }
+      .modal .b .ok { background: var(--accent); color: var(--accent-text); }
+      ::-webkit-scrollbar { width: 9px; height: 9px; }
+      ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="top">
+      <span class="path" id="curpath">Nenhum arquivo aberto</span>
+      <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi">💬 Chat</button>
+      <button id="save" title="Salvar (Ctrl+S)">💾 Salvar</button>
+    </div>
+    <div id="main">
+      <div id="side">
+        <div id="sidebar">
+          <span class="ttl" id="rootname">Explorer</span>
+          <button class="tb" id="newFile" title="Novo arquivo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/></svg></button>
+          <button class="tb" id="newFolder" title="Nova pasta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
+          <button class="tb" id="collapse" title="Recolher tudo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg></button>
+          <button class="tb" id="refresh" title="Atualizar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+        </div>
+        <div id="tree"></div>
+      </div>
+      <div id="edcol">
+        <div id="tabs"></div>
+        <div id="editor"></div>
+        <div id="preview"><img id="previewImg" alt="" /><div id="previewMeta"></div></div>
+      </div>
+      <div id="chatresize" title="Arraste para redimensionar"></div>
+      <div id="chatpane"><iframe id="chatframe" src="chat.html" title="Chat da Lumi"></iframe></div>
+    </div>
+    <div id="statusbar"><span id="sbLeft">Lumi Workspace</span><span id="sbRight"></span></div>
+
+    <script>
+      const CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min';
+      self.MonacoEnvironment = {
+        getWorkerUrl: function () {
+          return (
+            'data:text/javascript;charset=utf-8,' +
+            encodeURIComponent("self.MonacoEnvironment={baseUrl:'" + CDN + "/'};importScripts('" + CDN + "/vs/base/worker/workerMain.js');")
+          );
+        },
+      };
+
+      const tree = document.getElementById('tree');
+      const curpath = document.getElementById('curpath');
+      const editorEl = document.getElementById('editor');
+      const previewEl = document.getElementById('preview');
+      const previewImg = document.getElementById('previewImg');
+      const previewMeta = document.getElementById('previewMeta');
+      let editor = null;
+      let current = null;
+      let isImage = false;
+      let treeData = [];
+      let dragSrc = null;
+      const expanded = new Set();
+      const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
+      const LANG = {
+        js: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+        json: 'json', html: 'html', css: 'css', scss: 'scss', md: 'markdown', py: 'python', go: 'go', rs: 'rust',
+        java: 'java', kt: 'kotlin', c: 'c', cpp: 'cpp', h: 'cpp', cs: 'csharp', sh: 'shell', yml: 'yaml', yaml: 'yaml',
+        xml: 'xml', php: 'php', rb: 'ruby', sql: 'sql', swift: 'swift', dart: 'dart', vue: 'html', svelte: 'html',
+      };
+      const langOf = (p) => LANG[(p.split('.').pop() || '').toLowerCase()] || 'plaintext';
+      const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const dirOf = (p) => p.split('/').slice(0, -1).join('/');
+      const fmtBytes = (b) => (b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB');
+
+      // ---- ícones por tecnologia (estilo VS Code, SVG inline = funciona offline) ----
+      // badge: quadradinho colorido com a sigla da linguagem (JS, TS, C#...)
+      const badge = (label, bg, fg) =>
+        '<svg viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="3.5" fill="' + bg + '"/>' +
+        '<text x="8" y="11.3" text-anchor="middle" font-size="' + (label.length > 2 ? 5.6 : 7.2) + '" font-weight="700" ' +
+        'font-family="Segoe UI, sans-serif" fill="' + fg + '">' + label + '</text></svg>';
+      // picon: glifo desenhado (traço) na cor da tecnologia
+      const picon = (paths, color) =>
+        '<svg viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
+      const GLYPH = {
+        react:
+          '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="2" fill="#53c1de"/>' +
+          '<ellipse cx="12" cy="12" rx="10" ry="4" stroke="#53c1de" stroke-width="1.4"/>' +
+          '<ellipse cx="12" cy="12" rx="10" ry="4" stroke="#53c1de" stroke-width="1.4" transform="rotate(60 12 12)"/>' +
+          '<ellipse cx="12" cy="12" rx="10" ry="4" stroke="#53c1de" stroke-width="1.4" transform="rotate(120 12 12)"/></svg>',
+        term: (c) => picon('<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>', c),
+        db: (c) => picon('<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>', c),
+        img: (c) => picon('<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>', c),
+        music: (c) => picon('<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>', c),
+        film: (c) => picon('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M17 3v18"/><path d="M3 12h18"/>', c),
+        lock: (c) => picon('<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', c),
+        git: (c) => picon('<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>', c),
+        gear: (c) => picon('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/>', c),
+        person: (c) => picon('<circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/>', c),
+        gem: (c) => picon('<path d="M6 3h12l4 6-10 13L2 9z"/><path d="M2 9h20"/><path d="m9 3 3 6 3-6"/>', c),
+        doc: (c) => picon('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8M8 17h5"/>', c),
+        zip: (c) => picon('<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>', c),
+      };
+      const FILE_ICONS = {};
+      (function () {
+        const set = (exts, html) => exts.forEach((e) => (FILE_ICONS[e] = html));
+        set(['js', 'mjs', 'cjs'], badge('JS', '#e8d44d', '#1c1c1c'));
+        set(['ts'], badge('TS', '#3178c6', '#fff'));
+        set(['jsx', 'tsx'], GLYPH.react);
+        set(['json'], badge('{}', '#cbcb41', '#1c1c1c'));
+        set(['html', 'htm'], badge('<>', '#e37933', '#fff'));
+        set(['xml'], badge('<>', '#8fa3b8', '#16161e'));
+        set(['css'], badge('#', '#519aba', '#fff'));
+        set(['scss', 'sass', 'less'], badge('S', '#c6538c', '#fff'));
+        set(['md', 'mdx'], badge('MD', '#7aa2ff', '#16161e'));
+        set(['py'], badge('PY', '#3572a5', '#ffd84d'));
+        set(['go'], badge('GO', '#00add8', '#fff'));
+        set(['rs'], badge('RS', '#dea584', '#3a2a1a'));
+        set(['java'], badge('J', '#cc3e44', '#fff'));
+        set(['kt', 'kts'], badge('KT', '#a97bff', '#fff'));
+        set(['c'], badge('C', '#519aba', '#fff'));
+        set(['cpp', 'cc', 'cxx'], badge('C++', '#519aba', '#fff'));
+        set(['h', 'hpp'], badge('H', '#a074c4', '#fff'));
+        set(['cs'], badge('C#', '#178600', '#fff'));
+        set(['php'], badge('PHP', '#8892bf', '#fff'));
+        set(['rb'], GLYPH.gem('#cc342d'));
+        set(['swift'], badge('SW', '#f05138', '#fff'));
+        set(['dart'], badge('DT', '#00b4ab', '#fff'));
+        set(['vue'], badge('V', '#41b883', '#fff'));
+        set(['svelte'], badge('S', '#ff3e00', '#fff'));
+        set(['sql', 'db', 'sqlite'], GLYPH.db('#e38c00'));
+        set(['sh', 'bash', 'bat', 'cmd'], GLYPH.term('#89e051'));
+        set(['ps1'], GLYPH.term('#0273b9'));
+        set(['yml', 'yaml'], badge('Y', '#a074c4', '#fff'));
+        set(['toml', 'ini', 'env', 'conf', 'cfg', 'properties'], GLYPH.gear('#9aa9b8'));
+        set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'avif'], GLYPH.img('#b07ae0'));
+        set(['svg'], GLYPH.img('#ffb13b'));
+        set(['mp3', 'wav', 'ogg', 'flac'], GLYPH.music('#e0556e'));
+        set(['mp4', 'webm', 'mov', 'avi'], GLYPH.film('#e0556e'));
+        set(['vrm', 'vrma'], GLYPH.person('#7ee0a0')); // os avatares da Lumi 💚
+        set(['lock'], GLYPH.lock('#8a8a99'));
+        set(['gitignore', 'gitattributes'], GLYPH.git('#f05033'));
+        set(['dockerfile'], badge('D', '#2496ed', '#fff'));
+        set(['pdf'], badge('PDF', '#d93f3f', '#fff'));
+        set(['zip', 'rar', '7z', 'gz', 'tar'], GLYPH.zip('#c9a86a'));
+        set(['txt', 'log'], GLYPH.doc('#9aa9b8'));
+      })();
+      const iconFor = (name) => FILE_ICONS[(name.split('.').pop() || '').toLowerCase()] || SVG.file;
+
+      const SVG = {
+        chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+        folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+        folderOpen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>',
+        file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>',
+      };
+
+      async function loadTree() {
+        treeData = (await window.api.getWorkspaceFullTree()) || [];
+        drawTree();
+      }
+      function drawTree() {
+        tree.innerHTML = '';
+        if (!treeData.length) {
+          tree.innerHTML = '<div id="empty">Defina o workspace no<br>Modo arquiteto.</div>';
+          return;
+        }
+        renderNodes(treeData, tree, 0);
+      }
+      function renderNodes(nodes, container, depth) {
+        nodes.forEach((node) => {
+          const row = document.createElement('div');
+          row.className = 'item' + (node.dir ? ' dir' : '') + (node.path === current ? ' active' : '');
+          row.style.paddingLeft = 6 + depth * 12 + 'px';
+          const open = node.dir && expanded.has(node.path);
+          const chev = node.dir ? '<span class="chev' + (open ? ' open' : '') + '">' + SVG.chev + '</span>' : '<span class="chev"></span>';
+          const icon = node.dir
+            ? '<span class="ic">' + (open ? SVG.folderOpen : SVG.folder) + '</span>'
+            : '<span class="ic">' + iconFor(node.name) + '</span>';
+          row.innerHTML = chev + icon + '<span class="nm">' + esc(node.name) + '</span>';
+          row.title = node.path;
+          row.addEventListener('click', () => (node.dir ? toggle(node.path) : openFile(node.path)));
+          row.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            showMenu(e, node);
+          });
+          // ---- drag & drop (mover) ----
+          row.draggable = true;
+          row.addEventListener('dragstart', (e) => {
+            dragSrc = node.path;
+            row.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            try {
+              e.dataTransfer.setData('text/plain', node.path);
+            } catch (_) {}
+          });
+          row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            dragSrc = null;
+          });
+          if (node.dir) {
+            // pastas são alvo de soltura (move pra dentro)
+            row.addEventListener('dragover', (e) => {
+              if (!dragSrc || dragSrc === node.path) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              row.classList.add('drop-target');
+            });
+            row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+            row.addEventListener('drop', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              row.classList.remove('drop-target');
+              doMove(dragSrc, node.path);
+            });
+          }
+          container.appendChild(row);
+          if (open && node.children && node.children.length) renderNodes(node.children, container, depth + 1);
+        });
+      }
+      function toggle(p) {
+        if (expanded.has(p)) expanded.delete(p);
+        else expanded.add(p);
+        drawTree();
+      }
+
+      const toast = (m, ok) => (window.__lumiToast ? window.__lumiToast(m, ok) : (curpath.textContent = m));
+
+      // ---------- abas de arquivos (estilo VS Code) ----------
+      const tabsBar = document.getElementById('tabs');
+      const sbLeft = document.getElementById('sbLeft');
+      const sbRight = document.getElementById('sbRight');
+      const openTabs = []; // [{path, model?, viewState?, savedVer?, dirty, image?, url?, bytes?}]
+      let active = null; // path da aba ativa
+      const baseName = (p) => p.split('/').pop();
+      const findTab = (p) => openTabs.find((t) => t.path === p);
+
+      function renderTabs() {
+        tabsBar.innerHTML = '';
+        openTabs.forEach((t) => {
+          const el = document.createElement('div');
+          el.className = 'tab' + (t.path === active ? ' active' : '') + (t.dirty ? ' dirty' : '');
+          el.title = t.path;
+          el.innerHTML =
+            '<span class="ticon">' + iconFor(baseName(t.path)) + '</span>' +
+            '<span class="tname">' + esc(baseName(t.path)) + '</span>' +
+            '<span class="dot"></span><button class="tx" title="Fechar (clique do meio)">✕</button>';
+          el.addEventListener('click', (e) => {
+            if (!e.target.closest('.tx')) activate(t.path);
+          });
+          el.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              closeTab(t.path);
+            }
+          });
+          el.querySelector('.tx').addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeTab(t.path);
+          });
+          tabsBar.appendChild(el);
+        });
+      }
+      function updateDirty(t) {
+        const d = !!(t.model && t.model.getAlternativeVersionId() !== t.savedVer);
+        if (d !== t.dirty) {
+          t.dirty = d;
+          renderTabs();
+        }
+      }
+      function updateStatus() {
+        const t = active && findTab(active);
+        sbLeft.textContent = active || 'Lumi Workspace';
+        if (!t) sbRight.textContent = '';
+        else if (t.image) sbRight.textContent = 'imagem · ' + fmtBytes(t.bytes || 0);
+        else {
+          const pos = editor && editor.getPosition();
+          sbRight.textContent = (pos ? 'Ln ' + pos.lineNumber + ', Col ' + pos.column + '   ·   ' : '') + langOf(t.path);
+        }
+      }
+      function showNothing() {
+        active = null;
+        current = null;
+        curpath.textContent = 'Nenhum arquivo aberto';
+        previewEl.style.display = 'none';
+        editorEl.style.display = 'block';
+        if (editor) editor.setModel(monaco.editor.createModel('', 'plaintext'));
+        renderTabs();
+        updateStatus();
+      }
+      function activate(p) {
+        const t = findTab(p);
+        if (!t) return;
+        if (active && active !== p) {
+          const prev = findTab(active);
+          if (prev && prev.model && editor) prev.viewState = editor.saveViewState(); // memoriza cursor/scroll
+        }
+        active = p;
+        current = p;
+        isImage = !!t.image;
+        curpath.textContent = p;
+        if (t.image) {
+          editorEl.style.display = 'none';
+          previewEl.style.display = 'flex';
+          previewImg.src = t.url;
+          previewImg.onload = () =>
+            (previewMeta.textContent = previewImg.naturalWidth + ' × ' + previewImg.naturalHeight + ' px  ·  ' + fmtBytes(t.bytes));
+        } else {
+          previewEl.style.display = 'none';
+          editorEl.style.display = 'block';
+          if (editor) {
+            editor.setModel(t.model);
+            if (t.viewState) editor.restoreViewState(t.viewState);
+            editor.focus();
+          }
+        }
+        renderTabs();
+        drawTree();
+        updateStatus();
+      }
+      function closeTab(p, force) {
+        const i = openTabs.findIndex((t) => t.path === p);
+        if (i < 0) return;
+        const t = openTabs[i];
+        if (!force && t.dirty && !confirm('"' + baseName(p) + '" tem alterações não salvas. Fechar mesmo assim?')) return;
+        if (t.model) t.model.dispose();
+        openTabs.splice(i, 1);
+        if (active === p) {
+          const next = openTabs[i] || openTabs[i - 1];
+          if (next) activate(next.path);
+          else showNothing();
+        } else renderTabs();
+      }
+
+      async function openFile(rel) {
+        let t = findTab(rel);
+        if (!t) {
+          const ext = (rel.split('.').pop() || '').toLowerCase();
+          if (IMG_EXT.includes(ext)) {
+            const r = await window.api.readWorkspaceImage(rel);
+            if (!r || !r.url) return toast('⚠ não consegui abrir ' + rel, false);
+            t = { path: rel, image: true, url: r.url, bytes: r.bytes, dirty: false };
+          } else {
+            const content = await window.api.readWorkspaceFile(rel);
+            if (content == null) return;
+            const model = monaco.editor.createModel(content, langOf(rel));
+            t = { path: rel, model, savedVer: model.getAlternativeVersionId(), dirty: false };
+            model.onDidChangeContent(() => updateDirty(t));
+          }
+          openTabs.push(t);
+        }
+        activate(rel);
+      }
+
+      async function save() {
+        const t = active && findTab(active);
+        if (!t || t.image || !editor) return;
+        const ok = await window.api.writeWorkspaceFile(t.path, t.model.getValue());
+        if (ok) {
+          t.savedVer = t.model.getAlternativeVersionId();
+          t.dirty = false;
+          renderTabs();
+          toast('✓ ' + baseName(t.path) + ' salvo');
+        } else toast('⚠ erro ao salvar', false);
+      }
+
+      // ---- modal de nome (prompt não funciona no Electron) ----
+      function askName(title, initial) {
+        return new Promise((resolve) => {
+          const ov = document.createElement('div');
+          ov.className = 'modal';
+          ov.innerHTML =
+            '<div class="box"><div class="t">' + esc(title) + '</div><input type="text" spellcheck="false" />' +
+            '<div class="b"><button class="cancel">Cancelar</button><button class="ok">OK</button></div></div>';
+          document.body.appendChild(ov);
+          const inp = ov.querySelector('input');
+          inp.value = initial || '';
+          inp.focus();
+          inp.select();
+          const done = (v) => {
+            ov.remove();
+            resolve(v);
+          };
+          ov.querySelector('.ok').onclick = () => done(inp.value.trim() || null);
+          ov.querySelector('.cancel').onclick = () => done(null);
+          ov.addEventListener('mousedown', (e) => {
+            if (e.target === ov) done(null);
+          });
+          inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              done(inp.value.trim() || null);
+            } else if (e.key === 'Escape') done(null);
+          });
+        });
+      }
+
+      // ---- menu de contexto ----
+      let curMenu = null;
+      function closeMenu() {
+        if (curMenu) {
+          curMenu.remove();
+          curMenu = null;
+        }
+      }
+      document.addEventListener('click', closeMenu);
+      function showMenu(e, node) {
+        closeMenu();
+        const m = document.createElement('div');
+        m.className = 'ctxmenu';
+        const items = [];
+        if (node.dir) {
+          items.push(['Novo arquivo', () => newEntry(node.path, false)]);
+          items.push(['Nova pasta', () => newEntry(node.path, true)]);
+        }
+        items.push(['Renomear', () => renameEntry(node)]);
+        items.push(['Excluir', () => delEntry(node), true]);
+        items.forEach(([label, fn, danger]) => {
+          const it = document.createElement('div');
+          it.className = 'mi' + (danger ? ' danger' : '');
+          it.textContent = label;
+          it.onclick = () => {
+            closeMenu();
+            fn();
+          };
+          m.appendChild(it);
+        });
+        m.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+        m.style.top = e.clientY + 'px';
+        document.body.appendChild(m);
+        curMenu = m;
+      }
+
+      // ---- operações de arquivo ----
+      async function newEntry(parentRel, isDir) {
+        const name = await askName(isDir ? 'Nome da nova pasta' : 'Nome do novo arquivo', '');
+        if (!name) return;
+        const rel = parentRel ? parentRel + '/' + name : name;
+        const r = await window.api.createWorkspaceEntry(rel, isDir);
+        if (r && r.error) {
+          curpath.textContent = '⚠ ' + r.error;
+          return;
+        }
+        if (parentRel) expanded.add(parentRel);
+        await loadTree();
+        if (!isDir) openFile(rel);
+      }
+      // troca o prefixo dos caminhos das abas quando algo é renomeado/movido (inclui filhos de pastas)
+      function retargetTabs(oldPath, newPath) {
+        let activeChanged = false;
+        openTabs.forEach((t) => {
+          if (t.path === oldPath || t.path.startsWith(oldPath + '/')) {
+            const np = newPath + t.path.slice(oldPath.length);
+            if (t.path === active) {
+              active = np;
+              current = np;
+              curpath.textContent = np;
+              activeChanged = true;
+            }
+            t.path = np;
+          }
+        });
+        renderTabs();
+        if (activeChanged) updateStatus();
+      }
+      async function renameEntry(node) {
+        const name = await askName('Novo nome', node.name);
+        if (!name || name === node.name) return;
+        const r = await window.api.renameWorkspaceEntry(node.path, name);
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        if (r && r.path) retargetTabs(node.path, r.path);
+        await loadTree();
+      }
+      async function delEntry(node) {
+        if (!confirm('Excluir "' + node.name + '"' + (node.dir ? ' e todo o conteúdo' : '') + '? Não dá pra desfazer.')) return;
+        const r = await window.api.deleteWorkspaceEntry(node.path);
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        // fecha as abas dos arquivos apagados (sem perguntar — já eram)
+        openTabs
+          .filter((t) => t.path === node.path || t.path.startsWith(node.path + '/'))
+          .map((t) => t.path)
+          .forEach((p) => closeTab(p, true));
+        await loadTree();
+      }
+
+      async function doMove(src, destDir) {
+        if (!src) return;
+        if (dirOf(src) === (destDir || '')) return; // já está nessa pasta
+        if (destDir === src || destDir.startsWith(src + '/')) return; // dentro de si mesma
+        const r = await window.api.moveWorkspaceEntry(src, destDir);
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        if (r && r.path) retargetTabs(src, r.path);
+        if (destDir) expanded.add(destDir);
+        dragSrc = null;
+        await loadTree();
+      }
+
+      // soltar na área vazia da árvore = mover para a raiz
+      tree.addEventListener('dragover', (e) => {
+        if (!dragSrc || e.target.closest('.item')) return;
+        e.preventDefault();
+        tree.classList.add('drop-root');
+      });
+      tree.addEventListener('dragleave', (e) => {
+        if (e.target === tree) tree.classList.remove('drop-root');
+      });
+      tree.addEventListener('drop', (e) => {
+        tree.classList.remove('drop-root');
+        if (!dragSrc || e.target.closest('.item')) return;
+        e.preventDefault();
+        doMove(dragSrc, '');
+      });
+
+      // clique direito no vazio da árvore = criar na raiz
+      tree.addEventListener('contextmenu', (e) => {
+        if (e.target.closest('.item')) return;
+        e.preventDefault();
+        closeMenu();
+        const m = document.createElement('div');
+        m.className = 'ctxmenu';
+        [
+          ['Novo arquivo', () => newEntry('', false)],
+          ['Nova pasta', () => newEntry('', true)],
+        ].forEach(([l, fn]) => {
+          const it = document.createElement('div');
+          it.className = 'mi';
+          it.textContent = l;
+          it.onclick = () => {
+            closeMenu();
+            fn();
+          };
+          m.appendChild(it);
+        });
+        m.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+        m.style.top = e.clientY + 'px';
+        document.body.appendChild(m);
+        curMenu = m;
+      });
+
+      // auto-refresh: o main avisa quando arquivos mudam (cria/edita/apaga, inclusive a Lumi)
+      let refreshTimer = null;
+      window.api.onWorkspaceChanged(() => {
+        if (document.querySelector('.modal')) return; // não atrapalha criação/rename em andamento
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(loadTree, 150);
+      });
+
+      // ---- painel do chat (iframe) ----
+      const chatpane = document.getElementById('chatpane');
+      const chatresize = document.getElementById('chatresize');
+      const chatframe = document.getElementById('chatframe');
+      const toggleChat = document.getElementById('toggleChat');
+      toggleChat.onclick = () => {
+        const show = chatpane.classList.contains('hidden');
+        chatpane.classList.toggle('hidden', !show);
+        chatresize.classList.toggle('hidden', !show);
+        toggleChat.classList.toggle('on', show);
+      };
+      // divisória arrastável (largura do chat). pointer-events:none no iframe durante o arraste
+      // pra que o mousemove não seja "engolido" pelo conteúdo do iframe.
+      (function () {
+        let dragging = false;
+        chatresize.addEventListener('mousedown', (e) => {
+          dragging = true;
+          e.preventDefault();
+          document.body.style.userSelect = 'none';
+          chatframe.style.pointerEvents = 'none';
+        });
+        window.addEventListener('mousemove', (e) => {
+          if (!dragging) return;
+          const w = Math.min(720, Math.max(300, window.innerWidth - e.clientX));
+          chatpane.style.width = w + 'px';
+        });
+        window.addEventListener('mouseup', () => {
+          if (!dragging) return;
+          dragging = false;
+          document.body.style.userSelect = '';
+          chatframe.style.pointerEvents = '';
+        });
+      })();
+
+      document.getElementById('newFile').onclick = () => newEntry('', false);
+      document.getElementById('newFolder').onclick = () => newEntry('', true);
+      document.getElementById('refresh').onclick = loadTree;
+      document.getElementById('collapse').onclick = () => {
+        expanded.clear();
+        drawTree();
+      };
+      document.getElementById('save').onclick = save;
+      window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+          e.preventDefault();
+          save();
+        }
+      });
+
+      // tema do Monaco casado com as cores do app (lê as variáveis CSS do tema)
+      function cssVarHex(n, fb) {
+        const v = getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+        return /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(v) ? (v.length === 4 ? '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3] : v) : fb;
+      }
+      function defineLumiTheme() {
+        if (!window.monaco) return;
+        const bg = cssVarHex('--surface-2', '#0f0f16');
+        const txt = cssVarHex('--text', '#eeeeee');
+        const acc = cssVarHex('--accent', '#7aa2ff');
+        const border = cssVarHex('--border', '#2a2a38');
+        monaco.editor.defineTheme('lumi', {
+          base: 'vs-dark',
+          inherit: true,
+          rules: [],
+          colors: {
+            'editor.background': bg,
+            'editor.foreground': txt,
+            'editorCursor.foreground': acc,
+            'editor.lineHighlightBackground': border + '66',
+            'editorLineNumber.foreground': '#5a5a6a',
+            'editorLineNumber.activeForeground': acc,
+            'editor.selectionBackground': acc + '44',
+            'editorIndentGuide.background': border,
+            'scrollbarSlider.background': border + '99',
+            'editorWidget.background': bg,
+            'editorWidget.border': border,
+          },
+        });
+        monaco.editor.setTheme('lumi');
+      }
+      if (window.api.onThemeChanged) window.api.onThemeChanged(() => setTimeout(defineLumiTheme, 0)); // após o theme.js aplicar as vars
+
+      const loader = document.createElement('script');
+      loader.src = CDN + '/vs/loader.js';
+      loader.onload = () => {
+        require.config({ paths: { vs: CDN + '/vs' } });
+        require(['vs/editor/editor.main'], () => {
+          defineLumiTheme();
+          editor = monaco.editor.create(editorEl, {
+            value: '',
+            language: 'plaintext',
+            theme: 'lumi',
+            automaticLayout: true,
+            fontSize: 13,
+            minimap: { enabled: true },
+          });
+          editor.onDidChangeCursorPosition(updateStatus); // Ln/Col na barra de status
+          loadTree();
+        });
+      };
+      loader.onerror = () => {
+        editorEl.innerHTML = '<div id="empty">Não consegui carregar o editor (Monaco precisa de internet na 1ª vez).</div>';
+        loadTree();
+      };
+      document.head.appendChild(loader);
+    </script>
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+  </body>
+</html>
