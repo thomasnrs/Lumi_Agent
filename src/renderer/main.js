@@ -885,6 +885,7 @@ const toolsEnabledEl = document.getElementById('toolsEnabled');
 const memoryEnabledEl = document.getElementById('memoryEnabled');
 const searchProviderEl = document.getElementById('searchProvider');
 const searchApiKeyEl = document.getElementById('searchApiKey');
+const searxUrlEl = document.getElementById('searxUrl');
 const clearFactsBtn = document.getElementById('clearFacts');
 const permEls = {
   read: document.getElementById('permRead'),
@@ -1181,6 +1182,7 @@ async function openSettings() {
   memoryEnabledEl.checked = c.memoryEnabled !== false;
   searchProviderEl.value = c.searchProvider || 'duckduckgo';
   searchApiKeyEl.value = c.searchApiKey || '';
+  searxUrlEl.value = c.searxUrl || '';
   const perms = c.perms || {};
   permEls.read.value = perms.read || 'ask';
   permEls.write.value = perms.write || 'ask';
@@ -1319,6 +1321,7 @@ function readForm() {
     memoryEnabled: memoryEnabledEl.checked,
     searchProvider: searchProviderEl.value,
     searchApiKey: searchApiKeyEl.value.trim(),
+    searxUrl: searxUrlEl.value.trim(),
     perms: {
       read: permEls.read.value,
       write: permEls.write.value,

@@ -440,12 +440,13 @@
 
           <label>Busca na web (precisão)</label>
           <select id="searchProvider">
-            <option value="duckduckgo">DuckDuckGo — sem chave (básico)</option>
-            <option value="tavily">Tavily — precisa p/ IA, com resposta + fontes (chave grátis) ⭐</option>
+            <option value="duckduckgo">Grátis — SearXNG + DuckDuckGo (sem chave) ⭐</option>
+            <option value="tavily">Tavily — precisa p/ IA, com resposta + fontes (chave grátis)</option>
             <option value="brave">Brave Search (chave grátis)</option>
           </select>
           <input id="searchApiKey" type="password" placeholder="chave da busca (Tavily: tvly-...  •  Brave)" />
-          <p class="hint">Pra busca <b>precisa</b>, use <b>Tavily</b> (resposta já sintetizada + fontes) — chave grátis em <b>tavily.com</b>. DuckDuckGo funciona sem chave, mas é básico.</p>
+          <input id="searxUrl" type="text" placeholder="URL do seu SearXNG (opcional, ex.: https://busca.seuvps.com)" />
+          <p class="hint">O modo <b>Grátis</b> agrega Google/Bing via SearXNG (com fallback DuckDuckGo) — sem chave. Tem VPS? Suba um <b>SearXNG próprio</b> (docker searxng/searxng) e cole a URL acima: busca ilimitada e estável. <b>Tavily</b> dá resposta sintetizada + fontes (chave grátis em tavily.com).</p>
 
           <label>Personalidade (system prompt)</label>
           <textarea id="systemPrompt"></textarea>

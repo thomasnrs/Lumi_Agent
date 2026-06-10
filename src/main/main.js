@@ -167,8 +167,9 @@ const DEFAULT_CONFIG = {
   imageBaseUrl: '', // provedor de imagem (vazio = usa o do chat)
   imageApiKey: '', // chave do provedor de imagem (vazio = usa a do chat)
   // busca na web
-  searchProvider: 'duckduckgo', // 'tavily' (preciso) | 'brave' | 'duckduckgo' (sem chave)
+  searchProvider: 'duckduckgo', // 'tavily' (preciso) | 'brave' | 'duckduckgo' (grátis: searxng+ddg)
   searchApiKey: '',
+  searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
   mcpServers: {}, // servidores MCP (ferramentas externas plugaveis)
@@ -191,7 +192,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de software sênior. Implemente a tarefa de ponta a ponta: leia o código relevante antes, faça a mudança mínima necessária seguindo o padrão do projeto, e VERIFIQUE rodando o comando/teste pertinente. Ao final, resuma o que fez em poucas linhas.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
     },
     {
       name: 'Revisor',
@@ -209,7 +210,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de QA. Entenda o que precisa ser testado, escreva testes claros (seguindo o framework de testes do projeto) e RODE-OS com run_command. Relate o que passou e o que falhou, com a causa provável das falhas. Não conserte o código de produção sem ser pedido — foque em cobrir e diagnosticar.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory', 'http_request'],
     },
     {
       name: 'Refatorador',
@@ -244,7 +245,7 @@ const DEFAULT_CONFIG = {
         'NUNCA entregue: visual genérico de framework cru, cores que brigam, layout apertado, espaçamento inconsistente, parede de texto. Antes de finalizar, revise com olhar crítico: "isto está bonito, coeso e profissional?". Use web_search para buscar referências/tendências atuais quando precisar de inspiração. Explique brevemente as decisões de design.',
       model: '',
       temperature: 0.7,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'web_search', 'generate_image', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'web_search', 'generate_image', 'read_project_memory', 'see_page', 'view_image'],
     },
   ],
   // voz do usuario (STT) e dispositivos de audio
@@ -893,29 +894,104 @@ async function webSearch(cfg, query, count) {
     };
   }
 
-  // DuckDuckGo (sem chave) — parser do HTML "lite". Básico, mas funciona out-of-box.
-  const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36' },
+  // GRÁTIS (sem chave): SearXNG próprio (se configurado) → públicas (rápido) → DuckDuckGo.
+  const sx = await searxSearch(query, n, cfg.searxUrl);
+  if (sx && sx.results && sx.results.length) return sx;
+  const ddg = await ddgSearch(query, n);
+  if (ddg && ddg.results && ddg.results.length) return ddg;
+  return { provider: 'free', results: [], note: 'nenhum buscador gratuito respondeu agora — tente reformular ou configure Tavily (grátis) nas configurações' };
+}
+
+// instâncias públicas do SearXNG com API JSON (limitam bastante; o ideal é apontar o SEU
+// em "URL do seu SearXNG" — docker searxng/searxng no VPS = busca ilimitada sem chave)
+const SEARX_INSTANCES = ['https://searx.be', 'https://search.inetol.net', 'https://priv.au', 'https://opnxng.com', 'https://searx.tiekoetter.com'];
+let searxIdx = 0;
+async function searxOnce(base, query, n, timeout) {
+  const res = await fetch(base.replace(/\/$/, '') + '/search?q=' + encodeURIComponent(query) + '&format=json&language=pt-BR&safesearch=0', {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36', Accept: 'application/json' },
+    signal: AbortSignal.timeout(timeout),
   });
-  if (!res.ok) return { error: `DuckDuckGo HTTP ${res.status}` };
-  const html = await res.text();
-  const results = [];
-  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-  const snipRe = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-  const strip = (h) => h.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
-  const decodeUddg = (href) => {
-    const m = /[?&]uddg=([^&]+)/.exec(href);
-    return m ? decodeURIComponent(m[1]) : href.startsWith('//') ? 'https:' + href : href;
-  };
-  let m;
-  const snips = [];
-  while ((m = snipRe.exec(html))) snips.push(strip(m[1]));
-  let i = 0;
-  while ((m = re.exec(html)) && results.length < n) {
-    results.push({ title: strip(m[2]), url: decodeUddg(m[1]), snippet: snips[i] || '' });
-    i++;
+  if (!res.ok) return null;
+  const j = await res.json();
+  const results = (j.results || []).slice(0, n).map((r) => ({ title: r.title, url: r.url, snippet: truncate(r.content || '', 600) }));
+  if (!results.length) return null;
+  const answer = (j.answers && j.answers[0] && (j.answers[0].answer || j.answers[0])) || '';
+  return { provider: 'searxng (' + base.replace(/^https?:\/\//, '').replace(/\/$/, '') + ')', answer: typeof answer === 'string' ? answer : '', results };
+}
+async function searxSearch(query, n, customUrl) {
+  // 1) instância do usuário (sem limite) tem prioridade
+  if (customUrl && /^https?:\/\//i.test(customUrl)) {
+    try {
+      const r = await searxOnce(customUrl, query, n, 10000);
+      if (r) return r;
+    } catch (e) {
+      /* cai pras públicas */
+    }
   }
-  return { provider: 'duckduckgo', results };
+  // 2) públicas: 2 tentativas curtas (elas limitam o JSON; não vale travar a busca)
+  for (let tries = 0; tries < 2; tries++) {
+    const base = SEARX_INSTANCES[searxIdx % SEARX_INSTANCES.length];
+    searxIdx++;
+    try {
+      const r = await searxOnce(base, query, n, 5000);
+      if (r) return r;
+    } catch (e) {
+      /* próxima */
+    }
+  }
+  return null;
+}
+async function ddgSearch(query, n) {
+  try {
+    const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const results = [];
+    const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const snipRe = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    const strip = (h) => h.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+    const decodeUddg = (href) => {
+      const m = /[?&]uddg=([^&]+)/.exec(href);
+      return m ? decodeURIComponent(m[1]) : href.startsWith('//') ? 'https:' + href : href;
+    };
+    let m;
+    const snips = [];
+    while ((m = snipRe.exec(html))) snips.push(strip(m[1]));
+    let i = 0;
+    while ((m = re.exec(html)) && results.length < n) {
+      results.push({ title: strip(m[2]), url: decodeUddg(m[1]), snippet: snips[i] || '' });
+      i++;
+    }
+    return { provider: 'duckduckgo', results };
+  } catch (e) {
+    return null;
+  }
+}
+
+// HTML -> texto legível (modo leitura do fetch_url): remove scripts/menus/tags,
+// foca no conteúdo principal e decodifica entidades. Local e grátis.
+function htmlToText(html) {
+  let s = String(html);
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  s = s.replace(/<(header|nav|footer|aside)[\s\S]*?<\/\1>/gi, ' '); // menus/rodapés fora
+  const main = s.match(/<(main|article)[^>]*>[\s\S]*?<\/\1>/i);
+  if (main && main[0].length > 800) s = main[0]; // foca no conteúdo principal quando ele existe
+  s = s.replace(/<(h[1-6])[^>]*>/gi, '\n\n## ').replace(/<li[^>]*>/gi, '\n• ');
+  s = s.replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/section)[^>]*>/gi, '\n');
+  s = s.replace(/<[^>]+>/g, ' ');
+  s = s
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;|&#x27;/g, "'")
+    .replace(/&#(\d+);/g, (m, c) => String.fromCharCode(parseInt(c, 10)));
+  return s.replace(/[ \t]+/g, ' ').replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // diff por linha (LCS) -> [{t:' '|'+'|'-', v}]; transmite pro chat ao editar arquivos
@@ -1755,25 +1831,136 @@ const TOOLS = {
     summary: (a) => `acessar ${a.url}`,
     schema: {
       name: 'fetch_url',
-      description: 'Faz uma requisição HTTP e retorna o corpo (texto). Útil para buscar dados/APIs.',
+      description:
+        'Abre uma página/URL e retorna o CONTEÚDO LEGÍVEL (HTML vira texto limpo, sem tags/menus — cabe muito mais conteúdo útil). Para resposta crua (HTML/JSON exato), passe raw=true. Para chamar APIs com método/headers, use http_request.',
       parameters: {
         type: 'object',
         properties: {
           url: { type: 'string' },
-          method: { type: 'string', description: 'GET (padrão) ou POST' },
-          body: { type: 'string' },
+          raw: { type: 'boolean', description: 'true = retorna o corpo cru, sem extrair texto' },
         },
         required: ['url'],
       },
     },
-    run: async ({ url, method, body }) => {
+    run: async ({ url, raw }) => {
       const res = await fetch(url, {
-        method: method || 'GET',
-        body: body || undefined,
-        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36' },
+        signal: AbortSignal.timeout(20000),
       });
+      const ct = res.headers.get('content-type') || '';
       const t = await res.text();
+      if (!raw && /html/i.test(ct)) {
+        const title = (t.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1];
+        return { status: res.status, title: title ? title.trim().slice(0, 200) : undefined, content: truncate(htmlToText(t), 16000) };
+      }
       return { status: res.status, body: truncate(t, 16000) };
+    },
+  },
+  http_request: {
+    category: 'network',
+    summary: (a) => `${(a.method || 'GET').toUpperCase()} ${a.url}`,
+    schema: {
+      name: 'http_request',
+      description:
+        'Requisição HTTP completa (GET/POST/PUT/PATCH/DELETE) com headers e body — perfeita pra TESTAR APIs, inclusive o servidor que você subiu no terminal (http://localhost:porta). Retorna status, headers principais e corpo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string' },
+          method: { type: 'string', description: 'GET, POST, PUT, PATCH ou DELETE (padrão GET)' },
+          headers: { type: 'object', description: 'headers extras, ex.: {"Content-Type":"application/json","Authorization":"Bearer x"}' },
+          body: { type: 'string', description: 'corpo da requisição (string; JSON já serializado)' },
+        },
+        required: ['url'],
+      },
+    },
+    run: async ({ url, method, headers, body }) => {
+      if (!/^https?:\/\//i.test(String(url))) return { error: 'URL deve começar com http:// ou https://' };
+      const m = (method || 'GET').toUpperCase();
+      const t0 = Date.now();
+      try {
+        const res = await fetch(url, {
+          method: m,
+          headers: headers && typeof headers === 'object' ? headers : undefined,
+          body: body != null && m !== 'GET' && m !== 'HEAD' ? String(body) : undefined,
+          signal: AbortSignal.timeout(20000),
+        });
+        const text = await res.text();
+        const h = {};
+        ['content-type', 'location', 'content-length', 'set-cookie'].forEach((k) => {
+          const v = res.headers.get(k);
+          if (v) h[k] = v;
+        });
+        return { status: res.status, ok: res.ok, headers: h, body: truncate(text, 12000), ms: Date.now() - t0 };
+      } catch (e) {
+        return { error: String((e && e.message) || e) + (/(localhost|127\.0\.0\.1)/.test(url) ? ' — o servidor local está rodando? (veja list_terminals/read_terminal)' : '') };
+      }
+    },
+  },
+  see_page: {
+    category: 'network',
+    summary: (a) => `ver a página ${a.url}`,
+    schema: {
+      name: 'see_page',
+      description:
+        'Renderiza uma URL numa janela invisível e CAPTURA a imagem da página — você ENXERGA o resultado visual. Perfeito pra conferir o site/app que você criou (ex.: http://localhost:3000 depois do run_in_terminal) e corrigir layout/CSS com base no que viu. Requer modelo com visão.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL completa (http/https)' },
+          width: { type: 'number', description: 'largura do viewport (padrão 1280)' },
+          waitMs: { type: 'number', description: 'espera extra após carregar, em ms (padrão 800; aumente pra apps lentos)' },
+        },
+        required: ['url'],
+      },
+    },
+    run: async ({ url, width, waitMs }) => {
+      if (!/^https?:\/\//i.test(String(url))) return { error: 'URL deve começar com http:// ou https://' };
+      let w = null;
+      try {
+        w = new BrowserWindow({
+          show: false,
+          width: Math.min(1920, Math.max(400, parseInt(width, 10) || 1280)),
+          height: 900,
+          webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false },
+        });
+        w.webContents.setAudioMuted(true);
+        await w.loadURL(String(url));
+        await new Promise((r) => setTimeout(r, Math.min(8000, Math.max(0, parseInt(waitMs, 10) || 800))));
+        const img = await w.webContents.capturePage();
+        if (img.isEmpty()) return { error: 'a página não renderizou (tente waitMs maior)' };
+        return { _image: 'data:image/jpeg;base64,' + img.toJPEG(80).toString('base64'), _imageNote: 'A página ' + url + ' renderizada:' };
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        return { error: 'não consegui carregar a página: ' + msg + (/(localhost|127\.0\.0\.1)/.test(url) ? ' — o servidor está de pé? (read_terminal ajuda a conferir)' : '') };
+      } finally {
+        if (w) {
+          try {
+            w.destroy();
+          } catch (e) {
+            /* ok */
+          }
+        }
+      }
+    },
+  },
+  view_image: {
+    category: 'read',
+    summary: (a) => `ver a imagem "${a.path}"`,
+    schema: {
+      name: 'view_image',
+      description:
+        'Abre uma imagem do workspace (png/jpg/webp/gif/bmp) como VISÃO — você enxerga e analisa o conteúdo (mockups, assets, screenshots que o usuário deixou no projeto). Requer modelo com visão.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+    run: async ({ path: p }) => {
+      const abs = resolvePath(p);
+      const ext = (abs.split('.').pop() || '').toLowerCase();
+      const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' }[ext];
+      if (!mime) return { error: 'formato não suportado: .' + ext + ' (png/jpg/webp/gif/bmp)' };
+      const buf = fs.readFileSync(abs);
+      if (buf.length > 6 * 1024 * 1024) return { error: 'imagem muito grande (>6MB)' };
+      return { _image: 'data:' + mime + ';base64,' + buf.toString('base64'), _imageNote: 'Imagem do projeto ' + p + ':' };
     },
   },
   web_search: {
@@ -2238,16 +2425,17 @@ async function runAgent(cfg) {
         const result = await runTool(tc.name, args);
         broadcast('chat:tool-result', { name: tc.name, args, result });
         if (result && result._image) {
-          // captura de tela -> responde a tool e injeta a imagem como visao
-          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, note: 'Captura anexada como imagem.' }) });
+          // imagem (tela/página/arquivo) -> responde a tool e injeta como visão
+          const note = result._imageNote || 'Esta é a captura da minha tela agora:';
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, note: 'Imagem anexada como visão.' }) });
           messages.push({
             role: 'user',
             content: [
-              { type: 'text', text: 'Esta é a captura da minha tela agora:' },
+              { type: 'text', text: note },
               { type: 'image_url', image_url: { url: result._image } },
             ],
           });
-          broadcast('chat:user', { text: '📸 captura de tela', images: [result._image] });
+          broadcast('chat:user', { text: '📸 ' + note.replace(/:$/, ''), images: [result._image] });
         } else {
           // nao reenvia base64 de imagem gerada pro modelo (estoura o contexto)
           const forModel =
