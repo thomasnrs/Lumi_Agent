@@ -30,10 +30,31 @@
       }
       #top .path { flex: 1; font-size: 12px; color: #9aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       #top button {
-        border: none; border-radius: 6px; background: var(--border); color: #fff;
-        padding: 6px 10px; font-size: 12px; cursor: pointer;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: transparent;
+        color: color-mix(in srgb, var(--text) 85%, transparent);
+        padding: 5px 11px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.12s, border-color 0.12s, color 0.12s;
       }
-      #save { background: var(--accent); }
+      #top button:hover {
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+        color: var(--text);
+      }
+      #save {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-text);
+      }
+      #save:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); color: var(--accent-text); }
+      #toggleChat.on, #toggleTerm.on {
+        background: color-mix(in srgb, var(--accent) 22%, transparent);
+        border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+        color: var(--text);
+      }
       #main { flex: 1; display: flex; min-height: 0; }
       #side {
         width: 250px; flex: 0 0 auto; display: flex; flex-direction: column;
@@ -150,7 +171,6 @@
       }
       #chatpane.hidden, #chatresize.hidden { display: none; }
       #chatframe { flex: 1; width: 100%; border: none; background: var(--bg); }
-      #toggleChat.on { background: var(--accent); }
       #preview {
         flex: 1; min-width: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
         gap: 10px; overflow: auto; padding: 16px; background: var(--surface-2);
@@ -161,25 +181,54 @@
       #preview img { max-width: 100%; max-height: calc(100% - 30px); object-fit: contain; border-radius: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
       #previewMeta { font-size: 12px; color: #9aa; background: rgba(0, 0, 0, 0.4); padding: 4px 10px; border-radius: 6px; }
       #empty { margin: 16px auto; color: #667; font-size: 13px; text-align: center; padding: 10px; }
-      /* menu de contexto */
+      /* menu de contexto (mesmo visual dos dropdowns) */
       .ctxmenu {
-        position: fixed; z-index: 200; background: var(--surface); border: 1px solid var(--border);
-        border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); min-width: 140px; font-size: 13px;
+        position: fixed;
+        z-index: 200;
+        background: color-mix(in srgb, var(--surface) 94%, transparent);
+        backdrop-filter: blur(16px);
+        border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+        border-radius: 12px;
+        padding: 6px;
+        box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.35);
+        min-width: 172px;
+        font-size: 12.5px;
+        animation: menuIn 0.13s ease;
       }
-      .ctxmenu .mi { padding: 6px 10px; border-radius: 6px; cursor: pointer; }
-      .ctxmenu .mi:hover { background: var(--accent); color: var(--accent-text); }
+      .ctxmenu .mi {
+        padding: 7px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        transition: background 0.1s;
+      }
+      .ctxmenu .mi svg { width: 14px; height: 14px; flex: 0 0 auto; color: color-mix(in srgb, var(--text) 62%, transparent); }
+      .ctxmenu .mi:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+      .ctxmenu .mi:hover svg { color: var(--accent); }
       .ctxmenu .mi.danger { color: #ff9b9b; }
-      .ctxmenu .mi.danger:hover { background: #3a2030; color: #ffb4b4; }
+      .ctxmenu .mi.danger:hover { background: color-mix(in srgb, #e0556e 18%, transparent); }
+      .ctxmenu .mi.danger svg { color: #ff9b9b; }
       /* modal de nome */
-      .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 300; }
-      .modal .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; width: 320px; max-width: 90%; }
+      .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 300; }
+      .modal .box {
+        background: color-mix(in srgb, var(--surface) 96%, transparent);
+        border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+        border-radius: 14px;
+        padding: 18px;
+        width: 330px;
+        max-width: 90%;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+        animation: menuIn 0.15s ease;
+      }
       .modal .t { font-size: 13px; margin-bottom: 10px; color: var(--text); }
       .modal input { width: 100%; padding: 9px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 13px; font-family: inherit; outline: none; }
       .modal .b { display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end; }
       .modal .b button { border: none; border-radius: 7px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
       .modal .b .cancel { background: var(--border); color: #fff; }
       .modal .b .ok { background: var(--accent); color: var(--accent-text); }
-      /* barra de menus (estilo VS Code) */
+      /* barra de menus (refinada) */
       #menubar {
         display: flex;
         align-items: center;
@@ -190,41 +239,74 @@
         user-select: none;
         position: relative;
         z-index: 150;
+        padding: 3px 6px;
+        gap: 1px;
       }
       .mlabel {
-        padding: 5px 10px;
+        padding: 4px 10px;
         cursor: pointer;
-        color: var(--text);
-        border-radius: 0;
+        color: color-mix(in srgb, var(--text) 80%, transparent);
+        border-radius: 6px;
+        transition: background 0.12s, color 0.12s;
       }
-      .mlabel:hover,
-      .mlabel.open { background: var(--surface); }
+      .mlabel:hover { background: var(--surface); color: var(--text); }
+      .mlabel.open {
+        background: color-mix(in srgb, var(--accent) 18%, transparent);
+        color: var(--text);
+      }
       .mdrop {
         position: absolute;
-        top: 100%;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 0 0 8px 8px;
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
-        min-width: 240px;
-        padding: 4px;
+        top: calc(100% + 4px);
+        background: color-mix(in srgb, var(--surface) 94%, transparent);
+        backdrop-filter: blur(16px);
+        border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+        border-radius: 12px;
+        box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.35);
+        min-width: 264px;
+        padding: 6px;
         z-index: 200;
+        animation: menuIn 0.13s ease;
+      }
+      @keyframes menuIn {
+        from { opacity: 0; transform: translateY(-5px) scale(0.98); }
+        to { opacity: 1; transform: none; }
       }
       .mitem {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        padding: 6px 10px;
-        border-radius: 6px;
+        gap: 9px;
+        padding: 7px 10px;
+        border-radius: 8px;
         cursor: pointer;
         white-space: nowrap;
+        color: var(--text);
+        transition: background 0.1s;
       }
-      .mitem:hover { background: var(--accent); color: var(--accent-text); }
-      .mitem .mhint { font-size: 11px; color: #889; }
-      .mitem:hover .mhint { color: var(--accent-text); opacity: 0.8; }
-      .msep { height: 1px; background: var(--border); margin: 4px 8px; }
-      .mhead { padding: 5px 10px 3px; font-size: 10px; text-transform: uppercase; color: #778; letter-spacing: 0.4px; }
+      .mitem:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+      .mitem:active { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+      .mitem .mic {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: color-mix(in srgb, var(--text) 62%, transparent);
+      }
+      .mitem:hover .mic { color: var(--accent); }
+      .mitem .mic svg { width: 14px; height: 14px; }
+      .mitem .mtx { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+      .mitem .mhint {
+        font-size: 10px;
+        color: #98a;
+        background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+        border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+        border-radius: 5px;
+        padding: 1px 6px;
+        font-family: Consolas, monospace;
+      }
+      .msep { height: 1px; background: color-mix(in srgb, var(--border) 75%, transparent); margin: 5px 10px; }
+      .mhead { padding: 6px 10px 3px; font-size: 9.5px; text-transform: uppercase; color: #788; letter-spacing: 0.6px; font-weight: 600; }
       /* painel inferior: TERMINAL + PORTAS (estilo VS Code) */
       #panelResize { height: 4px; cursor: row-resize; background: var(--border); flex: 0 0 auto; }
       #panelResize:hover { background: var(--accent); }
@@ -704,15 +786,17 @@
         m.className = 'ctxmenu';
         const items = [];
         if (node.dir) {
-          items.push(['Novo arquivo', () => newEntry(node.path, false)]);
-          items.push(['Nova pasta', () => newEntry(node.path, true)]);
+          items.push(['Novo arquivo', () => newEntry(node.path, false), false, MI.filePlus]);
+          items.push(['Nova pasta', () => newEntry(node.path, true), false, MI.folderPlus]);
         }
-        items.push(['Renomear', () => renameEntry(node)]);
-        items.push(['Excluir', () => delEntry(node), true]);
-        items.forEach(([label, fn, danger]) => {
+        items.push(['Renomear', () => renameEntry(node), false, MI.pencil]);
+        items.push(['Revelar no Explorer', () => window.api.revealInExplorer(node.path), false, MI.reveal]);
+        items.push(['Excluir', () => delEntry(node), true, MI.trash]);
+        items.forEach(([label, fn, danger, icon]) => {
           const it = document.createElement('div');
           it.className = 'mi' + (danger ? ' danger' : '');
-          it.textContent = label;
+          it.innerHTML = (icon || '') + '<span></span>';
+          it.lastChild.textContent = label;
           it.onclick = () => {
             closeMenu();
             fn();
@@ -813,12 +897,13 @@
         const m = document.createElement('div');
         m.className = 'ctxmenu';
         [
-          ['Novo arquivo', () => newEntry('', false)],
-          ['Nova pasta', () => newEntry('', true)],
-        ].forEach(([l, fn]) => {
+          ['Novo arquivo', () => newEntry('', false), MI.filePlus],
+          ['Nova pasta', () => newEntry('', true), MI.folderPlus],
+        ].forEach(([l, fn, icon]) => {
           const it = document.createElement('div');
           it.className = 'mi';
-          it.textContent = l;
+          it.innerHTML = (icon || '') + '<span></span>';
+          it.lastChild.textContent = l;
           it.onclick = () => {
             closeMenu();
             fn();
@@ -1252,6 +1337,31 @@
         });
       }
 
+      // ícones dos menus (lucide, 14px)
+      const MNI = (p) =>
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + p + '</svg>';
+      const MI = {
+        folderOpen: MNI('<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>'),
+        folder: MNI('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
+        filePlus: MNI('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 18v-6"/>'),
+        folderPlus: MNI('<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
+        save: MNI('<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'),
+        reveal: MNI('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'),
+        undo: MNI('<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>'),
+        redo: MNI('<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>'),
+        search: MNI('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
+        pencil: MNI('<path d="M21.2 6.4a1 1 0 0 0 0-1.4l-2.2-2.2a1 1 0 0 0-1.4 0L3 17.4V21h3.6Z"/><path d="m15 5 4 4"/>'),
+        term: MNI('<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>'),
+        plug: MNI('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>'),
+        chat: MNI('<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>'),
+        collapse: MNI('<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>'),
+        refresh: MNI('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
+        goto: MNI('<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>'),
+        help: MNI('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'),
+        trash: MNI('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
+        plus: MNI('<path d="M5 12h14"/><path d="M12 5v14"/>'),
+      };
+
       const MENUS = [
         {
           label: 'Arquivo',
@@ -1259,67 +1369,69 @@
             const c = await window.api.getConfig();
             const rec = (c.recentWorkspaces || []).filter((w) => w !== c.workspace);
             return [
-              { label: 'Abrir pasta (workspace)…', fn: openFolder },
+              { label: 'Abrir pasta (workspace)…', icon: MI.folderOpen, fn: openFolder },
               ...(rec.length ? [{ head: 'Workspaces recentes' }] : []),
-              ...rec.map((w) => ({ label: '📁 ' + w.replace(/\\/g, '/').split('/').pop(), hint: '', title: w, fn: () => switchWorkspace(w) })),
+              ...rec.map((w) => ({ label: w.replace(/\\/g, '/').split('/').pop(), icon: MI.folder, title: w, fn: () => switchWorkspace(w) })),
               '-',
-              { label: 'Novo arquivo', fn: () => newEntry('', false) },
-              { label: 'Nova pasta', fn: () => newEntry('', true) },
+              { label: 'Novo arquivo', icon: MI.filePlus, fn: () => newEntry('', false) },
+              { label: 'Nova pasta', icon: MI.folderPlus, fn: () => newEntry('', true) },
               '-',
-              { label: 'Salvar', hint: 'Ctrl+S', fn: save },
-              { label: 'Revelar no Explorer', fn: revealCurrent },
+              { label: 'Salvar', icon: MI.save, hint: 'Ctrl+S', fn: save },
+              { label: 'Revelar no Explorer', icon: MI.reveal, fn: revealCurrent },
             ];
           },
         },
         {
           label: 'Editar',
           items: [
-            { label: 'Desfazer', hint: 'Ctrl+Z', fn: () => editor && editor.trigger('menu', 'undo') },
-            { label: 'Refazer', hint: 'Ctrl+Y', fn: () => editor && editor.trigger('menu', 'redo') },
+            { label: 'Desfazer', icon: MI.undo, hint: 'Ctrl+Z', fn: () => editor && editor.trigger('menu', 'undo') },
+            { label: 'Refazer', icon: MI.redo, hint: 'Ctrl+Y', fn: () => editor && editor.trigger('menu', 'redo') },
             '-',
-            { label: 'Buscar no arquivo', hint: 'Ctrl+F', fn: () => editor && (editor.focus(), editor.trigger('menu', 'actions.find')) },
-            { label: 'Substituir', hint: 'Ctrl+H', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.startFindReplaceAction')) },
+            { label: 'Buscar no arquivo', icon: MI.search, hint: 'Ctrl+F', fn: () => editor && (editor.focus(), editor.trigger('menu', 'actions.find')) },
+            { label: 'Substituir', icon: MI.pencil, hint: 'Ctrl+H', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.startFindReplaceAction')) },
           ],
         },
         {
           label: 'Exibir',
           items: [
-            { label: 'Terminal', hint: 'Ctrl+`', fn: () => document.getElementById('toggleTerm').click() },
+            { label: 'Terminal', icon: MI.term, hint: 'Ctrl+`', fn: () => document.getElementById('toggleTerm').click() },
             {
               label: 'Portas',
+              icon: MI.plug,
               fn: () => {
                 showPanel(true);
                 setPanelTab('ports');
               },
             },
-            { label: 'Chat da Lumi', fn: () => toggleChat.click() },
+            { label: 'Chat da Lumi', icon: MI.chat, fn: () => toggleChat.click() },
             '-',
             {
               label: 'Recolher pastas',
+              icon: MI.collapse,
               fn: () => {
                 expanded.clear();
                 drawTree();
               },
             },
-            { label: 'Atualizar árvore', fn: loadTree },
+            { label: 'Atualizar árvore', icon: MI.refresh, fn: loadTree },
           ],
         },
         {
           label: 'Ir',
           items: [
-            { label: 'Buscar no projeto…', hint: 'Ctrl+Shift+F', fn: () => toggleSearch(true) },
-            { label: 'Ir para a linha…', hint: 'Ctrl+G', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.gotoLine')) },
+            { label: 'Buscar no projeto…', icon: MI.search, hint: 'Ctrl+Shift+F', fn: () => toggleSearch(true) },
+            { label: 'Ir para a linha…', icon: MI.goto, hint: 'Ctrl+G', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.gotoLine')) },
           ],
         },
         {
           label: 'Terminal',
           items: [
-            { label: 'Novo terminal', fn: newTerminal },
-            { label: 'Matar terminal atual', fn: () => document.getElementById('termKillBtn').click() },
-            { label: 'Ver portas', fn: () => { showPanel(true); setPanelTab('ports'); } },
+            { label: 'Novo terminal', icon: MI.plus, fn: newTerminal },
+            { label: 'Matar terminal atual', icon: MI.trash, fn: () => document.getElementById('termKillBtn').click() },
+            { label: 'Ver portas', icon: MI.plug, fn: () => { showPanel(true); setPanelTab('ports'); } },
           ],
         },
-        { label: 'Ajuda', items: [{ label: 'Atalhos do editor', fn: showHelp }] },
+        { label: 'Ajuda', items: [{ label: 'Atalhos do editor', icon: MI.help, fn: showHelp }] },
       ];
       (function buildMenubar() {
         const bar = document.getElementById('menubar');
@@ -1352,7 +1464,9 @@
             }
             const el = document.createElement('div');
             el.className = 'mitem';
-            el.innerHTML = '<span>' + esc(it.label) + '</span>' + (it.hint ? '<span class="mhint">' + it.hint + '</span>' : '');
+            el.innerHTML =
+              '<span class="mic">' + (it.icon || '') + '</span><span class="mtx">' + esc(it.label) + '</span>' +
+              (it.hint ? '<span class="mhint">' + it.hint + '</span>' : '');
             if (it.title) el.title = it.title;
             el.onclick = () => {
               closeMenu();
