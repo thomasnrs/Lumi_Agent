@@ -1464,9 +1464,25 @@
         typingEl = null; // o innerHTML='' removeu os pontinhos, se existiam
         curAct = null; // idem pro grupo de ações
         autoScroll = true;
-        // formato novo {messages, events}; tolera o antigo (array puro)
+        // formato novo {messages, events, archive}; tolera o antigo (array puro)
         const list = Array.isArray(h) ? h : (h && h.messages) || [];
         const events = (!Array.isArray(h) && h && h.events) || [];
+        const archive = (!Array.isArray(h) && h && h.archive) || [];
+        // mensagens antigas (já compactadas pro contexto) — continuam visíveis aqui
+        archive.forEach((m) => {
+          if (m.role === 'assistant') enhanceCode(addAssistant(m.content));
+          else {
+            const c = extractUser(m.content);
+            addUser(c.text, c.images);
+          }
+        });
+        if (archive.length) {
+          const dv = document.createElement('div');
+          dv.className = 'msg tool';
+          dv.style.cssText = 'align-self:center;opacity:.6;font-size:10px;';
+          dv.textContent = '— mensagens acima já foram resumidas pro contexto da Lumi —';
+          msgs.appendChild(dv);
+        }
         const evAt = (i) => events.filter((e) => e.t !== 'mts' && e.a === i);
         const mtsAt = (i) => {
           const e = events.find((x) => x.t === 'mts' && x.a === i);

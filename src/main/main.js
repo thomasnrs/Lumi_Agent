@@ -78,6 +78,8 @@ function applyIgnore() {
 // principal; o chat embutido no editor da workspace é um iframe e precisa receber tudo.
 // ---- linha do tempo do chat (persiste tool_calls/agentes/diffs pra não sumirem ao reiniciar) ----
 let chatEvents = []; // [{a: nº de msgs no history quando ocorreu, t: tipo, d: dados, ts}]
+// mensagens antigas COMPACTADAS saem do contexto do modelo mas ficam aqui pra UI não "perder" nada
+let chatArchive = [];
 function slimVal(v, depth) {
   // versão enxuta pra salvar em disco: corta strings gigantes e troca imagens por marcador
   if (typeof v === 'string') return v.length > 4000 ? v.slice(0, 4000) + '…[cortado no histórico]' : v;
@@ -991,7 +993,7 @@ function createTerminal(opts) {
   const cwd = o.cwd || loadConfig().workspace || require('os').homedir();
   const id = 't' + ++termSeq;
   const title = o.title || path.basename(shell, '.exe');
-  const rec = { p: null, pty: false, title, buf: '' };
+  const rec = { p: null, pty: false, title, buf: '', ai: !!o.ai }; // ai = aberto pela Lumi (política de limpeza)
   const push = (d) => {
     rec.buf = (rec.buf + d).slice(-200000); // final do scrollback (replay da UI + leitura da IA)
     broadcast('term:data', { id, data: d });
@@ -1131,21 +1133,41 @@ const TOOLS = {
     schema: {
       name: 'run_in_terminal',
       description:
-        'Abre um terminal INTEGRADO (visível pro usuário) e roda um comando LONGO/contínuo que não termina sozinho — dev server (npm run dev), watch, etc. NÃO bloqueia. Para comandos rápidos que terminam, use run_command. Retorna o id do terminal; acompanhe a saída com read_terminal.',
+        'Roda um comando LONGO/contínuo (dev server, watch) num terminal INTEGRADO visível, sem bloquear. ' +
+        'REUTILIZE terminais: passe terminalId de um terminal seu que esteja LIVRE (sem servidor rodando) em vez de abrir outro. ' +
+        'Sem terminalId, abre um novo (mantenho no máx. 2 abertos — o mais antigo é fechado). ' +
+        'Feche com kill_terminal quando não precisar mais. Para comandos rápidos que terminam sozinhos, use run_command.',
       parameters: {
         type: 'object',
         properties: {
           command: { type: 'string', description: 'comando a executar no terminal' },
           cwd: { type: 'string', description: 'pasta de trabalho (relativa ao workspace; vazio = workspace)' },
+          terminalId: { type: 'string', description: 'id de um terminal já aberto para reutilizar (ex.: t1)' },
         },
         required: ['command'],
       },
     },
-    run: async ({ command, cwd }) => {
+    run: async ({ command, cwd, terminalId }) => {
+      // reutiliza um terminal existente (não digite num terminal com servidor rodando!)
+      if (terminalId) {
+        const t = terminals.get(String(terminalId));
+        if (t) {
+          termWrite(t, String(command) + (t.pty ? '\r' : '\n'));
+          return { ok: true, terminalId: String(terminalId), reused: true, note: 'comando enviado ao terminal existente; use read_terminal para ver a saída' };
+        }
+      }
+      // política anti-bagunça: no máx. 2 terminais abertos pela IA — fecha o mais antigo
+      let closedNote = '';
+      const aiTerms = [...terminals.entries()].filter(([, r]) => r.ai);
+      if (aiTerms.length >= 2) {
+        const [oldId, oldRec] = aiTerms[0];
+        termKill(oldRec);
+        closedNote = ' (fechei o terminal mais antigo ' + oldId + ' pra não acumular)';
+      }
       const dir = cwd ? resolvePath(cwd) : undefined;
-      const r = createTerminal({ command, cwd: dir, title: String(command).slice(0, 24) });
+      const r = createTerminal({ command, cwd: dir, title: String(command).slice(0, 24), ai: true });
       if (r.error) return r;
-      return { ok: true, terminalId: r.id, pid: r.pid, note: 'rodando no terminal integrado; use read_terminal({terminalId}) para ver a saída' };
+      return { ok: true, terminalId: r.id, pid: r.pid, note: 'rodando no terminal integrado; use read_terminal({terminalId}) para acompanhar' + closedNote };
     },
   },
   read_terminal: {
@@ -2492,6 +2514,8 @@ async function maybeSummarize(cfg) {
     if (summary && summary.trim()) {
       convSummary = summary.trim();
       history = rest;
+      // as msgs resumidas saem do CONTEXTO mas vão pro arquivo morto (a UI continua mostrando tudo)
+      chatArchive = chatArchive.concat(sanitizeForSave(toSum)).slice(-300);
       // realinha a linha do tempo: as msgs antigas saíram, então desloca os anchors
       chatEvents = chatEvents.map((e) => ({ ...e, a: e.a - cut })).filter((e) => e.a >= 0);
       saveSummary();
@@ -2554,6 +2578,7 @@ function saveCurrentChat() {
       summary: convSummary,
       history: sanitizeForSave(history),
       events: chatEvents, // linha do tempo (tools/agentes/diffs/horários) — sobrevive ao reiniciar
+      archive: chatArchive, // mensagens antigas compactadas (só pra exibição)
     };
     fs.writeFileSync(chatFile(currentChatId), JSON.stringify(data));
   } catch (e) {
@@ -2594,6 +2619,7 @@ function loadChatInto(id) {
     history = Array.isArray(j.history) ? j.history : [];
     convSummary = j.summary || '';
     chatEvents = Array.isArray(j.events) ? j.events : [];
+    chatArchive = Array.isArray(j.archive) ? j.archive : [];
     currentChatId = j.id || id;
     return true;
   } catch (e) {
@@ -2615,6 +2641,7 @@ function newChat(seedSummary) {
   history = [];
   convSummary = seedSummary || '';
   chatEvents = [];
+  chatArchive = [];
   setCurrentChatId(genChatId());
   saveCurrentChat();
   return currentChatId;
@@ -3832,7 +3859,7 @@ ipcMain.handle('stt:transcribe', async (_e, { audioB64, mime }) => {
 });
 
 // ---- IPC: chat ----
-ipcMain.handle('chat:history', () => ({ messages: history, events: chatEvents }));
+ipcMain.handle('chat:history', () => ({ messages: history, events: chatEvents, archive: chatArchive }));
 
 // "Nova conversa": salva a atual e abre um chat novo (não perde a anterior)
 ipcMain.on('chat:reset', () => startNewChat());
