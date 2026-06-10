@@ -417,6 +417,15 @@
           <datalist id="modelsDatalist"></datalist>
           <label>Modelo reserva (fallback — usado se o principal falhar no meio do turno)</label>
           <input id="fallbackModel" type="text" list="modelsDatalist" placeholder="opcional, ex.: gpt-4o-mini" />
+
+          <label>Proatividade (ela falar por conta própria)</label>
+          <select id="proactivity">
+            <option value="off">Desligada — só fala quando falada</option>
+            <option value="low">Discreta — saudação ao abrir + lembretes</option>
+            <option value="normal">Normal — + boas-vindas na volta e lembrete de pausa (2h)</option>
+            <option value="high">Tagarela — + puxa papo de vez em quando (pausa em 1h)</option>
+          </select>
+          <p class="hint">Ela fala em voz alta e no chat. Lembretes ("me lembra em 20min de...") <b>sempre</b> disparam, em qualquer nível — inclusive desligada.</p>
           <div id="modelsStatus" class="hint"></div>
 
           <label>Temperatura (criatividade): <span id="tempVal"></span></label>

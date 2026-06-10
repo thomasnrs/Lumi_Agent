@@ -887,6 +887,7 @@ const searchProviderEl = document.getElementById('searchProvider');
 const searchApiKeyEl = document.getElementById('searchApiKey');
 const searxUrlEl = document.getElementById('searxUrl');
 const fallbackModelEl = document.getElementById('fallbackModel');
+const proactivityEl = document.getElementById('proactivity');
 const clearFactsBtn = document.getElementById('clearFacts');
 const permEls = {
   read: document.getElementById('permRead'),
@@ -1186,6 +1187,7 @@ async function openSettings() {
   searchApiKeyEl.value = c.searchApiKey || '';
   searxUrlEl.value = c.searxUrl || '';
   fallbackModelEl.value = c.fallbackModel || '';
+  proactivityEl.value = c.proactivity || 'normal';
   const perms = c.perms || {};
   permEls.read.value = perms.read || 'ask';
   permEls.write.value = perms.write || 'ask';
@@ -1326,6 +1328,7 @@ function readForm() {
     searchApiKey: searchApiKeyEl.value.trim(),
     searxUrl: searxUrlEl.value.trim(),
     fallbackModel: fallbackModelEl.value.trim(),
+    proactivity: proactivityEl.value,
     perms: {
       read: permEls.read.value,
       write: permEls.write.value,

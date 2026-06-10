@@ -171,6 +171,7 @@ const DEFAULT_CONFIG = {
   searchApiKey: '',
   searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
+  proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
   mcpServers: {}, // servidores MCP (ferramentas externas plugaveis)
@@ -683,7 +684,8 @@ const COMPANION_BASE =
   '- Seja capaz e proativa: use suas ferramentas (arquivos, comandos, web, imagem, ver/controlar a tela) para realmente RESOLVER, não só descrever.\n' +
   '- No bate-papo, respostas curtas; no técnico, foco e precisão. NUNCA invente fatos/APIs — se não sabe, descubra (pesquise/leia).\n' +
   '- Tome iniciativa: se faltar um passo óbvio, faça; se algo der errado, conserte a causa em vez de só relatar.\n' +
-  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag [emoção:feliz|triste|brava|surpresa|pensativa] — ela é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).';
+  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag [emoção:feliz|triste|brava|surpresa|pensativa] — ela é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).\n' +
+  '- LEMBRETES: se o usuário pedir pra lembrar de algo ("me lembra em 20min de..."), use set_reminder — você avisa em voz alta na hora certa.';
 
 // Monta o system prompt com os fatos memorizados + (opcional) memoria do projeto
 // SO da máquina — pro modelo gerar comandos certos (PowerShell no Windows, bash no Linux)
@@ -2010,6 +2012,62 @@ const TOOLS = {
       if (!list.length) return { error: 'plano vazio' };
       broadcast('chat:plan', list);
       return { ok: true, itens: list.length };
+    },
+  },
+  set_reminder: {
+    category: null, // inofensivo (ela só fala na hora marcada)
+    summary: (a) => `lembrete: "${a.message}"`,
+    schema: {
+      name: 'set_reminder',
+      description:
+        'Cria um lembrete: na hora marcada você avisa o usuário em voz alta e no chat (funciona mesmo se ele fechar o chat; persiste se o app reiniciar). Use minutes OU at.',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'o que lembrar (curto, ex.: "tirar o pão do forno")' },
+          minutes: { type: 'number', description: 'daqui a quantos minutos (ex.: 20)' },
+          at: { type: 'string', description: 'horário HH:MM (hoje; se já passou, amanhã)' },
+        },
+        required: ['message'],
+      },
+    },
+    run: async ({ message, minutes, at }) => {
+      let due = 0;
+      if (minutes != null && !isNaN(minutes)) due = Date.now() + Math.min(7 * 24 * 60, Math.max(0.2, Number(minutes))) * 60000;
+      else if (at && /^\d{1,2}:\d{2}$/.test(String(at).trim())) {
+        const [h, m] = String(at).trim().split(':').map(Number);
+        const d = new Date();
+        d.setHours(h, m, 0, 0);
+        if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // já passou → amanhã
+        due = d.getTime();
+      } else return { error: 'informe minutes (número) ou at ("HH:MM")' };
+      const r = { id: 'r' + ++remSeq, at: due, message: String(message).slice(0, 300) };
+      reminders.push(r);
+      saveReminders();
+      broadcast('chat:note', { text: '⏰ lembrete criado para ' + fmtHour(due) + ' — ' + r.message });
+      return { ok: true, id: r.id, quando: fmtHour(due) };
+    },
+  },
+  list_reminders: {
+    category: null,
+    summary: () => 'ver os lembretes',
+    schema: { name: 'list_reminders', description: 'Lista os lembretes pendentes (id, horário, mensagem).', parameters: { type: 'object', properties: {} } },
+    run: async () => ({ reminders: reminders.map((r) => ({ id: r.id, quando: fmtHour(r.at), message: r.message })) }),
+  },
+  cancel_reminder: {
+    category: null,
+    summary: (a) => `cancelar o lembrete ${a.id}`,
+    schema: {
+      name: 'cancel_reminder',
+      description: 'Cancela um lembrete pendente pelo id (veja list_reminders).',
+      parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    },
+    run: async ({ id }) => {
+      const before = reminders.length;
+      reminders = reminders.filter((r) => r.id !== String(id));
+      if (reminders.length === before) return { error: 'lembrete não encontrado: ' + id };
+      saveReminders();
+      return { ok: true };
     },
   },
   delegate_to_agent: {
@@ -3649,7 +3707,18 @@ function showContextMenu() {
 
 app.whenReady().then(() => {
   initChats(); // multi-chat: retoma o chat atual (ou migra/cria)
+  loadReminders(); // lembretes persistidos (os vencidos disparam no 1º ciclo)
   startWorkspaceWatcher(); // auto-refresh do editor quando arquivos mudam
+
+  // saudação ao abrir (proatividade ≥ discreta) — com a persona dela
+  setTimeout(async () => {
+    if (proactivityLevel() < 1 || agentRunning) return;
+    const h = new Date().getHours();
+    const momento = h < 6 ? 'madrugada' : h < 12 ? 'manhã' : h < 18 ? 'tarde' : 'noite';
+    proactiveSay(
+      await proactiveLLM('O app acabou de abrir e é ' + momento + '. Cumprimente o usuário com UMA frase bem curtinha e calorosa.', h < 12 ? 'Bom dia! 💚' : h < 18 ? 'Boa tarde! 💚' : 'Boa noite! 💚')
+    );
+  }, 12000);
   connectMcpServers().catch((e) => console.error('MCP:', e)); // conecta ferramentas externas
 
   // libera o uso do microfone (STT)
@@ -3693,6 +3762,7 @@ app.whenReady().then(() => {
       lastCx = rx;
       lastCy = ry;
       cursorPollMoves++;
+      lastUserActivity = Date.now(); // proatividade: usuário está ativo
       win.webContents.send('cursor', { x: rx, y: ry });
     }
   }, 33);
@@ -4480,6 +4550,134 @@ ipcMain.on('chat:stop', () => {
   steerQueue = [];
   broadcast('chat:stopped');
 });
+
+// ============================================================
+//  PROATIVIDADE: a Lumi fala por conta própria (lembretes + companheirismo)
+//  Níveis (config.proactivity): off | low (saudação+lembretes) |
+//  normal (+volta do idle, pausa 2h) | high (+papo espontâneo, pausa 1h)
+// ============================================================
+let lastUserActivity = Date.now(); // último movimento do mouse (vem do cursorTimer)
+let wasIdle = false;
+let lastProactiveAt = 0; // cooldown global (não virar spam)
+let sessionStart = Date.now(); // início do período contínuo de uso
+let lastBreakNudge = Date.now();
+let lastSmallTalk = Date.now();
+
+function proactivityLevel() {
+  return ['off', 'low', 'normal', 'high'].indexOf(loadConfig().proactivity || 'normal'); // -1/0=off
+}
+
+// Fala espontânea: entra no histórico + bolha/chat/TTS pelos canais normais de streaming
+function proactiveSay(text, emotion) {
+  if (!text || !text.trim() || agentRunning) return false; // nunca atropela um turno
+  history.push({ role: 'assistant', content: text });
+  broadcast('chat:token', text);
+  broadcast('chat:done');
+  broadcast('tool:animation', emotion || 'happy');
+  saveHistory();
+  lastProactiveAt = Date.now();
+  return true;
+}
+// Gera a fala com a persona dela (cai num texto fixo se o provider falhar)
+async function proactiveLLM(instruction, fallback) {
+  try {
+    const cfg = loadConfig();
+    const facts = cfg.memoryEnabled !== false ? loadFacts().map((x) => x.fact).slice(-30) : [];
+    const out = await llmComplete(cfg, [
+      {
+        role: 'system',
+        content:
+          (cfg.systemPrompt || 'Você é a Lumi, uma companheira de desktop calorosa.') +
+          '\nGere APENAS uma fala curta (1 a 2 frases), natural e em português, sem aspas e sem prefixos.' +
+          (facts.length ? '\nO que você sabe do usuário:\n- ' + facts.join('\n- ') : ''),
+      },
+      { role: 'user', content: instruction },
+    ]);
+    const t = (out || '').trim().replace(/^["']|["']$/g, '');
+    return t && t.length < 400 ? t : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+// ---- lembretes (persistem em userData/reminders.json — sobrevivem ao fechar) ----
+function remindersPath() {
+  return path.join(app.getPath('userData'), 'reminders.json');
+}
+let reminders = [];
+let remSeq = 0;
+function loadReminders() {
+  try {
+    reminders = JSON.parse(fs.readFileSync(remindersPath(), 'utf8')) || [];
+    remSeq = reminders.reduce((m, r) => Math.max(m, parseInt(String(r.id).slice(1), 10) || 0), 0);
+  } catch (e) {
+    reminders = [];
+  }
+}
+function saveReminders() {
+  try {
+    fs.writeFileSync(remindersPath(), JSON.stringify(reminders));
+  } catch (e) {
+    /* ok */
+  }
+}
+function fmtHour(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+// loop dos lembretes: dispara os vencidos (espera o turno atual acabar, se houver)
+setInterval(() => {
+  if (!reminders.length || agentRunning) return;
+  const now = Date.now();
+  const due = reminders.filter((r) => r.at <= now);
+  if (!due.length) return;
+  reminders = reminders.filter((r) => r.at > now);
+  saveReminders();
+  due.forEach((r, i) => {
+    const late = now - r.at > 10 * 60000; // app esteve fechado?
+    setTimeout(() => proactiveSay((late ? '⏰ (atrasado, eu estava fechada) Lembrete: ' : '⏰ Lembrete: ') + r.message, 'surprised'), i * 4000);
+  });
+}, 15000);
+
+// loop do companheirismo (1x/min)
+setInterval(async () => {
+  const lvl = proactivityLevel();
+  if (lvl <= 0) return;
+  const now = Date.now();
+  const idleMin = (now - lastUserActivity) / 60000;
+  if (idleMin > 30) {
+    wasIdle = true; // usuário longe — só observa
+    return;
+  }
+  if (wasIdle) {
+    // acabou de voltar
+    wasIdle = false;
+    sessionStart = now;
+    lastBreakNudge = now;
+    if (lvl >= 2 && now - lastProactiveAt > 20 * 60000) {
+      proactiveSay(await proactiveLLM('O usuário acabou de voltar ao computador depois de um tempo fora. Dê boas-vindas bem curtinhas e calorosas.', 'Bem-vindo de volta! 💚'));
+    }
+    return;
+  }
+  // cuidado: pausa após uso contínuo (normal: 2h · tagarela: 1h)
+  const limitMin = lvl >= 3 ? 60 : 120;
+  if (lvl >= 2 && (now - sessionStart) / 60000 >= limitMin && (now - lastBreakNudge) / 60000 >= limitMin && now - lastProactiveAt > 20 * 60000) {
+    lastBreakNudge = now;
+    const horas = Math.round(((now - sessionStart) / 3600000) * 10) / 10;
+    proactiveSay(
+      await proactiveLLM('O usuário está há ' + horas + ' horas direto no computador. Sugira carinhosamente (sem sermão) uma pausa rápida — água, alongar, descansar os olhos.', 'Ei, você tá há um tempão aí… bora esticar as pernas e beber uma água? 💚'),
+      'relaxed'
+    );
+    return;
+  }
+  // papo espontâneo (só no nível tagarela, a cada ~90min)
+  if (lvl >= 3 && (now - lastSmallTalk) / 60000 >= 90 && now - lastProactiveAt > 20 * 60000) {
+    lastSmallTalk = now;
+    const t = await proactiveLLM('Puxe um assunto leve e CURTO com o usuário — algo que você sabe sobre ele, uma curiosidade, ou só um carinho. Não ofereça ajuda técnica; é só companhia.', '');
+    if (t) proactiveSay(t);
+  }
+}, 60000);
 
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
