@@ -1101,7 +1101,7 @@
         toBottomBtn.hidden = true;
       });
       function scrollBottom() {
-        if (autoScroll) scrollBottom();
+        if (autoScroll) msgs.scrollTop = msgs.scrollHeight;
         else toBottomBtn.hidden = false; // chegou conteúdo novo enquanto você lia acima
       }
       msgs.addEventListener('scroll', () => {
@@ -1468,21 +1468,16 @@
         const list = Array.isArray(h) ? h : (h && h.messages) || [];
         const events = (!Array.isArray(h) && h && h.events) || [];
         const archive = (!Array.isArray(h) && h && h.archive) || [];
-        // mensagens antigas (já compactadas pro contexto) — continuam visíveis aqui
+        // mensagens antigas (já compactadas pro contexto) renderizam IGUAL às normais —
+        // pula as vazias (turnos só-ferramenta deixavam placeholder sem texto = balão vazio)
         archive.forEach((m) => {
-          if (m.role === 'assistant') enhanceCode(addAssistant(m.content));
-          else {
+          if (m.role === 'assistant') {
+            if (m.content && String(m.content).trim()) enhanceCode(addAssistant(m.content));
+          } else {
             const c = extractUser(m.content);
-            addUser(c.text, c.images);
+            if ((c.text && c.text.trim()) || c.images.length) addUser(c.text, c.images);
           }
         });
-        if (archive.length) {
-          const dv = document.createElement('div');
-          dv.className = 'msg tool';
-          dv.style.cssText = 'align-self:center;opacity:.6;font-size:10px;';
-          dv.textContent = '— mensagens acima já foram resumidas pro contexto da Lumi —';
-          msgs.appendChild(dv);
-        }
         const evAt = (i) => events.filter((e) => e.t !== 'mts' && e.a === i);
         const mtsAt = (i) => {
           const e = events.find((x) => x.t === 'mts' && x.a === i);
@@ -1509,12 +1504,13 @@
         list.forEach((m, i) => {
           evAt(i).forEach(renderEv); // ferramentas/agentes/diffs que rolaram antes desta mensagem
           if (m.role === 'assistant') {
+            if (!m.content || !String(m.content).trim()) return; // turno só-ferramenta: sem balão vazio
             const ts = mtsAt(i);
             const el = addAssistant(m.content, ts);
             if (!ts) enhanceCode(el); // chats antigos sem horário ainda ganham highlight
           } else {
             const c = extractUser(m.content);
-            addUser(c.text, c.images, false, mtsAt(i));
+            if ((c.text && c.text.trim()) || c.images.length) addUser(c.text, c.images, false, mtsAt(i));
           }
         });
         evAt(list.length).forEach(renderEv); // eventos após a última mensagem

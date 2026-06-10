@@ -3978,7 +3978,8 @@ async function runChatTurn(cfg, popUserOnError) {
       // OpenAI-compativel: loop do agente com ferramentas
       full = await runAgent(cfg);
     }
-    history.push({ role: 'assistant', content: full });
+    // turno só-ferramenta pode terminar sem texto — não salva balão vazio no histórico
+    if (full && full.trim()) history.push({ role: 'assistant', content: full });
     await maybeSummarize(cfg); // gestao de contexto: resume o antigo se crescer demais
     saveHistory(); // memoria persistente
     broadcast('chat:done');
