@@ -102,7 +102,7 @@ function logChatEvent(channel, payload) {
       if (a >= 0 && !chatEvents.some((e) => e.t === 'mts' && e.a === a)) chatEvents.push({ a, t: 'mts', ts: Date.now() });
       return;
     }
-    const map = { 'chat:tool': 'tool', 'chat:tool-result': 'result', 'chat:agent': 'agent', 'chat:diff': 'diff', 'chat:note': 'note', 'chat:plan': 'plan' };
+    const map = { 'chat:tool': 'tool', 'chat:tool-result': 'result', 'chat:agent': 'agent', 'chat:diff': 'diff', 'chat:note': 'note', 'chat:plan': 'plan', 'chat:ask': 'ask', 'chat:ask-done': 'askdone' };
     const t = map[channel];
     if (!t) return;
     chatEvents.push({ a: history.length, t, d: slimVal(payload, 0), ts: Date.now() });
@@ -449,7 +449,7 @@ const CODING_GUIDE =
   '6. Caminhos SEMPRE relativos ao workspace.\n' +
   '7. Quando não souber algo (lib, versão atual, API, erro estranho), use web_search em vez de adivinhar.\n' +
   '8. Seja CONCISA e direta: explique decisões importantes em poucas linhas; o foco é a ação e o resultado, não textão. Mostre o progresso em passos pequenos (os diffs aparecem no chat).\n' +
-  '9. Segurança: não rode comandos destrutivos sem motivo claro; confirme antes de apagar/sobrescrever coisas importantes.\n' +
+  '9. Segurança: não rode comandos destrutivos sem motivo claro; antes de apagar/sobrescrever algo importante ou tomar uma decisão que é do USUÁRIO, valide com ask_user (pergunta com opções clicáveis).\n' +
   '10. Depois de mudanças relevantes, ATUALIZE a memória do projeto com update_project_memory (visão geral, arquitetura, decisões, estrutura de arquivos e tarefas pendentes) — é isso que mantém seu contexto entre sessões/chats novos.\n' +
   '11. Tarefa com 3+ etapas? Mostre um PLANO com update_plan logo no início (passos curtos) e atualize os status (doing/done) conforme avança — o usuário acompanha pelo checklist.\n' +
   '12. GIT: só commite/push quando o usuário pedir. Commits atômicos com mensagem clara (o quê + porquê); confira git status/diff antes de commitar; NUNCA use --force nem reescreva histórico sem pedido explícito.';
@@ -1261,6 +1261,13 @@ ipcMain.handle('ports:kill', async (_e, pid) => {
 });
 ipcMain.on('ports:open', (_e, port) => shell.openExternal('http://localhost:' + parseInt(port, 10)));
 
+// ---- ask_user: a Lumi pergunta e ESPERA a resposta do usuário antes de continuar ----
+let pendingAsk = null; // {id, finish(answer), timer}
+let askSeq = 0;
+ipcMain.on('chat:ask-answer', (_e, { id, answer }) => {
+  if (pendingAsk && pendingAsk.id === id) pendingAsk.finish(String(answer || '').slice(0, 1000));
+});
+
 // Registro de ferramentas: schema (pro modelo) + category (permissao) + run (execucao)
 const TOOLS = {
   run_in_terminal: {
@@ -2045,6 +2052,37 @@ const TOOLS = {
       },
     },
     run: async ({ query, count }) => webSearch(loadConfig(), String(query || ''), count),
+  },
+  ask_user: {
+    category: null, // é interação, não risco
+    summary: (a) => `perguntar ao usuário`,
+    schema: {
+      name: 'ask_user',
+      description:
+        'Pergunta algo ao usuário e PAUSA a tarefa até ele responder (vira um card com botões de opção + campo livre no chat). Use quando a decisão for DELE: validar antes de algo destrutivo/irreversível, escolher entre abordagens, confirmar um rumo. Não abuse — decisões triviais você toma sozinha.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'a pergunta (curta e clara)' },
+          options: { type: 'array', items: { type: 'string' }, description: '2 a 4 opções curtas pro usuário clicar (opcional — sem elas, fica só o campo livre)' },
+        },
+        required: ['question'],
+      },
+    },
+    run: ({ question, options }) =>
+      new Promise((resolve) => {
+        const id = 'ask' + ++askSeq;
+        const opts = (Array.isArray(options) ? options : []).slice(0, 4).map((o) => String(o).slice(0, 80));
+        const finish = (answer) => {
+          if (!pendingAsk || pendingAsk.id !== id) return;
+          clearTimeout(pendingAsk.timer);
+          pendingAsk = null;
+          broadcast('chat:ask-done', { id, answer });
+          resolve({ answer });
+        };
+        pendingAsk = { id, finish, timer: setTimeout(() => finish('(o usuário não respondeu em 10 minutos — siga seu melhor julgamento ou pare)'), 10 * 60000) };
+        broadcast('chat:ask', { id, question: String(question || '').slice(0, 500), options: opts });
+      }),
   },
   update_plan: {
     category: null, // só exibição — sem risco
@@ -4705,6 +4743,7 @@ ipcMain.on('chat:stop', () => {
       /* ok */
     }
   }
+  if (pendingAsk) pendingAsk.finish('(o usuário parou a tarefa)'); // destrava o loop pra ele poder abortar
   steerQueue = [];
   broadcast('chat:stopped');
 });

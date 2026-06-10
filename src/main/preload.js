@@ -151,6 +151,9 @@ contextBridge.exposeInMainWorld('api', {
   onPlan: (cb) => ipcRenderer.on('chat:plan', (_e, items) => cb(items)),
   onCheckpoint: (cb) => ipcRenderer.on('chat:checkpoint', (_e, c) => cb(c)),
   undoCheckpoint: (id) => ipcRenderer.invoke('checkpoint:undo', id),
+  onAsk: (cb) => ipcRenderer.on('chat:ask', (_e, a) => cb(a)),
+  onAskDone: (cb) => ipcRenderer.on('chat:ask-done', (_e, d) => cb(d)),
+  answerAsk: (id, answer) => ipcRenderer.send('chat:ask-answer', { id, answer }),
   onToolResult: (cb) => ipcRenderer.on('chat:tool-result', (_e, info) => cb(info)),
   onToolAnimation: (cb) => ipcRenderer.on('tool:animation', (_e, name) => cb(name)),
 });

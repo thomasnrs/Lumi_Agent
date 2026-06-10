@@ -437,6 +437,67 @@
       }
       #toBottom:hover { background: var(--accent); color: var(--accent-text); }
       #toBottom[hidden] { display: none; }
+      /* card de pergunta (ask_user — ela espera sua resposta) */
+      .askcard {
+        align-self: stretch;
+        max-width: 100%;
+        background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+        border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+        border-radius: 12px;
+        padding: 11px 13px;
+        animation: msgIn 0.22s ease both;
+      }
+      .askcard .aq {
+        font-size: 13px;
+        color: var(--text);
+        margin-bottom: 9px;
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .askcard .aq::before { content: '🙋‍♀️'; }
+      .askcard .aopts { display: flex; flex-wrap: wrap; gap: 6px; }
+      .askcard .aopt {
+        border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+        color: var(--text);
+        border-radius: 16px;
+        padding: 6px 13px;
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.12s, transform 0.1s;
+      }
+      .askcard .aopt:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 28%, transparent); transform: scale(1.03); }
+      .askcard .aopt:disabled { opacity: 0.45; cursor: default; }
+      .askcard .aopt.chosen {
+        background: var(--accent);
+        color: var(--accent-text);
+        opacity: 1;
+      }
+      .askcard .afree { display: flex; gap: 6px; margin-top: 8px; }
+      .askcard .afree input {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        color: var(--text);
+        padding: 6px 10px;
+        font-size: 12px;
+        font-family: inherit;
+        outline: none;
+      }
+      .askcard .afree button {
+        border: none;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-text);
+        padding: 0 12px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .askcard .aans { margin-top: 8px; font-size: 12px; color: #8fa; }
       /* card de diff (edição de arquivo) */
       .diffcard {
         align-self: stretch;
@@ -1682,6 +1743,7 @@
         generate_image: 'gerando imagem',
         delegate_to_agent: 'delegando tarefa',
         update_plan: 'planejando as etapas',
+        ask_user: 'perguntando pra você',
         set_reminder: 'criando lembrete',
         list_reminders: 'vendo os lembretes',
         cancel_reminder: 'cancelando lembrete',
@@ -1807,6 +1869,8 @@
           else if (e.t === 'diff') addDiff(d);
           else if (e.t === 'note') note(d.text || '');
           else if (e.t === 'plan') lastPlan = Array.isArray(e.d) ? e.d : null;
+          else if (e.t === 'ask') renderAskCard(d, false);
+          else if (e.t === 'askdone') lockAskCard(d.id, d.answer);
           else if (e.t === 'agent') {
             const x = document.createElement('div');
             x.className = 'msg tool';
@@ -2336,6 +2400,75 @@
 
       // ---------- notas do sistema (fallback de modelo, undo, etc.) ----------
       window.api.onNote((d) => note((d && d.text) || ''));
+
+      // ---------- ask_user: ela pergunta e espera sua resposta ----------
+      function renderAskCard(a, live) {
+        clearEmpty();
+        closeActivity(); // a pergunta aparece fora do card de ações
+        hideTyping(); // ela está esperando você, não digitando
+        const card = document.createElement('div');
+        card.className = 'askcard';
+        card.dataset.ask = a.id;
+        const q = document.createElement('div');
+        q.className = 'aq';
+        q.textContent = a.question;
+        card.appendChild(q);
+        const opts = document.createElement('div');
+        opts.className = 'aopts';
+        (a.options || []).forEach((o) => {
+          const b = document.createElement('button');
+          b.className = 'aopt';
+          b.textContent = o;
+          if (live) b.addEventListener('click', () => window.api.answerAsk(a.id, o));
+          else b.disabled = true;
+          opts.appendChild(b);
+        });
+        card.appendChild(opts);
+        if (live) {
+          const free = document.createElement('div');
+          free.className = 'afree';
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.placeholder = 'ou responda com suas palavras...';
+          const go = document.createElement('button');
+          go.textContent = '➤';
+          const sendFree = () => {
+            if (inp.value.trim()) window.api.answerAsk(a.id, inp.value.trim());
+          };
+          go.addEventListener('click', sendFree);
+          inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendFree();
+          });
+          free.appendChild(inp);
+          free.appendChild(go);
+          card.appendChild(free);
+          setTimeout(() => inp.focus(), 50);
+        }
+        msgs.appendChild(card);
+        scrollBottom();
+        return card;
+      }
+      function lockAskCard(id, answer) {
+        const card = msgs.querySelector('[data-ask="' + id + '"]');
+        if (!card) return;
+        card.querySelectorAll('.aopt').forEach((b) => {
+          b.disabled = true;
+          if (b.textContent === answer) b.classList.add('chosen');
+        });
+        const free = card.querySelector('.afree');
+        if (free) free.remove();
+        if (!card.querySelector('.aopt.chosen')) {
+          const ans = document.createElement('div');
+          ans.className = 'aans';
+          ans.textContent = '↳ você: ' + answer;
+          card.appendChild(ans);
+        }
+      }
+      window.api.onAsk((a) => renderAskCard(a, true));
+      window.api.onAskDone((d) => {
+        lockAskCard(d.id, d.answer);
+        showTyping(); // ela volta ao trabalho com a sua resposta
+      });
 
       // ---------- checkpoint: desfazer as mudanças de um turno ----------
       window.api.onCheckpoint((c) => {
