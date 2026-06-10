@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('api', {
   moveWorkspaceEntry: (src, destDir) => ipcRenderer.invoke('workspace:move', { src, destDir }),
   onWorkspaceChanged: (cb) => ipcRenderer.on('workspace:changed', () => cb()),
   onWorkspaceSwitched: (cb) => ipcRenderer.on('workspace:switched', (_e, ws) => cb(ws)),
+  setEditorActive: (rel) => ipcRenderer.send('editor:active', rel || ''),
+  onEditorActive: (cb) => ipcRenderer.on('editor:active', (_e, rel) => cb(rel)),
   revealInExplorer: (rel) => ipcRenderer.send('workspace:reveal', rel || ''),
   searchWorkspace: (q) => ipcRenderer.invoke('workspace:search', q),
   gitStatus: () => ipcRenderer.invoke('workspace:gitstatus'),

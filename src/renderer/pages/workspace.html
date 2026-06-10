@@ -656,6 +656,7 @@
       function showNothing() {
         active = null;
         current = null;
+        window.api.setEditorActive('');
         curpath.textContent = 'Nenhum arquivo aberto';
         previewEl.style.display = 'none';
         editorEl.style.display = 'block';
@@ -693,6 +694,7 @@
         renderTabs();
         drawTree();
         updateStatus();
+        window.api.setEditorActive(t.image ? '' : p); // o chat mostra/anexa o arquivo ativo
       }
       function closeTab(p, force) {
         const i = openTabs.findIndex((t) => t.path === p);

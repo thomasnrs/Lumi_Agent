@@ -173,6 +173,7 @@ const DEFAULT_CONFIG = {
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
+  includeActiveTab: true, // anexa o arquivo ativo do editor a cada mensagem do chat (chip liga/desliga)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
   mcpServers: {}, // servidores MCP (ferramentas externas plugaveis)
@@ -4386,6 +4387,13 @@ ipcMain.handle('config:set', (_e, cfg) => {
   return true;
 });
 
+// arquivo ativo no editor (workspace.html avisa) — o chat anexa às mensagens quando o chip está ligado
+let activeEditorFile = null;
+ipcMain.on('editor:active', (_e, rel) => {
+  activeEditorFile = rel || null;
+  broadcast('editor:active', activeEditorFile);
+});
+
 // revela o arquivo no Explorer/Finder do sistema (menu Arquivo do editor)
 ipcMain.on('workspace:reveal', (_e, rel) => {
   const ws = loadConfig().workspace;
@@ -4559,7 +4567,12 @@ ipcMain.on('chat:send', async (_e, payload) => {
   const raw = typeof payload === 'string' ? payload : payload.text || '';
   const images = (payload && payload.images) || [];
   const cfg = loadConfig();
-  const text = expandMentions(raw).text; // anexa @arquivos mencionados (workspace)
+  // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
+  let raw2 = raw;
+  if (cfg.includeActiveTab !== false && activeEditorFile && !raw.includes('@' + activeEditorFile)) {
+    raw2 = raw + '\n@' + activeEditorFile;
+  }
+  const text = expandMentions(raw2).text; // anexa @arquivos mencionados (workspace)
   // chave de API e opcional (proxies locais podem nao exigir)
   // monta o conteudo do usuario (com imagens = visao, formato OpenAI)
   let content = text;
