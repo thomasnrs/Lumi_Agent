@@ -3747,8 +3747,7 @@ function openSettingsWindow() {
     icon: ICON_PATH,
     autoHideMenuBar: true,
     backgroundColor: '#16161e',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 },
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -3779,8 +3778,8 @@ function openPage(id, file, title, w, h) {
     maximizable: false,
     backgroundColor: '#16161e',
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden', // barra nativa some; o header da página vira a área de arrastar
-    titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 },
+    // titleBarOverlay é SÓ Windows/macOS — no Linux mantém a decoração nativa (senão fica sem botão de fechar)
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

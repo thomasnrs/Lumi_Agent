@@ -50,6 +50,7 @@
   // ---- barra de título customizada (as janelas usam titleBarOverlay nativo) ----
   (function titlebar() {
     if (window.top !== window.self) return; // iframe não arrasta a janela hospedeira
+    if (!window.api || window.api.platform !== 'win32') return; // Linux/mac usam a barra nativa
     const css = document.createElement('style');
     css.textContent =
       '.lumi-dragbar{-webkit-app-region:drag;padding-right:142px !important;}' +

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Ponte segura entre o avatar (renderer) e o processo principal (janela do SO + I.A.)
 contextBridge.exposeInMainWorld('api', {
+  platform: process.platform, // win32 | linux | darwin (decide titlebar custom, etc.)
   // janela / avatar
   getVrmPath: () => ipcRenderer.invoke('get-vrm-path'),
   getVrmaPaths: () => ipcRenderer.invoke('get-vrma-paths'),

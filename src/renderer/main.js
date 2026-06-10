@@ -1769,10 +1769,12 @@ window.api.onToolAnimation((name) => triggerEmotion(name));
 window.api.getConfig().then((c) => {
   if (SETTINGS_ONLY) {
     maxFps = 5; // sem avatar, o loop praticamente dorme
-    // faixa de arrasto no topo (a janela usa titleBarOverlay — sem barra nativa)
-    const drag = document.createElement('div');
-    drag.style.cssText = 'position:fixed;top:0;left:0;right:142px;height:34px;-webkit-app-region:drag;z-index:50;';
-    document.body.appendChild(drag);
+    // faixa de arrasto no topo (só no Windows — Linux/mac mantêm a barra nativa)
+    if (window.api.platform === 'win32') {
+      const drag = document.createElement('div');
+      drag.style.cssText = 'position:fixed;top:0;left:0;right:142px;height:34px;-webkit-app-region:drag;z-index:50;';
+      document.body.appendChild(drag);
+    }
     openSettings(); // abre o formulário direto (a janela É as configurações)
     return;
   }
