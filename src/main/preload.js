@@ -140,6 +140,10 @@ contextBridge.exposeInMainWorld('api', {
   onError: (cb) => ipcRenderer.on('chat:error', (_e, m) => cb(m)),
   onAgent: (cb) => ipcRenderer.on('chat:agent', (_e, info) => cb(info)),
   onTool: (cb) => ipcRenderer.on('chat:tool', (_e, info) => cb(info)),
+  onNote: (cb) => ipcRenderer.on('chat:note', (_e, d) => cb(d)),
+  onPlan: (cb) => ipcRenderer.on('chat:plan', (_e, items) => cb(items)),
+  onCheckpoint: (cb) => ipcRenderer.on('chat:checkpoint', (_e, c) => cb(c)),
+  undoCheckpoint: (id) => ipcRenderer.invoke('checkpoint:undo', id),
   onToolResult: (cb) => ipcRenderer.on('chat:tool-result', (_e, info) => cb(info)),
   onToolAnimation: (cb) => ipcRenderer.on('tool:animation', (_e, name) => cb(name)),
 });

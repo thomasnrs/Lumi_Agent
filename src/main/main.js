@@ -102,7 +102,7 @@ function logChatEvent(channel, payload) {
       if (a >= 0 && !chatEvents.some((e) => e.t === 'mts' && e.a === a)) chatEvents.push({ a, t: 'mts', ts: Date.now() });
       return;
     }
-    const map = { 'chat:tool': 'tool', 'chat:tool-result': 'result', 'chat:agent': 'agent', 'chat:diff': 'diff' };
+    const map = { 'chat:tool': 'tool', 'chat:tool-result': 'result', 'chat:agent': 'agent', 'chat:diff': 'diff', 'chat:note': 'note', 'chat:plan': 'plan' };
     const t = map[channel];
     if (!t) return;
     chatEvents.push({ a: history.length, t, d: slimVal(payload, 0), ts: Date.now() });
@@ -170,6 +170,7 @@ const DEFAULT_CONFIG = {
   searchProvider: 'duckduckgo', // 'tavily' (preciso) | 'brave' | 'duckduckgo' (grátis: searxng+ddg)
   searchApiKey: '',
   searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
+  fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
   mcpServers: {}, // servidores MCP (ferramentas externas plugaveis)
@@ -446,7 +447,8 @@ const CODING_GUIDE =
   '7. Quando não souber algo (lib, versão atual, API, erro estranho), use web_search em vez de adivinhar.\n' +
   '8. Seja CONCISA e direta: explique decisões importantes em poucas linhas; o foco é a ação e o resultado, não textão. Mostre o progresso em passos pequenos (os diffs aparecem no chat).\n' +
   '9. Segurança: não rode comandos destrutivos sem motivo claro; confirme antes de apagar/sobrescrever coisas importantes.\n' +
-  '10. Depois de mudanças relevantes, ATUALIZE a memória do projeto com update_project_memory (visão geral, arquitetura, decisões, estrutura de arquivos e tarefas pendentes) — é isso que mantém seu contexto entre sessões/chats novos.';
+  '10. Depois de mudanças relevantes, ATUALIZE a memória do projeto com update_project_memory (visão geral, arquitetura, decisões, estrutura de arquivos e tarefas pendentes) — é isso que mantém seu contexto entre sessões/chats novos.\n' +
+  '11. Tarefa com 3+ etapas? Mostre um PLANO com update_plan logo no início (passos curtos) e atualize os status (doing/done) conforme avança — o usuário acompanha pelo checklist.';
 
 // Detecta a stack do projeto (pelos arquivos-chave) + sugere um comando de verificação
 function detectStack(ws) {
@@ -680,7 +682,8 @@ const COMPANION_BASE =
   '- Fale SEMPRE o idioma do usuário; tom caloroso, natural e com leveza/humor — você é uma companheira, não um robô.\n' +
   '- Seja capaz e proativa: use suas ferramentas (arquivos, comandos, web, imagem, ver/controlar a tela) para realmente RESOLVER, não só descrever.\n' +
   '- No bate-papo, respostas curtas; no técnico, foco e precisão. NUNCA invente fatos/APIs — se não sabe, descubra (pesquise/leia).\n' +
-  '- Tome iniciativa: se faltar um passo óbvio, faça; se algo der errado, conserte a causa em vez de só relatar.';
+  '- Tome iniciativa: se faltar um passo óbvio, faça; se algo der errado, conserte a causa em vez de só relatar.\n' +
+  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag [emoção:feliz|triste|brava|surpresa|pensativa] — ela é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).';
 
 // Monta o system prompt com os fatos memorizados + (opcional) memoria do projeto
 // SO da máquina — pro modelo gerar comandos certos (PowerShell no Windows, bash no Linux)
@@ -1978,6 +1981,37 @@ const TOOLS = {
     },
     run: async ({ query, count }) => webSearch(loadConfig(), String(query || ''), count),
   },
+  update_plan: {
+    category: null, // só exibição — sem risco
+    summary: () => 'atualizando o plano de tarefas',
+    schema: {
+      name: 'update_plan',
+      description:
+        'Mostra/atualiza um PLANO DE TAREFAS visível pro usuário (checklist no chat). Em tarefas com várias etapas: chame no INÍCIO com todos os passos e ATUALIZE os status conforme avança. Reenvie a lista COMPLETA a cada chamada (ela substitui a anterior). status: pending | doing | done.',
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { text: { type: 'string' }, status: { type: 'string', description: 'pending | doing | done' } },
+              required: ['text', 'status'],
+            },
+          },
+        },
+        required: ['items'],
+      },
+    },
+    run: async ({ items }) => {
+      const list = (Array.isArray(items) ? items : [])
+        .slice(0, 30)
+        .map((i) => ({ text: String((i && i.text) || '').slice(0, 200), status: ['pending', 'doing', 'done'].includes(i && i.status) ? i.status : 'pending' }));
+      if (!list.length) return { error: 'plano vazio' };
+      broadcast('chat:plan', list);
+      return { ok: true, itens: list.length };
+    },
+  },
   delegate_to_agent: {
     category: null, // sem permissao propria; as ferramentas do subagente pedem normalmente
     summary: (a) => `delegar ao agente "${a.agent}"`,
@@ -2095,6 +2129,55 @@ let chatAbort = null; // AbortController do turno atual (botão Stop)
 let agentRunning = false; // há um turno do agente em andamento?
 let steerQueue = []; // mensagens enviadas DURANTE o processamento (steering)
 const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file'];
+
+// ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
+let currentCp = null; // {id, ts, files: Map<rel, conteúdo|null>} do turno em andamento
+let checkpoints = []; // pilha dos últimos turnos com edições (memória da sessão, máx 10)
+let cpSeq = 0;
+function captureForCheckpoint(name, a) {
+  if (!currentCp || !['write_file', 'edit_file', 'append_file', 'delete_file'].includes(name)) return;
+  const rel = a && a.path;
+  if (!rel || currentCp.files.has(rel)) return; // só o estado ANTES da 1ª mexida no arquivo
+  try {
+    const abs = resolvePath(rel);
+    if (fs.existsSync(abs)) {
+      if (fs.statSync(abs).size > 2 * 1024 * 1024) return; // grande demais pra snapshot
+      currentCp.files.set(rel, fs.readFileSync(abs, 'utf8'));
+    } else currentCp.files.set(rel, null); // não existia → desfazer = apagar
+  } catch (e) {
+    /* snapshot é melhor-esforço */
+  }
+}
+ipcMain.handle('checkpoint:undo', (_e, id) => {
+  const idx = checkpoints.findIndex((c) => c.id === id);
+  if (idx < 0) return { error: 'ponto de restauração não encontrado (desfazer vale só na sessão atual)' };
+  const restored = new Set();
+  // desfaz do mais novo até o pedido (pilha) — o estado final é o de ANTES daquele turno
+  while (checkpoints.length > idx) {
+    const cp = checkpoints.pop();
+    for (const [rel, content] of cp.files) {
+      try {
+        const abs = resolvePath(rel);
+        if (content === null) {
+          try {
+            fs.unlinkSync(abs);
+          } catch (e) {
+            /* já não existe */
+          }
+        } else {
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, content, 'utf8');
+        }
+        restored.add(rel);
+      } catch (e) {
+        /* segue restaurando os demais */
+      }
+    }
+  }
+  broadcast('workspace:changed');
+  broadcast('chat:note', { text: '↩ mudanças desfeitas — ' + restored.size + ' arquivo(s) restaurado(s)' });
+  return { ok: true, restored: restored.size };
+});
 async function runTool(name, args) {
   const a = args || {};
   // ferramenta MCP?
@@ -2118,6 +2201,7 @@ async function runTool(name, args) {
   const ok = await checkPermission(t.category, t.summary ? t.summary(a) : null);
   if (!ok) return { error: `permissão negada pelo usuário (${t.category})` };
   try {
+    captureForCheckpoint(name, a); // snapshot do estado original (pro "↩ desfazer")
     const res = await t.run(a);
     if (WRITE_TOOLS.includes(name) && !(res && res.error)) editedSinceTurn = true; // p/ verificação automática
     return res;
@@ -2142,6 +2226,7 @@ async function maybeAutoVerify(cfg, messages) {
   } catch (e) {
     r = { ok: false, output: truncate((e.stdout || '') + '\n' + (e.stderr || '') + '\n' + (e.message || ''), 8000) };
   }
+  broadcast('tool:animation', r.ok ? 'happy' : 'sad'); // avatar comemora/lamenta a verificação
   broadcast('chat:tool-result', { name: 'run_command', args: { command: cmd }, result: { ok: r.ok, output: r.output }, agent: '🔁 auto-verificação' });
   if (r.ok) return false; // passou -> nada a corrigir
   broadcast('chat:newbubble'); // separa a próxima resposta (a correção) num balão novo
@@ -2378,6 +2463,8 @@ async function runAgent(cfg) {
   let tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
   let full = '';
   let verifyAttempts = 0;
+  let runCfg = cfg; // pode trocar pro modelo reserva no meio do turno (fallback)
+  let usedFallback = false;
   for (let step = 0; step < 12; step++) {
     if (chatAbort && chatAbort.signal.aborted) break; // botão Stop
     // STEERING: mensagens enviadas durante o processamento entram como turno do usuário
@@ -2389,12 +2476,20 @@ async function runAgent(cfg) {
     }
     let turn;
     try {
-      turn = await openaiTurn(cfg, messages, tools, onToken, onThink);
+      turn = await openaiTurn(runCfg, messages, tools, onToken, onThink);
     } catch (e) {
       if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
+      // FALLBACK: modelo principal falhou → tenta o reserva (mantendo as ferramentas)
+      if (!usedFallback && cfg.fallbackModel && cfg.fallbackModel.trim()) {
+        usedFallback = true;
+        runCfg = { ...cfg, model: cfg.fallbackModel.trim() };
+        broadcast('chat:note', { text: '⚠ modelo principal falhou (' + truncate(String((e && e.message) || e), 140) + ') — continuando com o reserva: ' + runCfg.model });
+        step--;
+        continue;
+      }
       if (tools.length) {
         tools = []; // modelo pode nao suportar ferramentas -> tenta sem
-        turn = await openaiTurn(cfg, messages, tools, onToken, onThink);
+        turn = await openaiTurn(runCfg, messages, tools, onToken, onThink);
       } else {
         throw e;
       }
@@ -4309,6 +4404,7 @@ ipcMain.on('chat:send', async (_e, payload) => {
 async function runChatTurn(cfg, popUserOnError) {
   agentRunning = true;
   chatAbort = new AbortController();
+  currentCp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map() }; // checkpoint deste turno
   let full = '';
   try {
     if (cfg.provider === 'anthropic') {
@@ -4320,6 +4416,14 @@ async function runChatTurn(cfg, popUserOnError) {
     } else {
       // OpenAI-compativel: loop do agente com ferramentas
       full = await runAgent(cfg);
+    }
+    // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] (invisível) → anima o avatar
+    const em = /\[emo[cç][aã]o:\s*([a-zçãáéí]+)\s*\]/i.exec(full || '');
+    if (em) {
+      const map = { feliz: 'happy', alegre: 'happy', animada: 'happy', triste: 'sad', brava: 'angry', raiva: 'angry', surpresa: 'surprised', pensativa: 'relaxed', calma: 'relaxed' };
+      const e2 = map[em[1].toLowerCase()];
+      if (e2) broadcast('tool:animation', e2); // mesmo canal do play_animation → avatar reage
+      full = full.replace(/\s*\[emo[cç][aã]o:[^\]]*\]\s*/gi, ' ').trim();
     }
     // turno só-ferramenta pode terminar sem texto — não salva balão vazio no histórico
     if (full && full.trim()) history.push({ role: 'assistant', content: full });
@@ -4337,8 +4441,16 @@ async function runChatTurn(cfg, popUserOnError) {
       // descarta eventos do turno que falhou (anchors apontariam pra msgs que não existem mais)
       chatEvents = chatEvents.filter((e) => (e.t === 'mts' ? e.a < history.length : e.a <= history.length));
       broadcast('chat:error', String((err && err.message) || err));
+      broadcast('tool:animation', 'sad'); // o avatar sente o erro 💔
     }
   } finally {
+    // fecha o checkpoint do turno: se editou arquivos, vira um ponto de restauração
+    if (currentCp && currentCp.files.size) {
+      checkpoints.push(currentCp);
+      if (checkpoints.length > 10) checkpoints.shift();
+      broadcast('chat:checkpoint', { id: currentCp.id, count: currentCp.files.size, files: [...currentCp.files.keys()] });
+    }
+    currentCp = null;
     agentRunning = false;
     chatAbort = null;
     steerQueue = [];

@@ -415,6 +415,8 @@
               style="flex: 0 0 auto; width: 42px; border: none; border-radius: 8px; background: var(--border); color: #fff; cursor: pointer; font-size: 15px">🔄</button>
           </div>
           <datalist id="modelsDatalist"></datalist>
+          <label>Modelo reserva (fallback — usado se o principal falhar no meio do turno)</label>
+          <input id="fallbackModel" type="text" list="modelsDatalist" placeholder="opcional, ex.: gpt-4o-mini" />
           <div id="modelsStatus" class="hint"></div>
 
           <label>Temperatura (criatividade): <span id="tempVal"></span></label>

@@ -359,6 +359,49 @@
         cursor: pointer;
       }
       .qchk input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 auto; }
+      /* plano de tarefas da Lumi (checklist vivo) */
+      #planBox {
+        flex: 0 0 auto;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        max-height: 180px;
+        overflow-y: auto;
+      }
+      #planBox[hidden] { display: none; }
+      #planSum {
+        cursor: pointer;
+        padding: 7px 12px;
+        color: #9aa;
+        user-select: none;
+        list-style: none;
+        position: sticky;
+        top: 0;
+        background: var(--surface-2);
+      }
+      #planSum::before { content: '▸ '; }
+      #planBox[open] #planSum::before { content: '▾ '; }
+      #planItems { padding: 0 12px 8px; display: flex; flex-direction: column; gap: 3px; }
+      .pitem { display: flex; gap: 7px; align-items: baseline; }
+      .pitem.done { color: #7a8a7d; text-decoration: line-through; }
+      .pitem.doing { color: var(--text); font-weight: 600; }
+      .pitem.pending { color: #9aa; }
+      .pitem .pic { flex: 0 0 auto; }
+      .pitem.doing .pic { animation: pulse 1.2s infinite; display: inline-block; }
+      /* checkpoint (desfazer mudanças do turno) */
+      .cpline { display: flex; align-items: center; gap: 8px; }
+      .cpline button {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
+        border-radius: 7px;
+        padding: 3px 10px;
+        font-size: 11px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .cpline button:hover:not(:disabled) { background: #3a2030; border-color: #e0556e; color: #ffb4b4; }
+      .cpline button:disabled { opacity: 0.5; cursor: default; }
       /* botão "voltar ao vivo" (aparece quando você rola pra cima durante a geração) */
       #toBottom {
         position: fixed;
@@ -880,6 +923,10 @@
       <button id="searchNext" title="Próxima (Enter)">▼</button>
       <button id="searchClose" title="Fechar (Esc)">✕</button>
     </div>
+    <details id="planBox" hidden open>
+      <summary id="planSum">📋 Plano</summary>
+      <div id="planItems"></div>
+    </details>
     <div id="msgs"><div id="empty">Comece a conversar 👇</div></div>
     <div id="stats"></div>
     <div id="previews"></div>
@@ -980,6 +1027,7 @@
         return h + '</table>';
       }
       function mdToHtml(src) {
+        src = String(src).replace(/\[emo[cç][aã]o:[^\]]*\]/gi, ''); // tag de emoção é só pro avatar
         const blocks = [];
         src = src.replace(/```(\w*)\n?([\s\S]*?)```/g, function (m, lang, code) {
           blocks.push({ lang: lang || '', code });
@@ -1374,6 +1422,7 @@
         view_image: 'vendo imagem',
         generate_image: 'gerando imagem',
         delegate_to_agent: 'delegando tarefa',
+        update_plan: 'planejando as etapas',
         screen_info: 'medindo a tela',
         move_mouse: 'movendo o mouse',
         click: 'clicando',
@@ -1488,11 +1537,14 @@
           const e = events.find((x) => x.t === 'mts' && x.a === i);
           return e && e.ts;
         };
+        let lastPlan = null; // o plano final fica no painel (não vira balão)
         const renderEv = (e) => {
           const d = e.d || {};
           if (e.t === 'tool') addTool(d);
           else if (e.t === 'result') addToolResult(d);
           else if (e.t === 'diff') addDiff(d);
+          else if (e.t === 'note') note(d.text || '');
+          else if (e.t === 'plan') lastPlan = Array.isArray(e.d) ? e.d : null;
           else if (e.t === 'agent') {
             const x = document.createElement('div');
             x.className = 'msg tool';
@@ -1520,6 +1572,7 @@
         });
         evAt(list.length).forEach(renderEv); // eventos após a última mensagem
         closeActivity(); // fecha o último card de ações do histórico
+        renderPlan(lastPlan); // restaura o plano (ou esconde, se a conversa não tem)
         updateRegen(); // só a última resposta mostra o botão de regenerar
         if (!list.length) {
           const e = document.createElement('div');
@@ -1870,6 +1923,58 @@
       });
       window.api.onTool((info) => addTool(info));
       window.api.onToolResult((info) => addToolResult(info));
+
+      // ---------- plano de tarefas (checklist vivo da Lumi) ----------
+      const planBox = document.getElementById('planBox');
+      const planItems = document.getElementById('planItems');
+      const planSum = document.getElementById('planSum');
+      function renderPlan(items) {
+        if (!items || !items.length) {
+          planBox.hidden = true;
+          return;
+        }
+        planItems.innerHTML = '';
+        let done = 0;
+        items.forEach((i) => {
+          if (i.status === 'done') done++;
+          const d = document.createElement('div');
+          d.className = 'pitem ' + i.status;
+          d.innerHTML = '<span class="pic">' + (i.status === 'done' ? '✅' : i.status === 'doing' ? '🔄' : '⬜') + '</span><span></span>';
+          d.lastChild.textContent = i.text;
+          planItems.appendChild(d);
+        });
+        planSum.textContent = '📋 Plano — ' + done + '/' + items.length + (done === items.length ? ' ✨' : '');
+        planBox.hidden = false;
+        if (done === items.length) planBox.open = false; // terminou → recolhe
+      }
+      window.api.onPlan(renderPlan);
+
+      // ---------- notas do sistema (fallback de modelo, undo, etc.) ----------
+      window.api.onNote((d) => note((d && d.text) || ''));
+
+      // ---------- checkpoint: desfazer as mudanças de um turno ----------
+      window.api.onCheckpoint((c) => {
+        clearEmpty();
+        const d = document.createElement('div');
+        d.className = 'msg tool cpline';
+        const span = document.createElement('span');
+        span.textContent = '📌 ' + c.count + ' arquivo(s) alterado(s) neste turno';
+        span.title = (c.files || []).join('\n');
+        const btn = document.createElement('button');
+        btn.textContent = '↩ desfazer';
+        btn.addEventListener('click', async () => {
+          if (!confirm('Restaurar os arquivos pro estado de ANTES deste turno? (turnos mais novos também são desfeitos)')) return;
+          const r = await window.api.undoCheckpoint(c.id);
+          if (r && r.error) return toast(r.error, false);
+          btn.disabled = true;
+          btn.textContent = '↩ desfeito';
+          toast('Mudanças desfeitas ✓');
+        });
+        d.appendChild(span);
+        d.appendChild(btn);
+        msgs.appendChild(d);
+        scrollBottom();
+      });
 
       function addDiff(d) {
         clearEmpty();

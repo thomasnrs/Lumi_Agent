@@ -886,6 +886,7 @@ const memoryEnabledEl = document.getElementById('memoryEnabled');
 const searchProviderEl = document.getElementById('searchProvider');
 const searchApiKeyEl = document.getElementById('searchApiKey');
 const searxUrlEl = document.getElementById('searxUrl');
+const fallbackModelEl = document.getElementById('fallbackModel');
 const clearFactsBtn = document.getElementById('clearFacts');
 const permEls = {
   read: document.getElementById('permRead'),
@@ -1045,7 +1046,7 @@ function playAudio({ base64 }) {
 
 // Enfileira uma frase: ja dispara a sintese (paralela) e toca na ordem da corrente
 function enqueueSentence(raw) {
-  const text = raw.trim();
+  const text = raw.replace(/\[emo[cç][aã]o:[^\]]*\]/gi, '').trim(); // tag de emoção não é falada
   if (!text || !/[\p{L}\p{N}]/u.test(text)) return; // nada falavel (so pontuacao/espaco)
   const gen = ttsGen;
   const audioPromise = window.api.speak(text).catch((e) => {
@@ -1088,6 +1089,7 @@ async function speakOnce(text, override) {
 // remove markdown para o balao mostrar texto limpo
 function stripMd(t) {
   return t
+    .replace(/\[emo[cç][aã]o:[^\]]*\]/gi, '') // tag de emoção: invisível (só anima o avatar)
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
@@ -1183,6 +1185,7 @@ async function openSettings() {
   searchProviderEl.value = c.searchProvider || 'duckduckgo';
   searchApiKeyEl.value = c.searchApiKey || '';
   searxUrlEl.value = c.searxUrl || '';
+  fallbackModelEl.value = c.fallbackModel || '';
   const perms = c.perms || {};
   permEls.read.value = perms.read || 'ask';
   permEls.write.value = perms.write || 'ask';
@@ -1322,6 +1325,7 @@ function readForm() {
     searchProvider: searchProviderEl.value,
     searchApiKey: searchApiKeyEl.value.trim(),
     searxUrl: searxUrlEl.value.trim(),
+    fallbackModel: fallbackModelEl.value.trim(),
     perms: {
       read: permEls.read.value,
       write: permEls.write.value,
