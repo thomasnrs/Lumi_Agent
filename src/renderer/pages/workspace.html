@@ -1085,6 +1085,15 @@
         if (show && !termsUi.size) newTerminal();
       };
       window.addEventListener('resize', fitActive);
+      // QUALQUER mudança no espaço do terminal (redimensionar o chat lateral, o painel,
+      // a janela, toggles...) re-ajusta colunas/linhas do xterm — sem precisar reabrir
+      if (window.ResizeObserver) {
+        let fitTimer = null;
+        new ResizeObserver(() => {
+          clearTimeout(fitTimer);
+          fitTimer = setTimeout(fitActive, 60);
+        }).observe(termBody);
+      }
       // redimensionar o painel (arrastando a divisória)
       (function () {
         let dragP = false;
