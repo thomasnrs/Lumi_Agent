@@ -500,16 +500,34 @@ function lowestBodyPixelY() {
   return maxY || footPixelY;
 }
 
+// ponto de ASSENTO: o bumbum (um pouco abaixo da junta do quadril) — é ele que toca a
+// taskbar; as pernas ficam penduradas NA FRENTE da barra (janela fica acima dela)
+function sitContactPixelY() {
+  if (!currentVrm || !currentVrm.humanoid) return footPixelY;
+  const hips = currentVrm.humanoid.getNormalizedBoneNode('hips');
+  if (!hips) return lowestBodyPixelY();
+  hips.getWorldPosition(_boneV).project(camera);
+  const hipPx = ((1 - _boneV.y) / 2) * window.innerHeight;
+  // o assento fica ~10% da altura do corpo abaixo da junta do quadril
+  let bodyH = 0;
+  if (capsuleTop && capsuleBottom) {
+    const a = capsuleTop.clone().project(camera);
+    const b = capsuleBottom.clone().project(camera);
+    bodyH = Math.abs(((1 - b.y) / 2) * window.innerHeight - ((1 - a.y) / 2) * window.innerHeight);
+  }
+  return hipPx + (bodyH ? bodyH * 0.1 : 30);
+}
+
 // re-cola o corpo na taskbar usando a pose REAL (corrige o sentar flutuando)
 let sitSnapTimer = null;
 async function resnapToTaskbar() {
   if (!isSitting || taskbarTop === Infinity || !currentVrm) return;
-  const low = lowestBodyPixelY();
-  if (!low) return;
+  const seat = sitContactPixelY();
+  if (!seat) return;
   const p = await window.api.getWindowPos(); // o main pode ter movido a janela (snap inicial)
   winX = p[0];
   winY = p[1];
-  const targetY = Math.round(taskbarTop - low - 2);
+  const targetY = Math.round(taskbarTop - seat);
   if (Math.abs(targetY - winY) > 2) {
     winY = targetY;
     window.api.setWindowPos(winX, winY);
