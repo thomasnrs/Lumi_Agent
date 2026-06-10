@@ -3517,6 +3517,20 @@ function createWindow() {
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  // o Windows REBAIXA o z-order em ciclos de foco e a taskbar passa na frente dela —
+  // re-afirma o nível ao perder foco/reaparecer e num batimento defensivo
+  const reassertTop = () => {
+    try {
+      if (win && !win.isDestroyed() && win.isVisible()) win.setAlwaysOnTop(true, 'screen-saver');
+    } catch (e) {
+      /* ok */
+    }
+  };
+  win.on('blur', reassertTop);
+  win.on('show', reassertTop);
+  win.on('focus', reassertTop);
+  setInterval(reassertTop, 8000);
 }
 
 function toggleShow() {

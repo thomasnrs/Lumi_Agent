@@ -484,6 +484,38 @@ function stopPreview() {
   }
 }
 
+// ponto mais BAIXO do corpo POSADO, em pixels (sentada, o contato vira o quadril/pés
+// da pose ATUAL — não os pés da pose em pé do bounding box, que causavam o "flutuar")
+const _boneV = new THREE.Vector3();
+function lowestBodyPixelY() {
+  if (!currentVrm || !currentVrm.humanoid) return footPixelY;
+  let maxY = 0;
+  for (const b of ['hips', 'leftFoot', 'rightFoot', 'leftToes', 'rightToes', 'leftLowerLeg', 'rightLowerLeg']) {
+    const node = currentVrm.humanoid.getNormalizedBoneNode(b);
+    if (!node) continue;
+    node.getWorldPosition(_boneV).project(camera);
+    const py = ((1 - _boneV.y) / 2) * window.innerHeight;
+    if (py > maxY) maxY = py;
+  }
+  return maxY || footPixelY;
+}
+
+// re-cola o corpo na taskbar usando a pose REAL (corrige o sentar flutuando)
+let sitSnapTimer = null;
+async function resnapToTaskbar() {
+  if (!isSitting || taskbarTop === Infinity || !currentVrm) return;
+  const low = lowestBodyPixelY();
+  if (!low) return;
+  const p = await window.api.getWindowPos(); // o main pode ter movido a janela (snap inicial)
+  winX = p[0];
+  winY = p[1];
+  const targetY = Math.round(taskbarTop - low - 2);
+  if (Math.abs(targetY - winY) > 2) {
+    winY = targetY;
+    window.api.setWindowPos(winX, winY);
+  }
+}
+
 // senta (na taskbar): toca a animacao de sentar em loop, se houver
 function startSitting() {
   if (isSitting) return;
@@ -501,11 +533,18 @@ function startSitting() {
     sitAction.play();
     if (idleAction) idleAction.fadeOut(0.3); // tira o idle de baixo (sem mistura)
   }
+  // a animação leva ~0.3s pra assentar: re-cola algumas vezes e depois mantém colada
+  clearInterval(sitSnapTimer);
+  setTimeout(resnapToTaskbar, 450);
+  setTimeout(resnapToTaskbar, 900);
+  sitSnapTimer = setInterval(resnapToTaskbar, 1500);
 }
 
 function stopSitting() {
   if (!isSitting) return;
   isSitting = false;
+  clearInterval(sitSnapTimer);
+  sitSnapTimer = null;
   if (sitAction) sitAction.fadeOut(0.3);
   if (idleAction) {
     idleAction.reset();
@@ -772,6 +811,13 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // recalcula a posição dos pés (o resize do avatar muda tudo em pixels)
+  if (capsuleBottom) {
+    const f = capsuleBottom.clone().project(camera);
+    footPixelY = ((1 - f.y) / 2) * window.innerHeight;
+    window.api.setFootPixel(footPixelY);
+  }
+  if (isSitting) setTimeout(resnapToTaskbar, 150); // sentada? re-cola na taskbar
 });
 
 // ---------- loop ----------
