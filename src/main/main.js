@@ -1080,7 +1080,9 @@ async function listListeningPorts() {
   const out = [];
   try {
     if (process.platform === 'win32') {
-      const { stdout } = await execAsync('netstat -ano -p TCP', { timeout: 8000, windowsHide: true });
+      // sem "-p TCP": esse filtro mostra SÓ IPv4 e esconde os servers Node/etc.,
+      // que por padrão escutam em IPv6 dual-stack ([::]:porta)
+      const { stdout } = await execAsync('netstat -ano', { timeout: 8000, windowsHide: true });
       const names = {};
       try {
         const { stdout: tl } = await execAsync('tasklist /FO CSV /NH', { timeout: 8000, windowsHide: true });
