@@ -1896,6 +1896,11 @@
         curAssistant = null;
         setProcessing(false);
       });
+      // workspace trocado (menu Arquivo do editor): avisa visualmente — o contexto da Lumi
+      // (stack, memória do projeto, @menções) já passa a ser o do novo projeto no próximo turno
+      if (window.api.onWorkspaceSwitched)
+        window.api.onWorkspaceSwitched((ws) => note('📁 Workspace alterado: ' + ws + ' — a Lumi agora trabalha neste projeto'));
+
       window.api.onChatReset(() => {
         msgs.innerHTML = '';
         curAssistant = null;

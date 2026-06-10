@@ -708,7 +708,7 @@ function buildSystemPrompt(cfg) {
       mem = '(memória do projeto ainda vazia — crie uma com update_project_memory)';
     }
     const det = detectStack(cfg.workspace);
-    let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace}`;
+    let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
@@ -1912,7 +1912,7 @@ function subAgentSystemPrompt(cfg, agent) {
       mem = '(memória do projeto ainda vazia)';
     }
     const det = detectStack(cfg.workspace);
-    let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace}`;
+    let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL)`;
     if (det.stack) proj += `\nStack: ${det.stack}`;
     if (isCoder && det.verify) proj += `\nVerifique suas mudanças rodando \`${det.verify}\` (run_command) e leia a saída.`;
     if (isCoder && det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
@@ -3725,9 +3725,28 @@ ipcMain.handle('config:get', () => {
   return c;
 });
 ipcMain.handle('config:set', (_e, cfg) => {
+  const before = loadConfig().workspace;
   saveConfig({ ...loadConfig(), ...cfg }); // merge: nao apaga campos de outras telas
-  if (cfg && 'workspace' in cfg) startWorkspaceWatcher(); // re-observa a nova pasta
+  if (cfg && 'workspace' in cfg) {
+    startWorkspaceWatcher(); // re-observa a nova pasta
+    const ws = cfg.workspace;
+    if (ws && ws !== before) {
+      // lista de workspaces recentes (menu Arquivo do editor) + avisa todas as janelas
+      const c = loadConfig();
+      c.recentWorkspaces = [ws, ...(c.recentWorkspaces || []).filter((x) => x !== ws)].slice(0, 8);
+      saveConfig(c);
+      broadcast('workspace:switched', ws);
+    }
+  }
   return true;
+});
+
+// revela o arquivo no Explorer/Finder do sistema (menu Arquivo do editor)
+ipcMain.on('workspace:reveal', (_e, rel) => {
+  const ws = loadConfig().workspace;
+  if (!ws) return;
+  if (rel) shell.showItemInFolder(path.join(ws, rel));
+  else shell.openPath(ws);
 });
 // equipe de agentes padrão (para o botão "Restaurar equipe padrão")
 ipcMain.handle('agents:defaults', () => JSON.parse(JSON.stringify(DEFAULT_CONFIG.agents)));

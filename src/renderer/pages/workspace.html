@@ -179,6 +179,52 @@
       .modal .b button { border: none; border-radius: 7px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
       .modal .b .cancel { background: var(--border); color: #fff; }
       .modal .b .ok { background: var(--accent); color: var(--accent-text); }
+      /* barra de menus (estilo VS Code) */
+      #menubar {
+        display: flex;
+        align-items: center;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        flex: 0 0 auto;
+        font-size: 12.5px;
+        user-select: none;
+        position: relative;
+        z-index: 150;
+      }
+      .mlabel {
+        padding: 5px 10px;
+        cursor: pointer;
+        color: var(--text);
+        border-radius: 0;
+      }
+      .mlabel:hover,
+      .mlabel.open { background: var(--surface); }
+      .mdrop {
+        position: absolute;
+        top: 100%;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 0 0 8px 8px;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+        min-width: 240px;
+        padding: 4px;
+        z-index: 200;
+      }
+      .mitem {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .mitem:hover { background: var(--accent); color: var(--accent-text); }
+      .mitem .mhint { font-size: 11px; color: #889; }
+      .mitem:hover .mhint { color: var(--accent-text); opacity: 0.8; }
+      .msep { height: 1px; background: var(--border); margin: 4px 8px; }
+      .mhead { padding: 5px 10px 3px; font-size: 10px; text-transform: uppercase; color: #778; letter-spacing: 0.4px; }
       /* painel inferior: TERMINAL + PORTAS (estilo VS Code) */
       #panelResize { height: 4px; cursor: row-resize; background: var(--border); flex: 0 0 auto; }
       #panelResize:hover { background: var(--accent); }
@@ -225,6 +271,7 @@
     <link rel="stylesheet" href="../../../node_modules/@xterm/xterm/css/xterm.css" />
   </head>
   <body>
+    <div id="menubar"></div>
     <div id="top">
       <span class="path" id="curpath">Nenhum arquivo aberto</span>
       <button id="toggleTerm" title="Terminal (Ctrl+`)">⌨ Terminal</button>
@@ -1125,6 +1172,197 @@
           dragging = false;
           document.body.style.userSelect = '';
           chatframe.style.pointerEvents = '';
+        });
+      })();
+
+      // ============================================================
+      //  Barra de menus (estilo VS Code) + troca rápida de workspace
+      // ============================================================
+      const rootnameEl = document.getElementById('rootname');
+      async function updateRoot() {
+        try {
+          const ws = (await window.api.getConfig()).workspace || '';
+          rootnameEl.textContent = ws ? ws.replace(/\\/g, '/').split('/').pop().toUpperCase() : 'Explorer';
+          rootnameEl.title = ws;
+        } catch (e) {
+          /* ok */
+        }
+      }
+      async function openFolder() {
+        const dir = await window.api.pickFolder();
+        if (dir) switchWorkspace(dir);
+      }
+      async function switchWorkspace(dir) {
+        const dirty = openTabs.filter((t) => t.dirty);
+        if (dirty.length && !confirm(dirty.length + ' aba(s) com alterações não salvas serão fechadas. Trocar mesmo assim?')) return;
+        // liga o modo arquiteto junto — a Lumi passa a trabalhar neste projeto no próximo turno
+        await window.api.setConfig({ workspace: dir, architectMode: true });
+        // o main faz broadcast 'workspace:switched' → resetWorkspaceUI roda aqui e o chat ganha a nota
+      }
+      function resetWorkspaceUI() {
+        [...openTabs].forEach((t) => closeTab(t.path, true));
+        expanded.clear();
+        if (searchMode) toggleSearch(false);
+        wsSearch.value = '';
+        loadTree();
+        updateRoot();
+      }
+      window.api.onWorkspaceSwitched((ws) => {
+        resetWorkspaceUI();
+        toast('📁 Workspace: ' + ws);
+      });
+      updateRoot();
+
+      function revealCurrent() {
+        window.api.revealInExplorer(active || '');
+      }
+      function showHelp() {
+        const ov = document.createElement('div');
+        ov.className = 'modal';
+        ov.innerHTML =
+          '<div class="box" style="width:380px"><div class="t" style="font-size:14px;font-weight:600">Atalhos do editor</div>' +
+          '<div style="font-size:12px;line-height:2;color:var(--text)">' +
+          '<b>Ctrl+S</b> — salvar arquivo<br><b>Ctrl+`</b> — terminal<br><b>Ctrl+Shift+F</b> — buscar no projeto<br>' +
+          '<b>Ctrl+F / Ctrl+H</b> — buscar/substituir no arquivo<br><b>Ctrl+G</b> — ir para a linha<br>' +
+          '<b>Clique do meio</b> — fecha aba<br><b>Clique direito</b> — menu na árvore<br><b>Arrastar</b> — mover arquivos/pastas' +
+          '</div><div class="b"><button class="ok">Fechar</button></div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('.ok').onclick = () => ov.remove();
+        ov.addEventListener('mousedown', (e) => {
+          if (e.target === ov) ov.remove();
+        });
+      }
+
+      const MENUS = [
+        {
+          label: 'Arquivo',
+          items: async () => {
+            const c = await window.api.getConfig();
+            const rec = (c.recentWorkspaces || []).filter((w) => w !== c.workspace);
+            return [
+              { label: 'Abrir pasta (workspace)…', fn: openFolder },
+              ...(rec.length ? [{ head: 'Workspaces recentes' }] : []),
+              ...rec.map((w) => ({ label: '📁 ' + w.replace(/\\/g, '/').split('/').pop(), hint: '', title: w, fn: () => switchWorkspace(w) })),
+              '-',
+              { label: 'Novo arquivo', fn: () => newEntry('', false) },
+              { label: 'Nova pasta', fn: () => newEntry('', true) },
+              '-',
+              { label: 'Salvar', hint: 'Ctrl+S', fn: save },
+              { label: 'Revelar no Explorer', fn: revealCurrent },
+            ];
+          },
+        },
+        {
+          label: 'Editar',
+          items: [
+            { label: 'Desfazer', hint: 'Ctrl+Z', fn: () => editor && editor.trigger('menu', 'undo') },
+            { label: 'Refazer', hint: 'Ctrl+Y', fn: () => editor && editor.trigger('menu', 'redo') },
+            '-',
+            { label: 'Buscar no arquivo', hint: 'Ctrl+F', fn: () => editor && (editor.focus(), editor.trigger('menu', 'actions.find')) },
+            { label: 'Substituir', hint: 'Ctrl+H', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.startFindReplaceAction')) },
+          ],
+        },
+        {
+          label: 'Exibir',
+          items: [
+            { label: 'Terminal', hint: 'Ctrl+`', fn: () => document.getElementById('toggleTerm').click() },
+            {
+              label: 'Portas',
+              fn: () => {
+                showPanel(true);
+                setPanelTab('ports');
+              },
+            },
+            { label: 'Chat da Lumi', fn: () => toggleChat.click() },
+            '-',
+            {
+              label: 'Recolher pastas',
+              fn: () => {
+                expanded.clear();
+                drawTree();
+              },
+            },
+            { label: 'Atualizar árvore', fn: loadTree },
+          ],
+        },
+        {
+          label: 'Ir',
+          items: [
+            { label: 'Buscar no projeto…', hint: 'Ctrl+Shift+F', fn: () => toggleSearch(true) },
+            { label: 'Ir para a linha…', hint: 'Ctrl+G', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.gotoLine')) },
+          ],
+        },
+        {
+          label: 'Terminal',
+          items: [
+            { label: 'Novo terminal', fn: newTerminal },
+            { label: 'Matar terminal atual', fn: () => document.getElementById('termKillBtn').click() },
+            { label: 'Ver portas', fn: () => { showPanel(true); setPanelTab('ports'); } },
+          ],
+        },
+        { label: 'Ajuda', items: [{ label: 'Atalhos do editor', fn: showHelp }] },
+      ];
+      (function buildMenubar() {
+        const bar = document.getElementById('menubar');
+        let openDrop = null;
+        let openLbl = null;
+        function closeMenu() {
+          if (openDrop) openDrop.remove();
+          if (openLbl) openLbl.classList.remove('open');
+          openDrop = openLbl = null;
+        }
+        async function openMenu(menu, lbl) {
+          closeMenu();
+          const items = typeof menu.items === 'function' ? await menu.items() : menu.items;
+          const drop = document.createElement('div');
+          drop.className = 'mdrop';
+          drop.style.left = lbl.offsetLeft + 'px';
+          items.forEach((it) => {
+            if (it === '-') {
+              const s = document.createElement('div');
+              s.className = 'msep';
+              drop.appendChild(s);
+              return;
+            }
+            if (it.head) {
+              const h = document.createElement('div');
+              h.className = 'mhead';
+              h.textContent = it.head;
+              drop.appendChild(h);
+              return;
+            }
+            const el = document.createElement('div');
+            el.className = 'mitem';
+            el.innerHTML = '<span>' + esc(it.label) + '</span>' + (it.hint ? '<span class="mhint">' + it.hint + '</span>' : '');
+            if (it.title) el.title = it.title;
+            el.onclick = () => {
+              closeMenu();
+              it.fn();
+            };
+            drop.appendChild(el);
+          });
+          bar.appendChild(drop);
+          lbl.classList.add('open');
+          openDrop = drop;
+          openLbl = lbl;
+        }
+        MENUS.forEach((m) => {
+          const lbl = document.createElement('span');
+          lbl.className = 'mlabel';
+          lbl.textContent = m.label;
+          lbl.onclick = (e) => {
+            e.stopPropagation();
+            if (openLbl === lbl) closeMenu();
+            else openMenu(m, lbl);
+          };
+          lbl.onmouseenter = () => {
+            if (openDrop && openLbl !== lbl) openMenu(m, lbl); // navegação por hover quando já aberto
+          };
+          bar.appendChild(lbl);
+        });
+        document.addEventListener('click', closeMenu);
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') closeMenu();
         });
       })();
 
