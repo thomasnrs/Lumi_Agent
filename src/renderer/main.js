@@ -1048,9 +1048,9 @@ sttPresetEl.addEventListener('change', () => {
 let bubbleTimer = null;
 function showBubble(text, autoHide) {
   bubble.textContent = text;
-  bubble.style.opacity = text ? '1' : '0';
+  bubble.classList.toggle('show', !!text);
   if (bubbleTimer) clearTimeout(bubbleTimer);
-  if (text && autoHide) bubbleTimer = setTimeout(() => (bubble.style.opacity = '0'), autoHide);
+  if (text && autoHide) bubbleTimer = setTimeout(() => (bubble.classList.remove('show')), autoHide);
 }
 
 // ---- fala frase-a-frase: busca o audio em paralelo, toca em ordem ----
@@ -1178,6 +1178,7 @@ window.api.onToken((t) => {
   if (!talking) {
     talking = true;
     bubble.textContent = ''; // limpa o "..." de espera
+    bubble.classList.add('show');
     currentResponse = '';
     stopSpeaking(); // corta a fala anterior + zera a fila (nova mensagem)
   }
@@ -1194,7 +1195,7 @@ window.api.onToken((t) => {
 window.api.onDone(() => {
   talking = false;
   if (bubbleTimer) clearTimeout(bubbleTimer);
-  bubbleTimer = setTimeout(() => (bubble.style.opacity = '0'), 9000);
+  bubbleTimer = setTimeout(() => (bubble.classList.remove('show')), 9000);
   if (ttsProvider === 'edge') {
     flushSentences(true); // fala o que sobrou (ultima frase sem pontuacao)
   } else if (ttsProvider !== 'off') {
@@ -1768,6 +1769,10 @@ window.api.onToolAnimation((name) => triggerEmotion(name));
 window.api.getConfig().then((c) => {
   if (SETTINGS_ONLY) {
     maxFps = 5; // sem avatar, o loop praticamente dorme
+    // faixa de arrasto no topo (a janela usa titleBarOverlay — sem barra nativa)
+    const drag = document.createElement('div');
+    drag.style.cssText = 'position:fixed;top:0;left:0;right:142px;height:34px;-webkit-app-region:drag;z-index:50;';
+    document.body.appendChild(drag);
     openSettings(); // abre o formulário direto (a janela É as configurações)
     return;
   }

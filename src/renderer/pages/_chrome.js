@@ -32,6 +32,54 @@
     setTimeout(() => t.remove(), 2550);
   };
 
+  // ---- design system compartilhado (vale em TODAS as páginas, inclusive iframes) ----
+  (function designSystem() {
+    const css = document.createElement('style');
+    css.textContent =
+      "@font-face{font-family:'Outfit';src:url('fonts/outfit.woff2') format('woff2');font-weight:300 900;font-display:swap;}" +
+      'h1,h2,#chatTitle,#planTitle,#rootname{font-family:Outfit,"Segoe UI",sans-serif;letter-spacing:.2px;}' +
+      'input:focus,select:focus,textarea:focus{border-color:var(--accent,#7aa2ff)!important;' +
+      'box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#7aa2ff) 16%,transparent)!important;outline:none!important;}' +
+      'select{appearance:none;-webkit-appearance:none;' +
+      'background-image:url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23889\' stroke-width=\'2.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><path d=\'m6 9 6 6 6-6\'/></svg>");' +
+      'background-repeat:no-repeat;background-position:right 8px center;padding-right:26px!important;cursor:pointer;}' +
+      'button{transition:background .12s,color .12s,border-color .12s;}';
+    document.head.appendChild(css);
+  })();
+
+  // ---- barra de título customizada (as janelas usam titleBarOverlay nativo) ----
+  (function titlebar() {
+    if (window.top !== window.self) return; // iframe não arrasta a janela hospedeira
+    const css = document.createElement('style');
+    css.textContent =
+      '.lumi-dragbar{-webkit-app-region:drag;padding-right:142px !important;}' +
+      '#menubar.lumi-dragbar{min-height:34px;}' +
+      '.lumi-dragbar button,.lumi-dragbar input,.lumi-dragbar select,.lumi-dragbar .mlabel,.lumi-dragbar .hbtn{-webkit-app-region:no-drag;}' +
+      '#lumi-titlebar{position:fixed;top:0;left:0;right:0;height:34px;display:flex;align-items:center;gap:8px;' +
+      'padding:0 146px 0 12px;-webkit-app-region:drag;z-index:9998;' +
+      'background:color-mix(in srgb,var(--surface-2,#0f0f16) 72%,transparent);backdrop-filter:blur(10px);' +
+      'border-bottom:1px solid color-mix(in srgb,var(--border,#2a2a38) 70%,transparent);' +
+      "font:600 12px Outfit,'Segoe UI',sans-serif;color:#9aab;user-select:none;letter-spacing:.4px;}";
+    document.head.appendChild(css);
+    // página com header próprio (chat/menubar do editor) → o header vira a área de arrastar
+    const header = document.getElementById('chatHeader') || document.getElementById('menubar');
+    if (header) {
+      header.classList.add('lumi-dragbar');
+      return;
+    }
+    // demais páginas: mini barra "✦ Lumi — título" injetada
+    const tb = document.createElement('div');
+    tb.id = 'lumi-titlebar';
+    const star = document.createElement('span');
+    star.style.color = 'var(--accent, #7aa2ff)';
+    star.textContent = '✦';
+    tb.appendChild(star);
+    tb.appendChild(document.createTextNode(document.title || 'Lumi'));
+    document.body.prepend(tb);
+    document.body.style.boxSizing = 'border-box';
+    document.body.style.paddingTop = (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + 34 + 'px';
+  })();
+
   // Embutido num iframe (ex.: o chat dentro do editor da workspace)? Opacidade é por JANELA,
   // então NÃO mexe — senão a janela hospedeira inteira mudaria de opacidade. Sai fora.
   if (window.top !== window.self) return;

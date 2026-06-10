@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
   revealInExplorer: (rel) => ipcRenderer.send('workspace:reveal', rel || ''),
   searchWorkspace: (q) => ipcRenderer.invoke('workspace:search', q),
   gitStatus: () => ipcRenderer.invoke('workspace:gitstatus'),
+  gitInfo: () => ipcRenderer.invoke('workspace:gitinfo'),
 
   // terminal integrado (painel do workspace, estilo VS Code)
   termCreate: (opts) => ipcRenderer.invoke('term:create', opts || {}),

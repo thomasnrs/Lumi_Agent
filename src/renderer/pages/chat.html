@@ -437,6 +437,61 @@
       }
       #toBottom:hover { background: var(--accent); color: var(--accent-text); }
       #toBottom[hidden] { display: none; }
+      /* card de diff (edição de arquivo) */
+      .diffcard {
+        align-self: stretch;
+        max-width: 100%;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .diffcard > summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+        font-size: 12px;
+      }
+      .diffcard > summary:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+      .diffcard .dic { display: flex; color: var(--accent); }
+      .diffcard .dic svg { width: 13px; height: 13px; }
+      .diffcard .dpath {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: Consolas, monospace;
+        color: var(--text);
+      }
+      .dbadge {
+        flex: 0 0 auto;
+        font-size: 10px;
+        font-weight: 700;
+        font-family: Consolas, monospace;
+        border-radius: 5px;
+        padding: 1px 6px;
+      }
+      .dbadge.add { background: color-mix(in srgb, #7ee0a0 18%, transparent); color: #7ee0a0; }
+      .dbadge.del { background: color-mix(in srgb, #e0556e 18%, transparent); color: #ff9b9b; }
+      .diffcard .dbody {
+        margin: 0;
+        padding: 6px 10px 8px;
+        border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 260px;
+        overflow: auto;
+        font-family: Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .dl-add { color: #7ee0a0; background: color-mix(in srgb, #7ee0a0 7%, transparent); }
+      .dl-del { color: #ff9b9b; background: color-mix(in srgb, #e0556e 7%, transparent); }
+      .dl-ctx { color: #667; }
       /* grupo de atividade (ações consecutivas colapsadas num card) */
       .actgroup {
         align-self: stretch;
@@ -2308,28 +2363,29 @@
 
       function addDiff(d) {
         clearEmpty();
-        const wrap = document.createElement('div');
-        wrap.className = 'msg'; // usa a classe que ja renderiza
-        wrap.style.cssText =
-          'align-self:stretch;max-width:100%;background:var(--surface-2);border:1px solid var(--border);font-family:Consolas,monospace;font-size:11px;padding:8px;';
-        const head = document.createElement('div');
-        head.style.cssText = 'color:#9cc;margin-bottom:4px;';
-        head.textContent = d.big
-          ? `✏️ ${d.path} — arquivo grande (+${d.added} / -${d.removed})`
-          : `✏️ ${d.path}  (+${d.added} / -${d.removed})`;
-        wrap.appendChild(head);
+        const det = document.createElement('details');
+        det.className = 'diffcard';
+        det.open = true;
+        const sum = document.createElement('summary');
+        sum.innerHTML =
+          '<span class="dic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.2 6.4a1 1 0 0 0 0-1.4l-2.2-2.2a1 1 0 0 0-1.4 0L3 17.4V21h3.6Z"/><path d="m15 5 4 4"/></svg></span>' +
+          '<span class="dpath"></span>' +
+          '<span class="dbadge add">+' + (d.added || 0) + '</span><span class="dbadge del">−' + (d.removed || 0) + '</span>';
+        sum.querySelector('.dpath').textContent = d.path + (d.big ? ' (arquivo grande)' : '');
+        sum.title = d.path;
+        det.appendChild(sum);
         if (!d.big) {
           const pre = document.createElement('pre');
-          pre.style.cssText = 'margin:0;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto;';
+          pre.className = 'dbody';
           (d.lines || []).forEach((l) => {
             const row = document.createElement('div');
-            row.style.color = l.t === '+' ? '#7ee0a0' : l.t === '-' ? '#ff9b9b' : '#667';
+            row.className = l.t === '+' ? 'dl-add' : l.t === '-' ? 'dl-del' : 'dl-ctx';
             row.textContent = (l.t === '+' ? '+ ' : l.t === '-' ? '- ' : '  ') + l.v;
             pre.appendChild(row);
           });
-          wrap.appendChild(pre);
+          det.appendChild(pre);
         }
-        actBody().appendChild(wrap);
+        actBody().appendChild(det);
         actCount();
         bumpTyping();
         scrollBottom();

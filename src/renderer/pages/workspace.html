@@ -544,6 +544,12 @@
           const row = document.createElement('div');
           row.className = 'item' + (node.dir ? ' dir' : '') + (node.path === current ? ' active' : '');
           row.style.paddingLeft = 6 + depth * 12 + 'px';
+          if (depth) {
+            // indent guides (linhas de hierarquia, estilo VS Code)
+            row.style.backgroundImage = 'repeating-linear-gradient(to right, transparent 0 11px, color-mix(in srgb, var(--border) 60%, transparent) 11px 12px)';
+            row.style.backgroundSize = depth * 12 + 'px 100%';
+            row.style.backgroundRepeat = 'no-repeat';
+          }
           const open = node.dir && expanded.has(node.path);
           const chev = node.dir ? '<span class="chev' + (open ? ' open' : '') + '">' + SVG.chev + '</span>' : '<span class="chev"></span>';
           const icon = node.dir
@@ -645,7 +651,8 @@
       }
       function updateStatus() {
         const t = active && findTab(active);
-        sbLeft.textContent = active || 'Lumi Workspace';
+        const git = gitBranch ? '⎇ ' + gitBranch + (gitChanges ? ' • ' + gitChanges + '±' : '') + '   ' : '';
+        sbLeft.textContent = git + (active || 'Lumi Workspace');
         if (!t) sbRight.textContent = '';
         else if (t.image) sbRight.textContent = 'imagem · ' + fmtBytes(t.bytes || 0);
         else {
@@ -1234,10 +1241,16 @@
         }
       }
 
-      // ---- git status no explorer (cores estilo VS Code) ----
+      // ---- git status no explorer (cores estilo VS Code) + branch na statusbar ----
       let gitMap = {};
+      let gitBranch = '';
+      let gitChanges = 0;
       async function loadGit() {
-        gitMap = (await window.api.gitStatus()) || {};
+        const [map, info] = await Promise.all([window.api.gitStatus(), window.api.gitInfo()]);
+        gitMap = map || {};
+        gitBranch = (info && info.branch) || '';
+        gitChanges = (info && info.changes) || 0;
+        updateStatus();
       }
 
       // ---- auto-reload de abas quando o arquivo muda no disco (ex.: a Lumi editou) ----

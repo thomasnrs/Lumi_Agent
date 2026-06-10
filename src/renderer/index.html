@@ -41,19 +41,27 @@
         right: 16px;
         max-height: 38%;
         overflow-y: auto;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: rgba(20, 20, 28, 0.82);
-        color: #fff;
+        padding: 12px 15px;
+        border-radius: 16px;
+        border-bottom-right-radius: 4px; /* "aponta" pra ela */
+        background: color-mix(in srgb, var(--surface, #1c1c28) 78%, transparent);
+        backdrop-filter: blur(12px);
+        border: 1px solid color-mix(in srgb, var(--accent, #7aa2ff) 22%, var(--border, #2a2a38));
+        color: var(--text, #fff);
         font-size: 14px;
-        line-height: 1.4;
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+        line-height: 1.45;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
         opacity: 0;
-        transition: opacity 0.3s;
+        transform: translateY(4px) scale(0.985);
+        transition: opacity 0.25s ease, transform 0.25s ease;
         white-space: pre-wrap;
         word-break: break-word;
         pointer-events: none;
         z-index: 5;
+      }
+      #bubble.show {
+        opacity: 1;
+        transform: none;
       }
 
       /* barra de baixo */
@@ -151,6 +159,7 @@
         box-shadow: none;
         animation: none;
         background: transparent;
+        padding-top: 40px; /* espaço da faixa de arrasto + botões nativos da janela */
       }
       #settings {
         position: absolute;

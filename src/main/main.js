@@ -3747,6 +3747,8 @@ function openSettingsWindow() {
     icon: ICON_PATH,
     autoHideMenuBar: true,
     backgroundColor: '#16161e',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -3777,6 +3779,8 @@ function openPage(id, file, title, w, h) {
     maximizable: false,
     backgroundColor: '#16161e',
     autoHideMenuBar: true,
+    titleBarStyle: 'hidden', // barra nativa some; o header da página vira a área de arrastar
+    titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -4194,6 +4198,19 @@ ipcMain.handle('workspace:search', (_e, query) => {
   };
   walk(cfg.workspace, 0);
   return { results, truncated };
+});
+
+// branch + nº de alterações (statusbar do editor)
+ipcMain.handle('workspace:gitinfo', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return {};
+  try {
+    const { stdout: br } = await execAsync('git rev-parse --abbrev-ref HEAD', { cwd: cfg.workspace, timeout: 4000, windowsHide: true });
+    const { stdout: st } = await execAsync('git status --porcelain', { cwd: cfg.workspace, timeout: 5000, windowsHide: true });
+    return { branch: br.trim(), changes: st.split('\n').filter((l) => l.trim()).length };
+  } catch (e) {
+    return {}; // sem git/não é repo
+  }
 });
 
 // git status do workspace (cores no explorer): M=modificado, A=novo, D=apagado, ??=não rastreado
