@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('api', {
   onMemReport: (cb) => ipcRenderer.on('mem-report', () => cb()),
   sendMemReport: (d) => ipcRenderer.send('mem:data', d),
   getWindowPos: () => ipcRenderer.invoke('get-window-pos'),
+  getWindowBounds: () => ipcRenderer.invoke('get-window-bounds'),
   setWindowPos: (x, y) => ipcRenderer.send('set-window-pos', x, y),
 
   // tamanho da avatar (slider nas configs + scroll do mouse) e opacidade das paginas

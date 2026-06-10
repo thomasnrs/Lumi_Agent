@@ -4387,8 +4387,13 @@ ipcMain.handle('get-unity-idle', () => {
 
 // topo da barra de tarefas (para a avatar "sentar" nela)
 ipcMain.handle('get-work-area', () => {
-  const d = screen.getPrimaryDisplay();
+  // usa o monitor onde a JANELA está (multi-monitor + painéis diferentes por display)
+  const d = win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   return { taskbarTop: d.workArea.y + d.workArea.height };
+});
+ipcMain.handle('get-window-bounds', () => {
+  const b = win.getBounds();
+  return [b.x, b.y, b.width, b.height]; // em DIPs — o renderer calcula o fator de escala
 });
 ipcMain.handle('get-window-pos', () => win.getPosition());
 ipcMain.on('set-window-pos', (_e, x, y) => win.setPosition(Math.round(x), Math.round(y)));

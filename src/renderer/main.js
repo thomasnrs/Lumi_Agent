@@ -521,13 +521,23 @@ function sitContactPixelY() {
 // re-cola o corpo na taskbar usando a pose REAL (corrige o sentar flutuando)
 let sitSnapTimer = null;
 async function resnapToTaskbar() {
-  if (!isSitting || taskbarTop === Infinity || !currentVrm) return;
+  if (!isSitting || !currentVrm) return;
+  try {
+    const w = await window.api.getWorkArea(); // fresco: monitor certo + painel atual
+    if (w) taskbarTop = w.taskbarTop;
+  } catch (e) {
+    /* mantém o cacheado */
+  }
+  if (taskbarTop === Infinity) return;
   const seat = sitContactPixelY();
   if (!seat) return;
-  const p = await window.api.getWindowPos(); // o main pode ter movido a janela (snap inicial)
-  winX = p[0];
-  winY = p[1];
-  const targetY = Math.round(taskbarTop - seat);
+  const b = await window.api.getWindowBounds(); // [x,y,w,h] em DIPs (o main pode ter movido a janela)
+  winX = b[0];
+  winY = b[1];
+  // escala DIP↔pixel CSS (Linux com scaling fracionário diverge; no Windows costuma ser 1)
+  const scale = window.innerHeight ? b[3] / window.innerHeight : 1;
+  const targetY = Math.round(taskbarTop - seat * scale);
+  if (window.api.platform === 'linux') console.log('[sit]', { taskbarTop, seat: Math.round(seat), scale: +scale.toFixed(3), winY, targetY });
   if (Math.abs(targetY - winY) > 2) {
     winY = targetY;
     window.api.setWindowPos(winX, winY);
@@ -795,10 +805,17 @@ canvas.addEventListener('pointermove', (e) => {
   dragPending = true;
 });
 
-canvas.addEventListener('pointerup', () => {
+canvas.addEventListener('pointerup', async () => {
   if (!dragging) return;
   dragging = false;
 
+  // taskbar fresca (monitor onde ela está agora + mudanças de painel)
+  try {
+    const w = await window.api.getWorkArea();
+    if (w) taskbarTop = w.taskbarTop;
+  } catch (e) {
+    /* usa o cacheado */
+  }
   // se soltou com os pes perto/abaixo da taskbar, "senta" nela
   if (currentVrm && taskbarTop !== Infinity) {
     const footScreenY = winY + footPixelY;
@@ -806,6 +823,7 @@ canvas.addEventListener('pointerup', () => {
       winY = Math.round(taskbarTop - footPixelY);
       window.api.setWindowPos(winX, winY);
       startSitting();
+      setTimeout(resnapToTaskbar, 80); // corrige logo pro assento real (quadril)
     }
   }
 
