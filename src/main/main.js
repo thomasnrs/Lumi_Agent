@@ -172,6 +172,7 @@ const DEFAULT_CONFIG = {
   searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
+  maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
   mcpServers: {}, // servidores MCP (ferramentas externas plugaveis)
@@ -449,7 +450,56 @@ const CODING_GUIDE =
   '8. Seja CONCISA e direta: explique decisões importantes em poucas linhas; o foco é a ação e o resultado, não textão. Mostre o progresso em passos pequenos (os diffs aparecem no chat).\n' +
   '9. Segurança: não rode comandos destrutivos sem motivo claro; confirme antes de apagar/sobrescrever coisas importantes.\n' +
   '10. Depois de mudanças relevantes, ATUALIZE a memória do projeto com update_project_memory (visão geral, arquitetura, decisões, estrutura de arquivos e tarefas pendentes) — é isso que mantém seu contexto entre sessões/chats novos.\n' +
-  '11. Tarefa com 3+ etapas? Mostre um PLANO com update_plan logo no início (passos curtos) e atualize os status (doing/done) conforme avança — o usuário acompanha pelo checklist.';
+  '11. Tarefa com 3+ etapas? Mostre um PLANO com update_plan logo no início (passos curtos) e atualize os status (doing/done) conforme avança — o usuário acompanha pelo checklist.\n' +
+  '12. GIT: só commite/push quando o usuário pedir. Commits atômicos com mensagem clara (o quê + porquê); confira git status/diff antes de commitar; NUNCA use --force nem reescreva histórico sem pedido explícito.';
+
+// Regras do repositório: se o projeto tem CLAUDE.md/AGENTS.md/.cursorrules, a Lumi
+// segue as instruções do dono do projeto — igual o Claude Code faz.
+function readRepoRules(ws) {
+  const files = ['CLAUDE.md', 'AGENTS.md', '.cursorrules', path.join('.github', 'copilot-instructions.md')];
+  const parts = [];
+  let total = 0;
+  for (const f of files) {
+    try {
+      const t = fs.readFileSync(path.join(ws, f), 'utf8').trim();
+      if (t) {
+        const cut = t.slice(0, 8000);
+        parts.push('### ' + f + '\n' + cut);
+        total += cut.length;
+        if (total > 16000) break;
+      }
+    } catch (e) {
+      /* arquivo não existe */
+    }
+  }
+  return parts.join('\n\n');
+}
+
+// Compactação INTERNA do turno: quando as mensagens do turno crescem demais, os
+// tool-results e argumentos ANTIGOS encolhem (os recentes ficam intactos) —
+// é o que permite turnos longos (teto configurável) sem estourar o contexto.
+function compactTurnMessages(messages) {
+  const KEEP = 12; // últimas mensagens ficam intactas
+  let size = 0;
+  for (const m of messages) {
+    size += typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length;
+    if (m.tool_calls) size += JSON.stringify(m.tool_calls).length;
+  }
+  if (size < 160000) return; // ~40k tokens: ainda confortável
+  const end = Math.max(1, messages.length - KEEP);
+  for (let i = 1; i < end; i++) {
+    const m = messages[i];
+    if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 700) {
+      m.content = m.content.slice(0, 500) + ' …[resultado antigo compactado para caber no contexto]';
+    } else if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      m.tool_calls.forEach((tc) => {
+        if (tc.function && tc.function.arguments && tc.function.arguments.length > 900) {
+          tc.function.arguments = tc.function.arguments.slice(0, 600) + ' …[argumentos compactados]';
+        }
+      });
+    }
+  }
+}
 
 // Detecta a stack do projeto (pelos arquivos-chave) + sugere um comando de verificação
 function detectStack(ws) {
@@ -720,6 +770,8 @@ function buildSystemPrompt(cfg) {
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
+    const rules = readRepoRules(cfg.workspace);
+    if (rules) proj += `\n\n## Regras do repositório (escritas pelo dono do projeto — SIGA À RISCA, têm prioridade sobre o guia geral)\n${rules}`;
     sp += '\n\n' + CODING_GUIDE + proj + `\n\n## Memória do projeto (.lumi-memory.md):\n${mem}`;
   }
   // MULTI-AGENTES: lista a equipe disponivel para delegacao
@@ -1837,28 +1889,38 @@ const TOOLS = {
     schema: {
       name: 'fetch_url',
       description:
-        'Abre uma página/URL e retorna o CONTEÚDO LEGÍVEL (HTML vira texto limpo, sem tags/menus — cabe muito mais conteúdo útil). Para resposta crua (HTML/JSON exato), passe raw=true. Para chamar APIs com método/headers, use http_request.',
+        'Abre uma página/URL e retorna o CONTEÚDO LEGÍVEL (HTML vira texto limpo, sem tags/menus). Página grande? A resposta avisa e você pagina com offset. Para resposta crua (HTML/JSON exato), passe raw=true. Para chamar APIs com método/headers, use http_request.',
       parameters: {
         type: 'object',
         properties: {
           url: { type: 'string' },
           raw: { type: 'boolean', description: 'true = retorna o corpo cru, sem extrair texto' },
+          offset: { type: 'number', description: 'pular N caracteres (paginação de conteúdo grande)' },
         },
         required: ['url'],
       },
     },
-    run: async ({ url, raw }) => {
+    run: async ({ url, raw, offset }) => {
       const res = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36' },
         signal: AbortSignal.timeout(20000),
       });
       const ct = res.headers.get('content-type') || '';
       const t = await res.text();
+      const off = Math.max(0, parseInt(offset, 10) || 0);
+      const WIN = 16000;
+      const page = (s) => {
+        const out = { status: res.status, content: s.slice(off, off + WIN) };
+        if (s.length > off + WIN) out.note = 'continua (' + s.length + ' chars no total): chame de novo com offset=' + (off + WIN);
+        return out;
+      };
       if (!raw && /html/i.test(ct)) {
         const title = (t.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1];
-        return { status: res.status, title: title ? title.trim().slice(0, 200) : undefined, content: truncate(htmlToText(t), 16000) };
+        const out = page(htmlToText(t));
+        if (title) out.title = title.trim().slice(0, 200);
+        return out;
       }
-      return { status: res.status, body: truncate(t, 16000) };
+      return page(t);
     },
   },
   http_request: {
@@ -2423,6 +2485,10 @@ function subAgentSystemPrompt(cfg, agent) {
     if (det.stack) proj += `\nStack: ${det.stack}`;
     if (isCoder && det.verify) proj += `\nVerifique suas mudanças rodando \`${det.verify}\` (run_command) e leia a saída.`;
     if (isCoder && det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
+    if (isCoder) {
+      const rules = readRepoRules(cfg.workspace);
+      if (rules) proj += `\n\n## Regras do repositório (SIGA À RISCA)\n${rules}`;
+    }
     sp += proj + `\n\n## Memória do projeto (.lumi-memory.md):\n${mem}`;
   }
   // resumo do que já rolou na conversa principal
@@ -2457,8 +2523,10 @@ async function runSubAgent(cfg, agent, task, label) {
   let lastText = ''; // última narração não-vazia (caso o turno final venha sem texto)
   const did = []; // ações executadas (fallback p/ quando o modelo não resume no fim)
   let completed = false; // terminou de fato (vs. atingiu o limite de passos)
-  for (let step = 0; step < 12; step++) {
+  const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
+  for (let step = 0; step < MAX_STEPS; step++) {
     if (chatAbort && chatAbort.signal.aborted) break; // botão Stop para os subagentes também
+    compactTurnMessages(messages); // subagente em tarefa longa também compacta
     let turn;
     try {
       turn = await openaiTurn(sub, messages, tools, () => {}, () => {});
@@ -2523,8 +2591,12 @@ async function runAgent(cfg) {
   let verifyAttempts = 0;
   let runCfg = cfg; // pode trocar pro modelo reserva no meio do turno (fallback)
   let usedFallback = false;
-  for (let step = 0; step < 12; step++) {
+  // teto de passos CONFIGURÁVEL (⚙ → Passos por turno): proxy local aguenta muito; API paga, menos
+  const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
+  let finished = false;
+  for (let step = 0; step < MAX_STEPS; step++) {
     if (chatAbort && chatAbort.signal.aborted) break; // botão Stop
+    compactTurnMessages(messages); // turno longo? encolhe os tool-results antigos
     // STEERING: mensagens enviadas durante o processamento entram como turno do usuário
     if (steerQueue.length) {
       for (const s of steerQueue.splice(0)) {
@@ -2641,7 +2713,14 @@ async function runAgent(cfg) {
       total: (turn.usage && turn.usage.total_tokens) || out + ctx,
       exact: !!turn.usage,
     });
+    finished = true;
     break;
+  }
+  // bateu o teto sem terminar? avisa e deixa retomável (o histórico guarda o progresso)
+  if (!finished && !(chatAbort && chatAbort.signal.aborted)) {
+    const max = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
+    broadcast('chat:note', { text: '⚠ teto de ' + max + ' passos atingido — diga "continua" pra ela retomar (ajustável em ⚙ → Passos por turno)' });
+    if (!full || !full.trim()) full = 'Cheguei ao teto de passos deste turno antes de terminar tudo. Diga "continua" que eu retomo exatamente de onde parei! 🔁';
   }
   return full;
 }

@@ -490,6 +490,10 @@
           <label>Modelo reserva (fallback — usado se o principal falhar no meio do turno)</label>
           <input id="fallbackModel" type="text" list="modelsDatalist" placeholder="opcional, ex.: gpt-4o-mini" />
 
+          <label>Passos por turno (chamadas de ferramenta antes de parar)</label>
+          <input id="maxSteps" type="number" min="4" max="200" step="1" placeholder="48" />
+          <p class="hint">Quanto FÔLEGO ela tem numa tarefa: cada passo = uma rodada de ferramentas. Proxy local/modelo barato? Suba (100+). API paga? Modere. Ao bater o teto ela avisa e você diz "continua".</p>
+
           <label>Proatividade (ela falar por conta própria)</label>
           <select id="proactivity">
             <option value="off">Desligada — só fala quando falada</option>
