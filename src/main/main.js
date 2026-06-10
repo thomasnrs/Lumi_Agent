@@ -4427,7 +4427,10 @@ ipcMain.handle('get-unity-idle', () => {
 ipcMain.handle('get-work-area', () => {
   // usa o monitor onde a JANELA está (multi-monitor + painéis diferentes por display)
   const d = win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
-  return { taskbarTop: d.workArea.y + d.workArea.height };
+  const waBottom = d.workArea.y + d.workArea.height;
+  const boundsBottom = d.bounds.y + d.bounds.height;
+  // painel em CIMA (GNOME etc.): não há barra embaixo → ela senta na BORDA da tela
+  return { taskbarTop: waBottom, hasBottomBar: waBottom < boundsBottom - 1 };
 });
 ipcMain.handle('get-window-bounds', () => {
   const b = win.getBounds();

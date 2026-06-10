@@ -106,6 +106,7 @@ let lastCursorMove = 0; // ultima vez que o cursor se moveu (para "captura-quand
 // "sentar na taskbar"
 let footPixelY = 0; // posicao vertical dos pes, em pixels da janela
 let taskbarTop = Infinity; // topo da barra de tarefas, em pixels de tela
+let hasBottomBar = true; // false = painel em cima (Linux/GNOME) → senta na BORDA da tela
 const SIT_SNAP_PX = 70; // distancia para "grudar" os pes na taskbar
 
 // capsula de colisao (aproxima o corpo) - hover/clique O(1) em vez de raycast na malha
@@ -524,12 +525,17 @@ async function resnapToTaskbar() {
   if (!isSitting || !currentVrm) return;
   try {
     const w = await window.api.getWorkArea(); // fresco: monitor certo + painel atual
-    if (w) taskbarTop = w.taskbarTop;
+    if (w) {
+      taskbarTop = w.taskbarTop;
+      hasBottomBar = w.hasBottomBar !== false;
+    }
   } catch (e) {
     /* mantém o cacheado */
   }
   if (taskbarTop === Infinity) return;
-  const seat = sitContactPixelY();
+  // COM barra embaixo: bumbum na barra, pernas penduradas na frente dela.
+  // SEM barra (painel em cima): os PÉS tocam a borda — corpo inteiro visível.
+  const seat = hasBottomBar ? sitContactPixelY() : lowestBodyPixelY();
   if (!seat) return;
   const b = await window.api.getWindowBounds(); // [x,y,w,h] em DIPs (o main pode ter movido a janela)
   winX = b[0];
@@ -537,7 +543,8 @@ async function resnapToTaskbar() {
   // escala DIP↔pixel CSS (Linux com scaling fracionário diverge; no Windows costuma ser 1)
   const scale = window.innerHeight ? b[3] / window.innerHeight : 1;
   const targetY = Math.round(taskbarTop - seat * scale);
-  if (window.api.platform === 'linux') console.log('[sit]', { taskbarTop, seat: Math.round(seat), scale: +scale.toFixed(3), winY, targetY });
+  if (window.api.platform === 'linux')
+    console.log('[sit]', { taskbarTop, hasBottomBar, seat: Math.round(seat), scale: +scale.toFixed(3), winY, targetY });
   if (Math.abs(targetY - winY) > 2) {
     winY = targetY;
     window.api.setWindowPos(winX, winY);
@@ -812,7 +819,10 @@ canvas.addEventListener('pointerup', async () => {
   // taskbar fresca (monitor onde ela está agora + mudanças de painel)
   try {
     const w = await window.api.getWorkArea();
-    if (w) taskbarTop = w.taskbarTop;
+    if (w) {
+      taskbarTop = w.taskbarTop;
+      hasBottomBar = w.hasBottomBar !== false;
+    }
   } catch (e) {
     /* usa o cacheado */
   }
@@ -1823,7 +1833,10 @@ window.api.getWindowPos().then((p) => {
 
 // topo da taskbar (para sentar nela)
 window.api.getWorkArea().then((w) => {
-  if (w) taskbarTop = w.taskbarTop;
+  if (w) {
+    taskbarTop = w.taskbarTop;
+    hasBottomBar = w.hasBottomBar !== false;
+  }
 });
 
 uiReady = true; // libera o hover no loop (UI ja montada)
