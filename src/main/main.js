@@ -191,7 +191,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de software sênior. Implemente a tarefa de ponta a ponta: leia o código relevante antes, faça a mudança mínima necessária seguindo o padrão do projeto, e VERIFIQUE rodando o comando/teste pertinente. Ao final, resuma o que fez em poucas linhas.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory'],
     },
     {
       name: 'Revisor',
@@ -209,7 +209,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de QA. Entenda o que precisa ser testado, escreva testes claros (seguindo o framework de testes do projeto) e RODE-OS com run_command. Relate o que passou e o que falhou, com a causa provável das falhas. Não conserte o código de produção sem ser pedido — foque em cobrir e diagnosticar.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory'],
     },
     {
       name: 'Refatorador',
@@ -218,7 +218,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira especialista em refatoração. Melhore legibilidade, organização e qualidade do código SEM alterar o comportamento externo. Faça mudanças pequenas e seguras, mantendo o padrão do projeto, e VERIFIQUE com o comando/teste pertinente para garantir que nada quebrou. Explique cada melhoria brevemente.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
     },
     {
       name: 'Designer',
@@ -244,7 +244,7 @@ const DEFAULT_CONFIG = {
         'NUNCA entregue: visual genérico de framework cru, cores que brigam, layout apertado, espaçamento inconsistente, parede de texto. Antes de finalizar, revise com olhar crítico: "isto está bonito, coeso e profissional?". Use web_search para buscar referências/tendências atuais quando precisar de inspiração. Explique brevemente as decisões de design.',
       model: '',
       temperature: 0.7,
-      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'make_dir', 'web_search', 'generate_image', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'web_search', 'generate_image', 'read_project_memory'],
     },
   ],
   // voz do usuario (STT) e dispositivos de audio
@@ -436,10 +436,10 @@ function workspaceMemoryPath(cfg) {
 // Metodologia de engenharia injetada quando há projeto (Modo Arquiteto e subagentes de código)
 const CODING_GUIDE =
   '# Engenharia de software (modo dev) — trabalhe como uma engenheira sênior, cuidadosa e pragmática\n' +
-  '1. ENTENDA antes de mexer: leia os arquivos relevantes (read_file/list_dir) e siga os imports/usos para entender o código DE VERDADE. Não invente APIs nem suponha assinaturas — confirme no código.\n' +
+  '1. ENTENDA antes de mexer: ache o código com grep_files (arquivo + linha de cada match), leia a região com read_file (use offset/limit pra navegar arquivos grandes — NUNCA edite um trecho que não leu) e siga os imports/usos. Não invente APIs nem suponha assinaturas — confirme no código.\n' +
   '2. SIGA o padrão do projeto: imite o estilo, a nomenclatura, a formatação e as bibliotecas que já existem. Não introduza padrões/dependências novas sem necessidade clara.\n' +
   '3. Mudanças FOCADAS e mínimas: resolva exatamente a tarefa, sem reescrever o que não precisa e sem quebrar o que já funciona. Prefira o menor diff que resolve.\n' +
-  '4. Para CRIAR ou EDITAR arquivos use SEMPRE write_file / append_file (e read_file antes, pra não sobrescrever errado). NUNCA use echo/Set-Content/cat no terminal para escrever arquivos — isso some com o diff e dessincroniza o editor.\n' +
+  '4. Para ALTERAR arquivo existente use edit_file (substituição cirúrgica do trecho exato — copie old_text do read_file com a indentação). write_file só para arquivo NOVO ou reescrita total intencional; append_file para acrescentar no fim. NUNCA use echo/Set-Content/cat no terminal para escrever arquivos — isso some com o diff e dessincroniza o editor.\n' +
   '5. VERIFIQUE o seu trabalho: depois de editar, releia o trecho alterado ou rode o comando/teste/lint/build pertinente (run_command) e LEIA a saída. Se der erro, leia a mensagem e corrija a CAUSA RAIZ — não chute repetidamente.\n' +
   '6. Caminhos SEMPRE relativos ao workspace.\n' +
   '7. Quando não souber algo (lib, versão atual, API, erro estranho), use web_search em vez de adivinhar.\n' +
@@ -1473,15 +1473,168 @@ const TOOLS = {
   },
   read_file: {
     category: 'read',
-    summary: (a) => `ler o arquivo "${a.path}"`,
+    summary: (a) => `ler o arquivo "${a.path}"` + (a.offset ? ` (linha ${a.offset}+)` : ''),
     schema: {
       name: 'read_file',
-      description: 'Lê o conteúdo de um arquivo de texto.',
-      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      description:
+        'Lê um arquivo de texto. Arquivos grandes vêm em janelas de linhas: use offset/limit para ler QUALQUER trecho — a resposta informa o total de linhas e como continuar. Nunca chute conteúdo: leia o trecho exato antes de editar (grep_files ajuda a achar a linha).',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          offset: { type: 'number', description: 'linha inicial (1 = primeira; padrão 1)' },
+          limit: { type: 'number', description: 'quantas linhas ler (padrão 800, máx 2000)' },
+        },
+        required: ['path'],
+      },
     },
-    run: async ({ path: p }) => {
+    run: async ({ path: p, offset, limit }) => {
       const txt = fs.readFileSync(resolvePath(p), 'utf8');
-      return { content: truncate(txt, 24000), truncated: txt.length > 24000 };
+      const lines = txt.split('\n');
+      const total = lines.length;
+      const start = Math.max(1, parseInt(offset, 10) || 1);
+      const count = Math.max(1, Math.min(parseInt(limit, 10) || 800, 2000));
+      let content = lines.slice(start - 1, start - 1 + count).join('\n');
+      let capped = false;
+      if (content.length > 48000) {
+        // proteção do contexto: corta por chars, mas avisa exatamente onde parou
+        content = content.slice(0, 48000);
+        capped = true;
+      }
+      const shown = content.split('\n').length;
+      const end = Math.min(start + shown - 1, total);
+      const out = { content, totalLines: total, showing: `linhas ${start}-${end} de ${total}` + (capped ? ' (janela cortada por tamanho)' : '') };
+      if (end < total) out.note = `o arquivo continua: chame read_file com offset=${end + 1} para a próxima janela`;
+      return out;
+    },
+  },
+  edit_file: {
+    category: 'write',
+    summary: (a) => `editar trecho de "${a.path}"`,
+    schema: {
+      name: 'edit_file',
+      description:
+        'Edição CIRÚRGICA: substitui um trecho EXATO do arquivo por outro, sem reescrever o resto. PREFIRA esta ferramenta a write_file para ALTERAR arquivos existentes (mais segura e precisa). old_text deve ser copiado EXATAMENTE do arquivo (indentação conta) e aparecer só 1 vez — inclua linhas vizinhas para ficar único.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          old_text: { type: 'string', description: 'trecho exato a substituir (copie do read_file, com a indentação original)' },
+          new_text: { type: 'string', description: 'novo trecho que entra no lugar' },
+          all: { type: 'boolean', description: 'true = substitui TODAS as ocorrências (padrão: exige ocorrência única)' },
+        },
+        required: ['path', 'old_text', 'new_text'],
+      },
+    },
+    run: async ({ path: p, old_text, new_text, all }) => {
+      const abs = resolvePath(p);
+      const oldC = fs.readFileSync(abs, 'utf8');
+      const o = String(old_text);
+      const nt = String(new_text);
+      if (o === nt) return { error: 'old_text e new_text são iguais — nada a fazer' };
+      if (!o) return { error: 'old_text vazio' };
+      const count = oldC.split(o).length - 1;
+      if (!count) return { error: 'old_text NÃO encontrado no arquivo — releia com read_file e copie o trecho EXATAMENTE (indentação e quebras de linha contam)' };
+      if (count > 1 && !all) return { error: `old_text aparece ${count} vezes — inclua mais linhas de contexto para ficar único, ou passe all=true para trocar todas` };
+      // split/join evita as pegadinhas de $ do String.replace
+      const idx = oldC.indexOf(o);
+      const newC = all ? oldC.split(o).join(nt) : oldC.slice(0, idx) + nt + oldC.slice(idx + o.length);
+      fs.writeFileSync(abs, newC, 'utf8');
+      broadcastDiff(p, oldC, newC);
+      return { ok: true, replaced: all ? count : 1 };
+    },
+  },
+  grep_files: {
+    category: 'read',
+    summary: (a) => `procurar "${a.pattern}" no projeto`,
+    schema: {
+      name: 'grep_files',
+      description:
+        'Procura um texto (ou regex) nos arquivos do workspace e retorna arquivo + linha + conteúdo de cada match. Use ANTES de mexer: ache exatamente ONDE está o código (depois leia a região com read_file offset=linha).',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: { type: 'string', description: 'texto a procurar' },
+          path: { type: 'string', description: 'limita a uma pasta ou arquivo (relativo ao workspace; vazio = projeto todo)' },
+          regex: { type: 'boolean', description: 'true = interpreta pattern como expressão regular' },
+        },
+        required: ['pattern'],
+      },
+    },
+    run: async ({ pattern, path: sub, regex }) => {
+      const base = resolvePath(sub || '.');
+      let re = null;
+      if (regex) {
+        try {
+          re = new RegExp(pattern, 'i');
+        } catch (e) {
+          return { error: 'regex inválida: ' + e.message };
+        }
+      }
+      const q = String(pattern).toLowerCase();
+      const matches = [];
+      let truncated = false;
+      const tryFile = (full, rel) => {
+        let st;
+        try {
+          st = fs.statSync(full);
+        } catch (e) {
+          return;
+        }
+        if (!st.isFile() || st.size > 1000000) return;
+        let content;
+        try {
+          content = fs.readFileSync(full, 'utf8');
+        } catch (e) {
+          return;
+        }
+        if (content.indexOf('\0') >= 0) return; // binário
+        const lines = content.split('\n');
+        let inFile = 0;
+        for (let i = 0; i < lines.length && inFile < 20; i++) {
+          const hit = re ? re.test(lines[i]) : lines[i].toLowerCase().includes(q);
+          if (hit) {
+            inFile++;
+            matches.push({ file: rel, line: i + 1, text: lines[i].trim().slice(0, 240) });
+            if (matches.length >= 120) {
+              truncated = true;
+              return;
+            }
+          }
+        }
+      };
+      const wsBase = loadConfig().workspace || process.cwd();
+      const walk = (dir, depth) => {
+        if (matches.length >= 120 || depth > 12) return;
+        let names = [];
+        try {
+          names = fs.readdirSync(dir);
+        } catch (e) {
+          return;
+        }
+        for (const name of names) {
+          if (matches.length >= 120) return;
+          if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
+          const full = path.join(dir, name);
+          let st;
+          try {
+            st = fs.statSync(full);
+          } catch (e) {
+            continue;
+          }
+          if (st.isDirectory()) walk(full, depth + 1);
+          else tryFile(full, path.relative(wsBase, full).replace(/\\/g, '/'));
+        }
+      };
+      let st;
+      try {
+        st = fs.statSync(base);
+      } catch (e) {
+        return { error: 'caminho não encontrado: ' + (sub || '.') };
+      }
+      if (st.isFile()) tryFile(base, path.relative(wsBase, base).replace(/\\/g, '/'));
+      else walk(base, 0);
+      return { matches, total: matches.length, truncated: truncated ? 'há mais resultados — refine o pattern ou limite o path' : undefined };
     },
   },
   write_file: {
@@ -1754,7 +1907,7 @@ let editedSinceTurn = false; // algum arquivo foi escrito neste turno? (p/ verif
 let chatAbort = null; // AbortController do turno atual (botão Stop)
 let agentRunning = false; // há um turno do agente em andamento?
 let steerQueue = []; // mensagens enviadas DURANTE o processamento (steering)
-const WRITE_TOOLS = ['write_file', 'append_file', 'make_dir', 'delete_file'];
+const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file'];
 async function runTool(name, args) {
   const a = args || {};
   // ferramenta MCP?
@@ -1924,7 +2077,7 @@ function nextAgentLabel(name) {
 function subAgentSystemPrompt(cfg, agent) {
   let sp = (agent.systemPrompt || 'Você é um assistente especializado.') + '\n' + OS_NOTE;
   // agente "de código"? (tem ferramentas de arquivo/comando) -> ganha o guia de engenharia
-  const CODER_TOOLS = ['write_file', 'append_file', 'read_file', 'list_dir', 'make_dir', 'delete_file', 'run_command'];
+  const CODER_TOOLS = ['write_file', 'edit_file', 'append_file', 'read_file', 'grep_files', 'list_dir', 'make_dir', 'delete_file', 'run_command'];
   const isCoder = Array.isArray(agent.tools) && agent.tools.some((t) => CODER_TOOLS.includes(t));
   // memória do projeto / workspace (para o subagente "enxergar" o projeto)
   if (cfg.workspace) {

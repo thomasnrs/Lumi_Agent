@@ -1357,6 +1357,8 @@
         list_dir: 'listando arquivos',
         read_file: 'lendo arquivo',
         write_file: 'escrevendo arquivo',
+        edit_file: 'editando trecho',
+        grep_files: 'procurando no código',
         append_file: 'editando arquivo',
         make_dir: 'criando pasta',
         delete_file: 'apagando arquivo',
@@ -1379,7 +1381,7 @@
       };
       function argHint(args) {
         if (!args) return '';
-        const a = args.query || args.path || args.url || args.command || args.name || args.fact;
+        const a = args.query || args.pattern || args.path || args.url || args.command || args.name || args.fact;
         return a ? ': ' + String(a) : '';
       }
       function addTool(info) {
