@@ -26,6 +26,24 @@ contextBridge.exposeInMainWorld('api', {
   renameWorkspaceEntry: (rel, name) => ipcRenderer.invoke('workspace:rename', { rel, name }),
   moveWorkspaceEntry: (src, destDir) => ipcRenderer.invoke('workspace:move', { src, destDir }),
   onWorkspaceChanged: (cb) => ipcRenderer.on('workspace:changed', () => cb()),
+  searchWorkspace: (q) => ipcRenderer.invoke('workspace:search', q),
+  gitStatus: () => ipcRenderer.invoke('workspace:gitstatus'),
+
+  // terminal integrado (painel do workspace, estilo VS Code)
+  termCreate: (opts) => ipcRenderer.invoke('term:create', opts || {}),
+  termInput: (id, data) => ipcRenderer.send('term:input', { id, data }),
+  termResize: (id, cols, rows) => ipcRenderer.send('term:resize', { id, cols, rows }),
+  termKill: (id) => ipcRenderer.send('term:kill', id),
+  termList: () => ipcRenderer.invoke('term:list'),
+  termBuffer: (id) => ipcRenderer.invoke('term:buffer', id),
+  onTermData: (cb) => ipcRenderer.on('term:data', (_e, d) => cb(d)),
+  onTermExit: (cb) => ipcRenderer.on('term:exit', (_e, d) => cb(d)),
+  onTermOpened: (cb) => ipcRenderer.on('term:opened', (_e, d) => cb(d)),
+
+  // tracker de portas
+  portsList: () => ipcRenderer.invoke('ports:list'),
+  portsKill: (pid) => ipcRenderer.invoke('ports:kill', pid),
+  portsOpen: (port) => ipcRenderer.send('ports:open', port),
   writeWorkspaceFile: (rel, content) => ipcRenderer.invoke('workspace:write', { rel, content }),
   onDiff: (cb) => ipcRenderer.on('chat:diff', (_e, d) => cb(d)),
   clearFacts: () => ipcRenderer.invoke('facts:clear'),

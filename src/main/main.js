@@ -9,7 +9,7 @@ const fs = require('fs');
 const url = require('url');
 const crypto = require('crypto');
 const WebSocket = require('ws');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 
@@ -189,7 +189,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de software sênior. Implemente a tarefa de ponta a ponta: leia o código relevante antes, faça a mudança mínima necessária seguindo o padrão do projeto, e VERIFIQUE rodando o comando/teste pertinente. Ao final, resuma o que fez em poucas linhas.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'web_search', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory'],
     },
     {
       name: 'Revisor',
@@ -207,7 +207,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de QA. Entenda o que precisa ser testado, escreva testes claros (seguindo o framework de testes do projeto) e RODE-OS com run_command. Relate o que passou e o que falhou, com a causa provável das falhas. Não conserte o código de produção sem ser pedido — foque em cobrir e diagnosticar.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'run_command', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory'],
     },
     {
       name: 'Refatorador',
@@ -969,8 +969,231 @@ function broadcastDiff(relPath, oldC, newC) {
   broadcast('chat:diff', { path: relPath, lines, added, removed });
 }
 
+// ============================================================
+//  Terminal integrado (PTY real via node-pty + xterm.js na UI)
+//  - usuário abre/fecha terminais no painel do workspace (estilo VS Code)
+//  - a IA usa run_in_terminal p/ processos LONGOS (dev server, watch) sem travar
+// ============================================================
+let nodePty = null;
+try {
+  nodePty = require('node-pty');
+} catch (e) {
+  console.error('node-pty indisponível (terminal integrado desligado):', e.message);
+}
+const terminals = new Map(); // id -> { p, title, buf }
+let termSeq = 0;
+
+// Dual-mode: PTY real (node-pty) quando compilado pro Electron; senão PIPE (spawn) —
+// funciona em qualquer máquina (sem toolchain), só perde interatividade/cores ricas.
+function createTerminal(opts) {
+  const o = opts || {};
+  const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
+  const cwd = o.cwd || loadConfig().workspace || require('os').homedir();
+  const id = 't' + ++termSeq;
+  const title = o.title || path.basename(shell, '.exe');
+  const rec = { p: null, pty: false, title, buf: '' };
+  const push = (d) => {
+    rec.buf = (rec.buf + d).slice(-200000); // final do scrollback (replay da UI + leitura da IA)
+    broadcast('term:data', { id, data: d });
+  };
+  const onExit = (code) => {
+    broadcast('term:exit', { id, exitCode: code });
+    terminals.delete(id);
+  };
+  try {
+    if (nodePty) {
+      rec.pty = true;
+      rec.p = nodePty.spawn(shell, [], { name: 'xterm-256color', cols: o.cols || 100, rows: o.rows || 28, cwd, env: process.env });
+      rec.p.onData(push);
+      rec.p.onExit(({ exitCode }) => onExit(exitCode));
+    } else {
+      // modo PIPE: powershell/bash lendo comandos do stdin (a UI faz o eco local)
+      rec.p = spawn(shell, process.platform === 'win32' ? ['-NoLogo'] : [], { cwd, env: process.env, windowsHide: true });
+      const conv = (d) => push(String(d).replace(/\r?\n/g, '\r\n')); // xterm precisa de \r\n
+      rec.p.stdout.on('data', conv);
+      rec.p.stderr.on('data', conv);
+      rec.p.on('exit', onExit);
+      rec.p.on('error', (e) => push('\r\n[erro: ' + e.message + ']\r\n'));
+    }
+  } catch (e) {
+    return { error: 'não consegui abrir o terminal: ' + e.message };
+  }
+  terminals.set(id, rec);
+  broadcast('term:opened', { id, title, pty: rec.pty }); // a UI do workspace cria a aba
+  if (o.command) termWrite(rec, String(o.command) + (rec.pty ? '\r' : '\n'));
+  return { id, pid: rec.p.pid, shell: title, pty: rec.pty };
+}
+function termWrite(rec, data) {
+  try {
+    if (rec.pty) rec.p.write(data);
+    else rec.p.stdin.write(data);
+  } catch (e) {
+    /* processo pode ter morrido */
+  }
+}
+function termKill(rec) {
+  try {
+    if (!rec.pty && process.platform === 'win32') exec('taskkill /PID ' + rec.p.pid + ' /T /F', { windowsHide: true });
+    else rec.p.kill();
+  } catch (e) {
+    /* ok */
+  }
+}
+function stripAnsi(s) {
+  // limpa códigos de cor/cursor pro modelo ler texto puro
+  return String(s)
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b[=>()][0-9A-Z]?/g, '')
+    .replace(/\r/g, '');
+}
+
+ipcMain.handle('term:create', (_e, opts) => createTerminal(opts));
+ipcMain.on('term:input', (_e, { id, data }) => {
+  const t = terminals.get(id);
+  if (t) termWrite(t, data);
+});
+ipcMain.on('term:resize', (_e, { id, cols, rows }) => {
+  const t = terminals.get(id);
+  if (t && t.pty) {
+    try {
+      t.p.resize(cols, rows);
+    } catch (e) {
+      /* ok */
+    }
+  }
+});
+ipcMain.on('term:kill', (_e, id) => {
+  const t = terminals.get(id);
+  if (t) termKill(t);
+});
+ipcMain.handle('term:list', () => [...terminals.entries()].map(([id, r]) => ({ id, pid: r.p.pid, title: r.title })));
+ipcMain.handle('term:buffer', (_e, id) => {
+  const t = terminals.get(id);
+  return t ? t.buf : '';
+});
+
+// ---- tracker de portas (aba PORTAS): processos escutando + abrir/matar ----
+async function listListeningPorts() {
+  const out = [];
+  try {
+    if (process.platform === 'win32') {
+      const { stdout } = await execAsync('netstat -ano -p TCP', { timeout: 8000, windowsHide: true });
+      const names = {};
+      try {
+        const { stdout: tl } = await execAsync('tasklist /FO CSV /NH', { timeout: 8000, windowsHide: true });
+        tl.split('\n').forEach((l) => {
+          const m = l.match(/^"([^"]+)","(\d+)"/);
+          if (m) names[m[2]] = m[1];
+        });
+      } catch (e) {
+        /* sem nomes */
+      }
+      stdout.split('\n').forEach((l) => {
+        const m = l.match(/^\s*TCP\s+(\S+):(\d+)\s+\S+\s+LISTENING\s+(\d+)/i);
+        if (m) out.push({ port: parseInt(m[2], 10), pid: parseInt(m[3], 10), name: names[m[3]] || '?', addr: m[1] });
+      });
+    } else {
+      const { stdout } = await execAsync('ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null', { timeout: 8000 });
+      stdout.split('\n').forEach((l) => {
+        const pm = l.match(/[\s:](\d+)\s+[^ ]*\s+users:\(\("([^"]+)",pid=(\d+)/);
+        const simple = l.match(/LISTEN.*?[\s:](\d+)\s/);
+        if (pm) out.push({ port: parseInt(pm[1], 10), pid: parseInt(pm[3], 10), name: pm[2], addr: '' });
+        else if (simple && /LISTEN/.test(l)) out.push({ port: parseInt(simple[1], 10), pid: 0, name: '?', addr: '' });
+      });
+    }
+  } catch (e) {
+    /* netstat/ss indisponível */
+  }
+  // dedupe por porta+pid e ordena
+  const seen = new Set();
+  return out
+    .filter((p) => p.port > 0 && !seen.has(p.port + ':' + p.pid) && seen.add(p.port + ':' + p.pid))
+    .sort((a, b) => a.port - b.port);
+}
+ipcMain.handle('ports:list', () => listListeningPorts());
+ipcMain.handle('ports:kill', async (_e, pid) => {
+  try {
+    if (process.platform === 'win32') await execAsync('taskkill /PID ' + parseInt(pid, 10) + ' /T /F', { timeout: 8000, windowsHide: true });
+    else process.kill(parseInt(pid, 10));
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+});
+ipcMain.on('ports:open', (_e, port) => shell.openExternal('http://localhost:' + parseInt(port, 10)));
+
 // Registro de ferramentas: schema (pro modelo) + category (permissao) + run (execucao)
 const TOOLS = {
+  run_in_terminal: {
+    category: 'exec',
+    summary: (a) => `rodar no terminal: ${a.command}`,
+    schema: {
+      name: 'run_in_terminal',
+      description:
+        'Abre um terminal INTEGRADO (visível pro usuário) e roda um comando LONGO/contínuo que não termina sozinho — dev server (npm run dev), watch, etc. NÃO bloqueia. Para comandos rápidos que terminam, use run_command. Retorna o id do terminal; acompanhe a saída com read_terminal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'comando a executar no terminal' },
+          cwd: { type: 'string', description: 'pasta de trabalho (relativa ao workspace; vazio = workspace)' },
+        },
+        required: ['command'],
+      },
+    },
+    run: async ({ command, cwd }) => {
+      const dir = cwd ? resolvePath(cwd) : undefined;
+      const r = createTerminal({ command, cwd: dir, title: String(command).slice(0, 24) });
+      if (r.error) return r;
+      return { ok: true, terminalId: r.id, pid: r.pid, note: 'rodando no terminal integrado; use read_terminal({terminalId}) para ver a saída' };
+    },
+  },
+  read_terminal: {
+    category: null, // só leitura do buffer
+    summary: (a) => `ler o terminal ${a.terminalId}`,
+    schema: {
+      name: 'read_terminal',
+      description: 'Lê a saída recente de um terminal integrado (aberto com run_in_terminal ou pelo usuário). Use para verificar se o servidor subiu, ver erros, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          terminalId: { type: 'string', description: 'id do terminal (ex.: t1)' },
+          chars: { type: 'number', description: 'quantos caracteres do final ler (padrão 4000)' },
+        },
+        required: ['terminalId'],
+      },
+    },
+    run: async ({ terminalId, chars }) => {
+      const t = terminals.get(String(terminalId));
+      if (!t) return { error: 'terminal não encontrado: ' + terminalId + '. Abertos: ' + [...terminals.keys()].join(', ') };
+      return { output: stripAnsi(t.buf).slice(-(Math.min(Number(chars) || 4000, 16000))) };
+    },
+  },
+  list_terminals: {
+    category: null,
+    summary: () => 'listar terminais abertos',
+    schema: {
+      name: 'list_terminals',
+      description: 'Lista os terminais integrados abertos (id, pid, título).',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => ({ terminals: [...terminals.entries()].map(([id, r]) => ({ id, pid: r.p.pid, title: r.title })) }),
+  },
+  kill_terminal: {
+    category: 'exec',
+    summary: (a) => `fechar o terminal ${a.terminalId}`,
+    schema: {
+      name: 'kill_terminal',
+      description: 'Encerra um terminal integrado (mata o processo dele).',
+      parameters: { type: 'object', properties: { terminalId: { type: 'string' } }, required: ['terminalId'] },
+    },
+    run: async ({ terminalId }) => {
+      const t = terminals.get(String(terminalId));
+      if (!t) return { error: 'terminal não encontrado: ' + terminalId };
+      termKill(t);
+      return { ok: true };
+    },
+  },
   get_datetime: {
     category: null,
     schema: { name: 'get_datetime', description: 'Retorna a data e a hora atuais do PC.', parameters: { type: 'object', properties: {} } },
@@ -3252,6 +3475,93 @@ ipcMain.handle('workspace:fulltree', () => {
   const cfg = loadConfig();
   if (!cfg.workspace) return null;
   return buildWsTree(cfg.workspace, cfg.workspace, 0);
+});
+
+// busca global no projeto (Ctrl+Shift+F do editor): texto simples, case-insensitive
+ipcMain.handle('workspace:search', (_e, query) => {
+  const cfg = loadConfig();
+  const q = String(query || '').toLowerCase();
+  if (!cfg.workspace || q.length < 2) return { results: [], truncated: false };
+  const results = [];
+  let files = 0;
+  let truncated = false;
+  const MAXR = 400;
+  const walk = (dir, depth) => {
+    if (results.length >= MAXR || depth > 12 || files > 4000) return;
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch (e) {
+      return;
+    }
+    for (const name of names) {
+      if (results.length >= MAXR) return;
+      if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
+      const full = path.join(dir, name);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch (e) {
+        continue;
+      }
+      if (st.isDirectory()) {
+        walk(full, depth + 1);
+        continue;
+      }
+      if (st.size > 1000000) continue; // pula arquivos gigantes/binários óbvios
+      files++;
+      let content;
+      try {
+        content = fs.readFileSync(full, 'utf8');
+      } catch (e) {
+        continue;
+      }
+      if (content.indexOf('\0') >= 0) continue; // binário (tem byte nulo)
+      const rel = path.relative(cfg.workspace, full).replace(/\\/g, '/');
+      const lines = content.split('\n');
+      let inFile = 0;
+      for (let i = 0; i < lines.length && inFile < 20; i++) {
+        const col = lines[i].toLowerCase().indexOf(q);
+        if (col >= 0) {
+          inFile++;
+          results.push({ path: rel, line: i + 1, col: col + 1, text: lines[i].trim().slice(0, 200) });
+          if (results.length >= MAXR) {
+            truncated = true;
+            break;
+          }
+        }
+      }
+    }
+  };
+  walk(cfg.workspace, 0);
+  return { results, truncated };
+});
+
+// git status do workspace (cores no explorer): M=modificado, A=novo, D=apagado, ??=não rastreado
+ipcMain.handle('workspace:gitstatus', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return {};
+  try {
+    const { stdout } = await execAsync('git status --porcelain -uall', { cwd: cfg.workspace, timeout: 5000, windowsHide: true });
+    const map = {};
+    stdout.split('\n').forEach((l) => {
+      if (l.length < 4) return;
+      const xy = l.slice(0, 2);
+      let p = l.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/');
+      if (xy[0] === 'R') p = (p.split(' -> ')[1] || p).trim(); // renomeado: usa o nome novo
+      const code = xy.includes('?') ? 'U' : xy.includes('D') ? 'D' : xy.includes('A') ? 'A' : 'M';
+      map[p] = code;
+      // marca as pastas-mãe como modificadas (bolinha na árvore fechada)
+      const parts = p.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        const dir = parts.slice(0, i).join('/');
+        if (!map[dir]) map[dir] = 'dir';
+      }
+    });
+    return map;
+  } catch (e) {
+    return {}; // sem git / não é repo → explorer fica normal
+  }
 });
 ipcMain.handle('workspace:create', (_e, { rel, dir }) => {
   const cfg = loadConfig();

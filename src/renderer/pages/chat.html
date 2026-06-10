@@ -359,6 +359,46 @@
         cursor: pointer;
       }
       .qchk input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 auto; }
+      /* botão "voltar ao vivo" (aparece quando você rola pra cima durante a geração) */
+      #toBottom {
+        position: fixed;
+        bottom: 86px;
+        right: 16px;
+        width: 36px;
+        height: 36px;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--surface) 90%, transparent);
+        color: var(--text);
+        font-size: 16px;
+        cursor: pointer;
+        z-index: 50;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(6px);
+      }
+      #toBottom:hover { background: var(--accent); color: var(--accent-text); }
+      #toBottom[hidden] { display: none; }
+      /* grupo de atividade (ações consecutivas colapsadas num card) */
+      .actgroup {
+        align-self: stretch;
+        max-width: 100%;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 12px;
+        animation: msgIn 0.22s ease both;
+      }
+      .actgroup > summary {
+        cursor: pointer;
+        padding: 7px 12px;
+        color: #9aa;
+        user-select: none;
+        list-style: none;
+      }
+      .actgroup > summary::before { content: '▸ '; }
+      .actgroup[open] > summary::before { content: '▾ '; }
+      .actgroup .actbody { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; }
+      .actgroup .actbody .msg { align-self: stretch; max-width: 100%; animation: none; }
       .msg.assistant .lnk {
         color: #8ab4ff;
         text-decoration: underline;
@@ -904,7 +944,7 @@
           msgs.appendChild(d);
         }
         curThinking.textContent += t;
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       function collapseThinking() {
         if (curThinkingDet && curThinkingDet.open) {
@@ -1032,7 +1072,7 @@
         typingEl.id = 'typing';
         typingEl.innerHTML = '<i></i><i></i><i></i>';
         msgs.appendChild(typingEl);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       function hideTyping() {
         if (typingEl) {
@@ -1046,6 +1086,60 @@
       }
 
       const toast = (m, ok) => (window.__lumiToast ? window.__lumiToast(m, ok) : note(m));
+
+      // ---------- scroll inteligente: não sequestra quando você rola pra cima ----------
+      let autoScroll = true;
+      const toBottomBtn = document.createElement('button');
+      toBottomBtn.id = 'toBottom';
+      toBottomBtn.innerHTML = '↓';
+      toBottomBtn.title = 'Voltar ao vivo';
+      toBottomBtn.hidden = true;
+      document.body.appendChild(toBottomBtn);
+      toBottomBtn.addEventListener('click', () => {
+        autoScroll = true;
+        msgs.scrollTop = msgs.scrollHeight;
+        toBottomBtn.hidden = true;
+      });
+      function scrollBottom() {
+        if (autoScroll) scrollBottom();
+        else toBottomBtn.hidden = false; // chegou conteúdo novo enquanto você lia acima
+      }
+      msgs.addEventListener('scroll', () => {
+        autoScroll = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
+        if (autoScroll) toBottomBtn.hidden = true;
+      });
+
+      // ---------- grupo de atividade: ações consecutivas viram um card colapsável ----------
+      let curAct = null; // {det, body, sum, count}
+      function actBody() {
+        clearEmpty();
+        if (!curAct) {
+          const det = document.createElement('details');
+          det.className = 'actgroup';
+          det.open = true; // aberto enquanto trabalha; colapsa quando a resposta começa
+          const sum = document.createElement('summary');
+          sum.textContent = '🔧 trabalhando…';
+          const body = document.createElement('div');
+          body.className = 'actbody';
+          det.appendChild(sum);
+          det.appendChild(body);
+          msgs.appendChild(det);
+          curAct = { det, body, sum, count: 0 };
+        }
+        return curAct.body;
+      }
+      function actCount() {
+        if (curAct) {
+          curAct.count++;
+          curAct.sum.textContent = '🔧 ' + curAct.count + (curAct.count === 1 ? ' ação' : ' ações');
+        }
+      }
+      function closeActivity() {
+        if (curAct) {
+          curAct.det.open = false; // colapsa — clique no header expande de volta
+          curAct = null;
+        }
+      }
 
       // ---------- ações no hover das bolhas ----------
       const MICONS = {
@@ -1184,6 +1278,7 @@
       const FILES_SENT = '===ARQUIVOS-MENCIONADOS===';
       function addUser(text, images, steer, ts) {
         clearEmpty();
+        closeActivity(); // mensagem sua fecha o grupo de ações anterior
         const d = document.createElement('div');
         d.className = 'msg user' + (steer ? ' steer' : '');
         if (steer) {
@@ -1227,10 +1322,11 @@
         if (ts) stamp(d, ts); // horário no rodapé da bolha (msgs antigas sem registro ficam sem)
         addActions(d, 'user', main); // copiar / editar e reenviar
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       function addAssistant(text, ts) {
         clearEmpty();
+        closeActivity(); // resposta começa → colapsa o card de ações
         const d = document.createElement('div');
         d.className = 'msg assistant';
         d.innerHTML = mdToHtml(text);
@@ -1241,7 +1337,7 @@
         }
         if (text) addActions(d, 'assistant', text); // copiar / regenerar (bolha em streaming ganha no finishBubble)
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
         return d;
       }
       function addError(text) {
@@ -1250,7 +1346,7 @@
         d.className = 'msg error';
         d.textContent = '⚠ ' + text;
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       const TOOL_LABELS = {
         get_datetime: 'vendo as horas',
@@ -1265,6 +1361,10 @@
         make_dir: 'criando pasta',
         delete_file: 'apagando arquivo',
         run_command: 'executando comando',
+        run_in_terminal: 'rodando no terminal',
+        read_terminal: 'lendo o terminal',
+        list_terminals: 'listando terminais',
+        kill_terminal: 'fechando terminal',
         fetch_url: 'acessando a internet',
         web_search: 'pesquisando na web',
         generate_image: 'gerando imagem',
@@ -1288,15 +1388,17 @@
         d.className = 'msg tool';
         d.textContent =
           '🔧 ' + (info.agent ? info.agent + ' · ' : '') + (TOOL_LABELS[info.name] || info.name) + argHint(info.args);
-        msgs.appendChild(d);
+        actBody().appendChild(d);
+        actCount();
         bumpTyping();
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       function addToolResult(info) {
         clearEmpty();
         const r = info.result;
         // imagem gerada -> mostra a imagem (nao o base64). No histórico salvo vira "[imagem]" (string)
         if (r && Array.isArray(r.images) && r.images.length) {
+          closeActivity(); // a imagem aparece fora do grupo de ações
           const d = document.createElement('div');
           d.className = 'msg assistant';
           r.images.forEach((url) => {
@@ -1309,7 +1411,7 @@
             d.appendChild(im);
           });
           msgs.appendChild(d);
-          msgs.scrollTop = msgs.scrollHeight;
+          scrollBottom();
           return;
         }
         const isErr = r && typeof r === 'object' && r.error;
@@ -1332,9 +1434,10 @@
         det.appendChild(sum);
         det.appendChild(pre);
         d.appendChild(det);
-        msgs.appendChild(d);
+        actBody().appendChild(d);
+        actCount();
         bumpTyping();
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
 
       // extrai texto + imagens de um conteudo (string ou array formato OpenAI)
@@ -1359,6 +1462,8 @@
       function renderHistory(h) {
         msgs.innerHTML = '';
         typingEl = null; // o innerHTML='' removeu os pontinhos, se existiam
+        curAct = null; // idem pro grupo de ações
+        autoScroll = true;
         // formato novo {messages, events}; tolera o antigo (array puro)
         const list = Array.isArray(h) ? h : (h && h.messages) || [];
         const events = (!Array.isArray(h) && h && h.events) || [];
@@ -1397,6 +1502,7 @@
           }
         });
         evAt(list.length).forEach(renderEv); // eventos após a última mensagem
+        closeActivity(); // fecha o último card de ações do histórico
         updateRegen(); // só a última resposta mostra o botão de regenerar
         if (!list.length) {
           const e = document.createElement('div');
@@ -1649,7 +1755,7 @@
         d.className = 'msg tool';
         d.textContent = `🗜️ contexto compactado (resumi o histórico antigo, mantendo ${info.kept} mensagens)`;
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       });
       window.api.onForked((info) => {
         const d = document.createElement('div');
@@ -1659,7 +1765,7 @@
             ? '🍴 Conversa forkada — chat novo iniciado, trouxe o resumo do anterior. O histórico antigo foi arquivado (não foi perdido).'
             : '🍴 Conversa forkada — chat novo iniciado.';
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       });
       window.api.onThinking((t) => {
         hideTyping();
@@ -1674,7 +1780,7 @@
         }
         curRaw += t;
         curAssistant.innerHTML = mdToHtml(curRaw);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       });
       function finishBubble() {
         // fecha a bolha em andamento: realça o código, carimba a hora e ganha as ações
@@ -1687,6 +1793,7 @@
       }
       window.api.onDone(() => {
         hideTyping();
+        closeActivity(); // turno acabou sem texto? fecha o card mesmo assim
         finishBubble();
         sndRecv();
         curAssistant = null;
@@ -1702,7 +1809,7 @@
         d.className = 'msg tool';
         d.textContent = '⏹ resposta interrompida';
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       });
       // auto-verificação falhou -> a correção vem num balão novo (não emenda no anterior)
       window.api.onNewBubble(() => {
@@ -1724,7 +1831,8 @@
             '<span class="spin">⏳</span> <b>' + info.name + '</b> trabalhando…' +
             (info.task ? ' — ' + info.task.replace(/[<>&]/g, '') : '');
           liveAgents[info.name] = d;
-          msgs.appendChild(d);
+          actBody().appendChild(d);
+          actCount();
         } else {
           const d = liveAgents[info.name];
           if (d) {
@@ -1737,11 +1845,11 @@
             x.className = 'msg tool';
             x.style.borderLeft = '2px solid #7ee0a0';
             x.textContent = '✓ ' + info.name + ' concluiu';
-            msgs.appendChild(x);
+            actBody().appendChild(x);
           }
         }
         bumpTyping();
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       });
       window.api.onTool((info) => addTool(info));
       window.api.onToolResult((info) => addToolResult(info));
@@ -1769,9 +1877,10 @@
           });
           wrap.appendChild(pre);
         }
-        msgs.appendChild(wrap);
+        actBody().appendChild(wrap);
+        actCount();
         bumpTyping();
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       window.api.onDiff((d) => {
         try {
@@ -1782,6 +1891,7 @@
       });
       window.api.onError((m) => {
         hideTyping();
+        closeActivity();
         addError(m);
         curAssistant = null;
         setProcessing(false);
@@ -1789,6 +1899,8 @@
       window.api.onChatReset(() => {
         msgs.innerHTML = '';
         curAssistant = null;
+        curAct = null;
+        typingEl = null;
       });
 
       // ---------- imagens (anexar + colar) ----------
@@ -1861,6 +1973,36 @@
               e.preventDefault();
               await addImageDataUrl(await fileToDataUrl(f));
             }
+          }
+        }
+      });
+
+      // ---------- drag & drop: imagem anexa; arquivo do workspace vira @menção ----------
+      window.addEventListener('dragover', (e) => e.preventDefault());
+      window.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+        if (!files.length) return;
+        let ws = '';
+        try {
+          ws = ((await window.api.getConfig()).workspace || '').replace(/\\/g, '/');
+        } catch (err) {
+          /* ok */
+        }
+        for (const f of files) {
+          if (f.type && f.type.startsWith('image/')) {
+            await addImageDataUrl(await fileToDataUrl(f));
+            continue;
+          }
+          const p = (f.path || '').replace(/\\/g, '/');
+          if (ws && p && p.toLowerCase().startsWith(ws.toLowerCase() + '/')) {
+            // arquivo do projeto → vira menção @caminho (anexa o conteúdo no envio)
+            const rel = p.slice(ws.length + 1);
+            input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + '@' + rel + ' ';
+            autoGrowInput();
+            input.focus();
+          } else {
+            toast(p ? 'Arquivo fora do workspace — só consigo mencionar arquivos do projeto' : 'Não consegui ler esse arquivo', false);
           }
         }
       });
@@ -2096,7 +2238,7 @@
         d.className = 'msg tool';
         d.textContent = text;
         msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
+        scrollBottom();
       }
       const COMMANDS = [
         { cmd: 'nova', desc: 'Nova conversa', run: () => window.api.chatsNew() },

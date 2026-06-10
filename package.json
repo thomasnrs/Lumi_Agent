@@ -10,7 +10,8 @@
     "electron": "electron .",
     "icon": "node scripts/make-icon.js",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "node scripts/dist.js"
+    "dist": "node scripts/dist.js",
+    "rebuild:pty": "electron-rebuild -f -w node-pty"
   },
   "author": "thomasnrs <thomasnrs@hotmail.com>",
   "license": "MIT",
@@ -69,9 +70,11 @@
       "category": "Utility",
       "synopsis": "Sua companheira de desktop com IA",
       "maintainer": "thomasnrs <thomasnrs@hotmail.com>"
-    }
+    },
+    "npmRebuild": false
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "electron": "^31.0.0",
     "electron-builder": "^26.15.2",
     "esbuild": "^0.21.0",
@@ -84,6 +87,9 @@
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@pixiv/three-vrm": "^3.4.0",
     "@pixiv/three-vrm-animation": "^3.5.3",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
     "three": "^0.169.0",
     "uiohook-napi": "^1.5.5",
     "ws": "^8.21.0"

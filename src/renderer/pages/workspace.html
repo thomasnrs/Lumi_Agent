@@ -179,13 +179,55 @@
       .modal .b button { border: none; border-radius: 7px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
       .modal .b .cancel { background: var(--border); color: #fff; }
       .modal .b .ok { background: var(--accent); color: var(--accent-text); }
+      /* painel inferior: TERMINAL + PORTAS (estilo VS Code) */
+      #panelResize { height: 4px; cursor: row-resize; background: var(--border); flex: 0 0 auto; }
+      #panelResize:hover { background: var(--accent); }
+      #panelResize[hidden], #panel[hidden] { display: none; }
+      #panel {
+        height: 230px; min-height: 80px; flex: 0 0 auto; display: flex; flex-direction: column;
+        background: var(--surface-2); border-top: 1px solid var(--border);
+      }
+      #panelHead { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+      .ptab { font-size: 11px; letter-spacing: 0.4px; padding: 6px 8px 5px; cursor: pointer; color: #9aa; border-bottom: 2px solid transparent; user-select: none; }
+      .ptab.active { color: var(--text); border-bottom-color: var(--accent); }
+      .pgrow { flex: 1; }
+      #termSel { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 11px; padding: 3px 6px; max-width: 170px; }
+      .pbtn { width: 24px; height: 24px; border: none; background: transparent; color: #9aa; border-radius: 5px; cursor: pointer; font-size: 12px; padding: 0; }
+      .pbtn:hover { background: var(--surface); color: var(--text); }
+      #termBody { flex: 1; min-height: 0; position: relative; }
+      .termhost { position: absolute; inset: 4px 0 0 8px; display: none; }
+      .termhost.active { display: block; }
+      #portsBody { flex: 1; overflow: auto; padding: 6px 10px; }
+      #portsBody table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      #portsBody th { text-align: left; color: #9aa; font-size: 10px; text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      #portsBody td { padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+      #portsBody .pact { display: flex; gap: 6px; }
+      #portsBody .pact button { border: none; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
+      #portsBody .pact button:hover { background: var(--accent); color: var(--accent-text); }
+      #portsBody .pact button.danger:hover { background: #e0556e; color: #fff; }
+      /* git status no explorer */
+      .item .nm.git-M { color: #e2c08d; }
+      .item .nm.git-A, .item .nm.git-U { color: #73c991; }
+      .item .nm.git-D { color: #f48771; text-decoration: line-through; }
+      .item .gitdot { width: 6px; height: 6px; border-radius: 50%; background: #e2c08d; flex: 0 0 auto; margin-left: auto; margin-right: 6px; }
+      /* busca global no projeto */
+      #searchRow { padding: 6px 8px; border-bottom: 1px solid var(--border); display: none; gap: 4px; }
+      #searchRow.on { display: flex; }
+      #searchRow input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 8px; font-size: 12px; outline: none; font-family: inherit; }
+      #searchRow input:focus { border-color: var(--accent); }
+      .sresfile { padding: 5px 8px 2px; font-weight: 600; font-size: 12px; color: var(--accent); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sresline { padding: 2px 8px 2px 18px; font-size: 11px; color: #aab; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: Consolas, monospace; }
+      .sresline:hover { background: var(--surface); }
+      .sresline b { color: var(--text); background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 2px; font-weight: 600; }
       ::-webkit-scrollbar { width: 9px; height: 9px; }
       ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 6px; }
     </style>
+    <link rel="stylesheet" href="../../../node_modules/@xterm/xterm/css/xterm.css" />
   </head>
   <body>
     <div id="top">
       <span class="path" id="curpath">Nenhum arquivo aberto</span>
+      <button id="toggleTerm" title="Terminal (Ctrl+`)">⌨ Terminal</button>
       <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi">💬 Chat</button>
       <button id="save" title="Salvar (Ctrl+S)">💾 Salvar</button>
     </div>
@@ -197,19 +239,42 @@
           <button class="tb" id="newFolder" title="Nova pasta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
           <button class="tb" id="collapse" title="Recolher tudo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg></button>
           <button class="tb" id="refresh" title="Atualizar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+          <button class="tb" id="btnSearch" title="Buscar no projeto (Ctrl+Shift+F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
         </div>
+        <div id="searchRow"><input id="wsSearch" type="text" placeholder="Buscar no projeto..." spellcheck="false" /></div>
         <div id="tree"></div>
       </div>
       <div id="edcol">
         <div id="tabs"></div>
         <div id="editor"></div>
         <div id="preview"><img id="previewImg" alt="" /><div id="previewMeta"></div></div>
+        <div id="panelResize" hidden title="Arraste para redimensionar"></div>
+        <div id="panel" hidden>
+          <div id="panelHead">
+            <span class="ptab active" data-tab="term">TERMINAL</span>
+            <span class="ptab" data-tab="ports">PORTAS</span>
+            <span class="pgrow"></span>
+            <select id="termSel" title="Terminais abertos"></select>
+            <button class="pbtn" id="termNew" title="Novo terminal">＋</button>
+            <button class="pbtn" id="termKillBtn" title="Matar o terminal atual">🗑</button>
+            <button class="pbtn" id="panelClose" title="Fechar painel (Ctrl+`)">✕</button>
+          </div>
+          <div id="termBody"></div>
+          <div id="portsBody" hidden>
+            <table>
+              <thead><tr><th>Porta</th><th>Processo</th><th>PID</th><th>Ações</th></tr></thead>
+              <tbody id="portsRows"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
       <div id="chatresize" title="Arraste para redimensionar"></div>
       <div id="chatpane"><iframe id="chatframe" src="chat.html" title="Chat da Lumi"></iframe></div>
     </div>
     <div id="statusbar"><span id="sbLeft">Lumi Workspace</span><span id="sbRight"></span></div>
 
+    <script src="../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script>
       const CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min';
       self.MonacoEnvironment = {
@@ -327,10 +392,12 @@
       };
 
       async function loadTree() {
-        treeData = (await window.api.getWorkspaceFullTree()) || [];
+        const [td] = await Promise.all([window.api.getWorkspaceFullTree(), loadGit()]);
+        treeData = td || [];
         drawTree();
       }
       function drawTree() {
+        if (searchMode && wsSearch.value.trim().length >= 2) return; // não clobra os resultados da busca
         tree.innerHTML = '';
         if (!treeData.length) {
           tree.innerHTML = '<div id="empty">Defina o workspace no<br>Modo arquiteto.</div>';
@@ -348,7 +415,10 @@
           const icon = node.dir
             ? '<span class="ic">' + (open ? SVG.folderOpen : SVG.folder) + '</span>'
             : '<span class="ic">' + iconFor(node.name) + '</span>';
-          row.innerHTML = chev + icon + '<span class="nm">' + esc(node.name) + '</span>';
+          const g = gitMap[node.path]; // status git: M/A/U/D (arquivo) ou 'dir' (tem mudanças dentro)
+          const nmCls = g && g !== 'dir' ? ' git-' + g : '';
+          const dot = node.dir && g ? '<span class="gitdot"></span>' : '';
+          row.innerHTML = chev + icon + '<span class="nm' + nmCls + '">' + esc(node.name) + '</span>' + dot;
           row.title = node.path;
           row.addEventListener('click', () => (node.dir ? toggle(node.path) : openFile(node.path)));
           row.addEventListener('contextmenu', (e) => {
@@ -466,6 +536,7 @@
           const prev = findTab(active);
           if (prev && prev.model && editor) prev.viewState = editor.saveViewState(); // memoriza cursor/scroll
         }
+        if (t.stale) refreshTab(t); // arquivo mudou no disco enquanto a aba estava em segundo plano
         active = p;
         current = p;
         isImage = !!t.image;
@@ -713,8 +784,315 @@
       window.api.onWorkspaceChanged(() => {
         if (document.querySelector('.modal')) return; // não atrapalha criação/rename em andamento
         clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(loadTree, 150);
+        refreshTimer = setTimeout(() => {
+          loadTree();
+          // abas: a ativa recarrega na hora (se você não tiver edição pendente); as outras
+          // ficam marcadas e recarregam quando você clicar nelas
+          openTabs.forEach((t) => (t.stale = true));
+          const cur = active && findTab(active);
+          if (cur) refreshTab(cur);
+        }, 150);
       });
+
+      // ============================================================
+      //  Painel inferior: TERMINAL (xterm + PTY/pipe no main) + PORTAS
+      // ============================================================
+      const panel = document.getElementById('panel');
+      const panelResize = document.getElementById('panelResize');
+      const termBody = document.getElementById('termBody');
+      const portsBodyEl = document.getElementById('portsBody');
+      const termSel = document.getElementById('termSel');
+      const termsUi = new Map(); // id -> {term, fit, host, title}
+      let activeTerm = null;
+      let panelTab = 'term';
+
+      function xtermTheme() {
+        const acc = cssVarHex('--accent', '#7aa2ff');
+        return {
+          background: cssVarHex('--surface-2', '#0f0f16'),
+          foreground: cssVarHex('--text', '#eeeeee'),
+          cursor: acc,
+          selectionBackground: acc + '55',
+        };
+      }
+      function showPanel(show) {
+        panel.hidden = !show;
+        panelResize.hidden = !show;
+        if (show) setTimeout(fitActive, 30);
+      }
+      function setPanelTab(t) {
+        panelTab = t;
+        document.querySelectorAll('.ptab').forEach((x) => x.classList.toggle('active', x.dataset.tab === t));
+        termBody.style.display = t === 'term' ? '' : 'none';
+        portsBodyEl.hidden = t !== 'ports';
+        if (t === 'ports') loadPorts();
+        if (t === 'term') setTimeout(fitActive, 30);
+      }
+      function fitActive() {
+        const u = activeTerm && termsUi.get(activeTerm);
+        if (u) {
+          try {
+            u.fit.fit();
+            window.api.termResize(activeTerm, u.term.cols, u.term.rows);
+          } catch (e) {
+            /* ok */
+          }
+        }
+      }
+      function renderTermSel() {
+        termSel.innerHTML = '';
+        for (const [id, u] of termsUi) {
+          const o = document.createElement('option');
+          o.value = id;
+          o.textContent = id + ' · ' + u.title;
+          termSel.appendChild(o);
+        }
+        if (activeTerm) termSel.value = activeTerm;
+      }
+      function selectTerm(id) {
+        activeTerm = id;
+        termsUi.forEach((u, k) => u.host.classList.toggle('active', k === id));
+        renderTermSel();
+        fitActive();
+        const u = termsUi.get(id);
+        if (u) u.term.focus();
+      }
+      function attachTerm(id, title, ptyMode, replay) {
+        if (termsUi.has(id)) return selectTerm(id);
+        if (!window.Terminal) return toast('xterm não carregou (reinstale as dependências)', false);
+        const host = document.createElement('div');
+        host.className = 'termhost';
+        termBody.appendChild(host);
+        const term = new Terminal({
+          fontSize: 12.5,
+          fontFamily: '"Cascadia Mono", Consolas, monospace',
+          theme: xtermTheme(),
+          cursorBlink: true,
+          scrollback: 4000,
+        });
+        const fit = new FitAddon.FitAddon();
+        term.loadAddon(fit);
+        term.open(host);
+        if (ptyMode) {
+          term.onData((d) => window.api.termInput(id, d)); // PTY real: teclas direto pro shell
+        } else {
+          // modo PIPE (sem node-pty): edição de linha local — eco aqui, envia no Enter
+          let lineBuf = '';
+          term.onData((d) => {
+            for (const ch of d) {
+              if (ch === '\r') {
+                term.write('\r\n');
+                window.api.termInput(id, lineBuf + '\n');
+                lineBuf = '';
+              } else if (ch === '\x7f') {
+                if (lineBuf) {
+                  lineBuf = lineBuf.slice(0, -1);
+                  term.write('\b \b');
+                }
+              } else if (ch >= ' ') {
+                lineBuf += ch;
+                term.write(ch);
+              }
+            }
+          });
+        }
+        termsUi.set(id, { term, fit, host, title });
+        if (replay) term.write(replay);
+        showPanel(true);
+        setPanelTab('term');
+        selectTerm(id);
+      }
+      async function newTerminal() {
+        const r = await window.api.termCreate({});
+        if (r.error) return toast(r.error, false);
+        if (!termsUi.has(r.id)) attachTerm(r.id, r.shell, r.pty);
+      }
+      window.api.onTermOpened(async (d) => {
+        // terminais abertos pela LUMI (run_in_terminal) aparecem aqui automaticamente
+        if (termsUi.has(d.id)) return;
+        const replay = await window.api.termBuffer(d.id);
+        attachTerm(d.id, d.title, d.pty, replay);
+      });
+      window.api.onTermData((d) => {
+        const u = termsUi.get(d.id);
+        if (u) u.term.write(d.data);
+      });
+      window.api.onTermExit((d) => {
+        const u = termsUi.get(d.id);
+        if (u) u.term.write('\r\n\x1b[90m[processo encerrado' + (d.exitCode != null ? ' · código ' + d.exitCode : '') + ']\x1b[0m\r\n');
+      });
+      document.getElementById('termNew').onclick = newTerminal;
+      document.getElementById('termKillBtn').onclick = () => {
+        if (!activeTerm) return;
+        window.api.termKill(activeTerm);
+        const u = termsUi.get(activeTerm);
+        if (u) {
+          u.term.dispose();
+          u.host.remove();
+        }
+        termsUi.delete(activeTerm);
+        activeTerm = termsUi.keys().next().value || null;
+        if (activeTerm) selectTerm(activeTerm);
+        else renderTermSel();
+      };
+      document.getElementById('panelClose').onclick = () => showPanel(false);
+      termSel.onchange = () => selectTerm(termSel.value);
+      document.querySelectorAll('.ptab').forEach((t) => (t.onclick = () => setPanelTab(t.dataset.tab)));
+      document.getElementById('toggleTerm').onclick = () => {
+        const show = panel.hidden;
+        showPanel(show);
+        if (show && !termsUi.size) newTerminal();
+      };
+      window.addEventListener('resize', fitActive);
+      // redimensionar o painel (arrastando a divisória)
+      (function () {
+        let dragP = false;
+        panelResize.addEventListener('mousedown', (e) => {
+          dragP = true;
+          e.preventDefault();
+          document.body.style.userSelect = 'none';
+          chatframe.style.pointerEvents = 'none';
+        });
+        window.addEventListener('mousemove', (e) => {
+          if (!dragP) return;
+          const r = panel.parentElement.getBoundingClientRect();
+          panel.style.height = Math.min(r.height - 120, Math.max(80, r.bottom - e.clientY)) + 'px';
+          fitActive();
+        });
+        window.addEventListener('mouseup', () => {
+          if (dragP) {
+            dragP = false;
+            document.body.style.userSelect = '';
+            chatframe.style.pointerEvents = '';
+          }
+        });
+      })();
+
+      // ---- aba PORTAS: processos escutando TCP + abrir no navegador / matar ----
+      async function loadPorts() {
+        const list = (await window.api.portsList()) || [];
+        const tb = document.getElementById('portsRows');
+        tb.innerHTML = '';
+        if (!list.length) {
+          tb.innerHTML = '<tr><td colspan="4" style="color:#667;padding:14px;text-align:center">Nenhuma porta TCP escutando.</td></tr>';
+          return;
+        }
+        list.forEach((p) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<td><b>:' + p.port + '</b></td><td>' + esc(p.name || '?') + '</td><td>' + (p.pid || '—') + '</td>';
+          const td = document.createElement('td');
+          td.className = 'pact';
+          const open = document.createElement('button');
+          open.textContent = '🌐 abrir';
+          open.onclick = () => window.api.portsOpen(p.port);
+          td.appendChild(open);
+          if (p.pid) {
+            const kill = document.createElement('button');
+            kill.textContent = '✕ matar';
+            kill.className = 'danger';
+            kill.onclick = async () => {
+              if (!confirm('Matar o processo ' + (p.name || '') + ' (PID ' + p.pid + ')?')) return;
+              const r = await window.api.portsKill(p.pid);
+              if (r && r.error) toast(r.error, false);
+              loadPorts();
+            };
+            td.appendChild(kill);
+          }
+          tr.appendChild(td);
+          tb.appendChild(tr);
+        });
+      }
+      setInterval(() => {
+        if (!panel.hidden && panelTab === 'ports') loadPorts(); // atualiza sozinho enquanto visível
+      }, 3000);
+
+      // ---- busca global no projeto (Ctrl+Shift+F) ----
+      const searchRow = document.getElementById('searchRow');
+      const wsSearch = document.getElementById('wsSearch');
+      let searchMode = false;
+      function toggleSearch(on) {
+        searchMode = on;
+        searchRow.classList.toggle('on', on);
+        if (on) {
+          wsSearch.focus();
+          wsSearch.select();
+          if (wsSearch.value.trim().length >= 2) runWsSearch();
+        } else drawTree();
+      }
+      document.getElementById('btnSearch').onclick = () => toggleSearch(!searchMode);
+      let wsSearchTimer = null;
+      wsSearch.addEventListener('input', () => {
+        clearTimeout(wsSearchTimer);
+        wsSearchTimer = setTimeout(runWsSearch, 350);
+      });
+      wsSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') toggleSearch(false);
+      });
+      async function runWsSearch() {
+        const q = wsSearch.value.trim();
+        if (q.length < 2) return drawTree();
+        const { results, truncated } = await window.api.searchWorkspace(q);
+        tree.innerHTML = '';
+        if (!results.length) {
+          tree.innerHTML = '<div id="empty">Nada encontrado.</div>';
+          return;
+        }
+        let lastFile = null;
+        results.forEach((r) => {
+          if (r.path !== lastFile) {
+            lastFile = r.path;
+            const f = document.createElement('div');
+            f.className = 'sresfile';
+            f.textContent = r.path;
+            f.title = r.path;
+            f.onclick = () => openFile(r.path);
+            tree.appendChild(f);
+          }
+          const l = document.createElement('div');
+          l.className = 'sresline';
+          const i = r.text.toLowerCase().indexOf(q.toLowerCase());
+          l.innerHTML =
+            r.line + ':  ' +
+            (i >= 0 ? esc(r.text.slice(0, i)) + '<b>' + esc(r.text.slice(i, i + q.length)) + '</b>' + esc(r.text.slice(i + q.length)) : esc(r.text));
+          l.onclick = async () => {
+            await openFile(r.path);
+            if (editor && !isImage) {
+              editor.revealLineInCenter(r.line);
+              editor.setPosition({ lineNumber: r.line, column: r.col });
+              editor.focus();
+            }
+          };
+          tree.appendChild(l);
+        });
+        if (truncated) {
+          const d = document.createElement('div');
+          d.className = 'sresline';
+          d.textContent = '… resultados limitados a 400';
+          tree.appendChild(d);
+        }
+      }
+
+      // ---- git status no explorer (cores estilo VS Code) ----
+      let gitMap = {};
+      async function loadGit() {
+        gitMap = (await window.api.gitStatus()) || {};
+      }
+
+      // ---- auto-reload de abas quando o arquivo muda no disco (ex.: a Lumi editou) ----
+      function refreshTab(t) {
+        if (!t || t.image || t.dirty || !t.model) return;
+        t.stale = false;
+        window.api.readWorkspaceFile(t.path).then((c) => {
+          if (c == null || !t.model || c === t.model.getValue()) return;
+          const isActive = active === t.path && editor;
+          const vs = isActive ? editor.saveViewState() : null;
+          t.model.setValue(c);
+          t.savedVer = t.model.getAlternativeVersionId();
+          t.dirty = false;
+          renderTabs();
+          if (isActive && vs) editor.restoreViewState(vs);
+        });
+      }
 
       // ---- painel do chat (iframe) ----
       const chatpane = document.getElementById('chatpane');
@@ -762,6 +1140,12 @@
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
           e.preventDefault();
           save();
+        } else if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key === "'")) {
+          e.preventDefault();
+          document.getElementById('toggleTerm').click(); // Ctrl+` abre/fecha o terminal
+        } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+          e.preventDefault();
+          toggleSearch(true); // busca global no projeto
         }
       });
 
@@ -796,7 +1180,13 @@
         });
         monaco.editor.setTheme('lumi');
       }
-      if (window.api.onThemeChanged) window.api.onThemeChanged(() => setTimeout(defineLumiTheme, 0)); // após o theme.js aplicar as vars
+      if (window.api.onThemeChanged)
+        window.api.onThemeChanged(() =>
+          setTimeout(() => {
+            defineLumiTheme(); // Monaco acompanha o tema
+            termsUi.forEach((u) => (u.term.options.theme = xtermTheme())); // terminais também
+          }, 0)
+        );
 
       const loader = document.createElement('script');
       loader.src = CDN + '/vs/loader.js';
