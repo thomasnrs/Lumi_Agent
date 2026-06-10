@@ -3574,7 +3574,7 @@ function createTray() {
       { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
       { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
       { label: 'Personagem', submenu: vrmMenuItems() },
-      { label: 'Configurações…', click: () => win.webContents.send('open-settings') },
+      { label: 'Configurações…', click: () => openSettingsWindow() },
       {
         label: 'Nova conversa',
         click: () => startNewChat(),
@@ -3637,6 +3637,36 @@ app.on('web-contents-created', (_e, contents) => {
   });
 });
 
+// Janela DEDICADA de configurações: carrega o index.html em modo "?settings=1"
+// (sem avatar 3D) — redimensionável, reusa 100% do formulário/lógica existentes.
+function openSettingsWindow() {
+  if (openPages.has('settings')) {
+    openPages.get('settings').focus();
+    return;
+  }
+  const w = new BrowserWindow({
+    width: 780,
+    height: 700,
+    minWidth: 560,
+    minHeight: 480,
+    title: 'Configurações — Lumi',
+    icon: ICON_PATH,
+    autoHideMenuBar: true,
+    backgroundColor: '#16161e',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+    ...acrylicOpts(),
+  });
+  w.setMenuBarVisibility(false);
+  w.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { query: { settings: '1' } });
+  w.on('closed', () => openPages.delete('settings'));
+  openPages.set('settings', w);
+}
+ipcMain.on('settings:open-window', () => openSettingsWindow());
+
 function openPage(id, file, title, w, h) {
   // se ja estiver aberta, so foca (evita duplicar)
   if (openPages.has(id)) {
@@ -3681,7 +3711,7 @@ function showContextMenu() {
     { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
     { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
     { label: 'Personagem', submenu: vrmMenuItems() },
-    { label: 'Configurações…', click: () => win.webContents.send('open-settings') },
+    { label: 'Configurações…', click: () => openSettingsWindow() },
     {
       label: 'Nova conversa',
       click: () => startNewChat(),
@@ -4273,6 +4303,7 @@ ipcMain.handle('config:set', (_e, cfg) => {
       broadcast('workspace:switched', ws);
     }
   }
+  broadcast('config:changed'); // o avatar re-aplica (gráficos/voz/saída) quando salvo de outra janela
   return true;
 });
 

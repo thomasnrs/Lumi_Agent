@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld('api', {
   // configuracao (BYOK)
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (cfg) => ipcRenderer.invoke('config:set', cfg),
+  onConfigChanged: (cb) => ipcRenderer.on('config:changed', () => cb()),
+  openSettingsWindow: () => ipcRenderer.send('settings:open-window'),
 
   // MCP
   mcpConnect: () => ipcRenderer.invoke('mcp:connect'),

@@ -5,6 +5,11 @@ import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-v
 
 const canvas = document.getElementById('c');
 
+// MODO "SÓ CONFIGURAÇÕES": esta mesma página vira a janela dedicada de settings
+// (?settings=1) — sem carregar o avatar 3D. Zero duplicação de formulário/lógica.
+const SETTINGS_ONLY = new URLSearchParams(location.search).has('settings');
+if (SETTINGS_ONLY) document.body.classList.add('settings-only');
+
 // ---------- renderer / cena ----------
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -270,7 +275,7 @@ async function loadVrm() {
     }
   );
 }
-loadVrm();
+if (!SETTINGS_ONLY) loadVrm(); // a janela de configurações não precisa do 3D
 
 // ---------- piscar ----------
 let nextBlink = 1 + Math.random() * 4;
@@ -1220,7 +1225,7 @@ async function openSettings() {
   refreshProfiles(); // atualiza a lista de perfis salvos
   profileMsgEl.textContent = '';
 }
-gear.addEventListener('click', openSettings);
+gear.addEventListener('click', () => window.api.openSettingsWindow()); // janela dedicada (redimensionável)
 
 presetSel.addEventListener('change', () => {
   const p = PRESETS[presetSel.value];
@@ -1356,7 +1361,8 @@ saveBtn.addEventListener('click', async () => {
   ttsProvider = form.ttsProvider; // atualiza o modo de fala (edge x chave)
   audioOutputId = form.audioOutput; // aplica o alto-falante escolhido
   applySink();
-  settings.style.display = 'none';
+  if (SETTINGS_ONLY) settingsToast('✓ Configurações salvas');
+  else settings.style.display = 'none';
   showBubble('Pronto! Pode falar comigo ✨', 4000);
 });
 
@@ -1401,7 +1407,24 @@ testVoiceBtn.addEventListener('click', () => {
     apiKey: apiKeyEl.value.trim(),
   });
 });
-closeBtn.addEventListener('click', () => (settings.style.display = 'none'));
+closeBtn.addEventListener('click', () => (SETTINGS_ONLY ? window.close() : (settings.style.display = 'none')));
+
+// mini-confirmação na janela dedicada de configurações (não tem bolha do avatar lá)
+function settingsToast(t) {
+  let el = document.getElementById('sav-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sav-toast';
+    el.style.cssText =
+      'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);' +
+      'border-radius:16px;padding:7px 16px;font-size:12px;color:var(--text);z-index:99;box-shadow:0 6px 20px rgba(0,0,0,.4);transition:opacity .25s;';
+    document.body.appendChild(el);
+  }
+  el.textContent = t;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => (el.style.opacity = '0'), 1800);
+}
 
 // troca de abas das configuracoes
 document.querySelectorAll('#settings .tab').forEach((tab) => {
@@ -1414,9 +1437,12 @@ document.querySelectorAll('#settings .tab').forEach((tab) => {
   });
 });
 
-// Esc fecha as configuracoes
+// Esc fecha as configuracoes (na janela dedicada, fecha a janela)
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && settings.style.display === 'flex') settings.style.display = 'none';
+  if (e.key === 'Escape' && settings.style.display === 'flex') {
+    if (SETTINGS_ONLY) window.close();
+    else settings.style.display = 'none';
+  }
 });
 resetBtn.addEventListener('click', () => {
   window.api.resetChat();
@@ -1577,6 +1603,7 @@ async function loadAudioDevices(inId, outId) {
 // ---- click-through inteligente: avisa o main quando o mouse esta sobre o corpo dela ou a UI ----
 let lastInteractive = null;
 function reportHover(x, y) {
+  if (SETTINGS_ONLY) return; // janela de settings NÃO mexe no click-through do avatar
   let overUI = false;
   let overBody = false;
   if (settings.style.display === 'flex') {
@@ -1672,6 +1699,11 @@ window.api.onToolAnimation((name) => triggerEmotion(name));
 
 // ---- primeira execucao: aplica qualidade salva + avisa para configurar ----
 window.api.getConfig().then((c) => {
+  if (SETTINGS_ONLY) {
+    maxFps = 5; // sem avatar, o loop praticamente dorme
+    openSettings(); // abre o formulário direto (a janela É as configurações)
+    return;
+  }
   applyGraphics(c.gfxQuality || 'balanced');
   ttsProvider = c.ttsProvider || 'off';
   audioOutputId = c.audioOutput || '';
@@ -1680,6 +1712,16 @@ window.api.getConfig().then((c) => {
     showBubble('Clique na engrenagem ⚙ para configurar sua I.A.');
   }
 });
+
+// config salva em OUTRA janela (a de configurações) → o avatar re-aplica o que importa
+if (!SETTINGS_ONLY && window.api.onConfigChanged)
+  window.api.onConfigChanged(async () => {
+    const c = await window.api.getConfig();
+    applyGraphics(c.gfxQuality || 'balanced');
+    ttsProvider = c.ttsProvider || 'off';
+    audioOutputId = c.audioOutput || '';
+    applySink();
+  });
 
 // posicao inicial da janela (para o arrasto comecar do lugar certo)
 window.api.getWindowPos().then((p) => {
