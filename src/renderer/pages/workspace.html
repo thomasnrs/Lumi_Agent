@@ -251,6 +251,11 @@
       #portsBody .pact button { border: none; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
       #portsBody .pact button:hover { background: var(--accent); color: var(--accent-text); }
       #portsBody .pact button.danger:hover { background: #e0556e; color: #fff; }
+      #portsBody tr.pnew { animation: pnewFlash 1.8s ease; }
+      @keyframes pnewFlash {
+        from { background: color-mix(in srgb, #7ee0a0 28%, transparent); }
+        to { background: transparent; }
+      }
       /* git status no explorer */
       .item .nm.git-M { color: #e2c08d; }
       .item .nm.git-A, .item .nm.git-U { color: #73c991; }
@@ -872,7 +877,7 @@
         document.querySelectorAll('.ptab').forEach((x) => x.classList.toggle('active', x.dataset.tab === t));
         termBody.style.display = t === 'term' ? '' : 'none';
         portsBodyEl.hidden = t !== 'ports';
-        if (t === 'ports') loadPorts();
+        if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
         if (t === 'term') setTimeout(fitActive, 30);
       }
       function fitActive() {
@@ -945,8 +950,10 @@
         }
         termsUi.set(id, { term, fit, host, title });
         if (replay) term.write(replay);
+        const wasHidden = panel.hidden;
         showPanel(true);
-        setPanelTab('term');
+        // não rouba a aba se você está olhando as PORTAS (o terminal anexa em segundo plano)
+        if (wasHidden || panelTab !== 'ports') setPanelTab('term');
         selectTerm(id);
       }
       async function newTerminal() {
@@ -1015,9 +1022,20 @@
         });
       })();
 
-      // ---- aba PORTAS: processos escutando TCP + abrir no navegador / matar ----
-      async function loadPorts() {
+      // ---- aba PORTAS: processos escutando TCP, AO VIVO (poll com o painel visível) ----
+      let lastPortsSig = '';
+      let lastPortsSet = new Set();
+      async function loadPorts(force) {
         const list = (await window.api.portsList()) || [];
+        // contador no rótulo da aba (você vê mudar mesmo estando na aba TERMINAL)
+        const tabEl = document.querySelector('.ptab[data-tab="ports"]');
+        if (tabEl) tabEl.textContent = 'PORTAS' + (list.length ? ' (' + list.length + ')' : '');
+        const sig = JSON.stringify(list);
+        if (!force && sig === lastPortsSig && panelTab === 'ports') return; // nada mudou → não pisca a tabela
+        const prev = lastPortsSet;
+        lastPortsSig = sig;
+        lastPortsSet = new Set(list.map((p) => p.port + ':' + p.pid));
+        if (panelTab !== 'ports') return; // dados/badge sempre frescos; tabela só quando visível
         const tb = document.getElementById('portsRows');
         tb.innerHTML = '';
         if (!list.length) {
@@ -1026,6 +1044,7 @@
         }
         list.forEach((p) => {
           const tr = document.createElement('tr');
+          if (prev.size && !prev.has(p.port + ':' + p.pid)) tr.classList.add('pnew'); // porta recém-aberta pisca verde
           tr.innerHTML = '<td><b>:' + p.port + '</b></td><td>' + esc(p.name || '?') + '</td><td>' + (p.pid || '—') + '</td>';
           const td = document.createElement('td');
           td.className = 'pact';
@@ -1041,7 +1060,7 @@
               if (!confirm('Matar o processo ' + (p.name || '') + ' (PID ' + p.pid + ')?')) return;
               const r = await window.api.portsKill(p.pid);
               if (r && r.error) toast(r.error, false);
-              loadPorts();
+              loadPorts(true);
             };
             td.appendChild(kill);
           }
@@ -1050,7 +1069,7 @@
         });
       }
       setInterval(() => {
-        if (!panel.hidden && panelTab === 'ports') loadPorts(); // atualiza sozinho enquanto visível
+        if (!panel.hidden) loadPorts(); // AO VIVO sempre que o painel está aberto (qualquer aba)
       }, 3000);
 
       // ---- busca global no projeto (Ctrl+Shift+F) ----
