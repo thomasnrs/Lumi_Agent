@@ -89,8 +89,60 @@
       .item.dir .ic { color: var(--accent); }
       .item:not(.dir) .ic { color: #8fa3b8; }
       .item .nm { overflow: hidden; text-overflow: ellipsis; }
+      /* ---- controle de fontes (painel git) ---- */
+      #gitview { flex: 1; display: none; flex-direction: column; overflow: hidden; font-size: 13px; }
+      #gitCommitBox { padding: 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+      #gitBranchRow { display: flex; align-items: center; gap: 6px; color: #9aa; font-size: 12px; min-height: 20px; }
+      #gitBranchRow svg { width: 14px; height: 14px; flex: 0 0 auto; }
+      #gitBranchRow b { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+      #gitSync { color: #7ee0a0; font-size: 11px; }
+      #gitMsg {
+        width: 100%; box-sizing: border-box; background: var(--surface); color: var(--text);
+        border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font-family: inherit;
+        font-size: 12.5px; line-height: 1.45; resize: vertical; min-height: 52px; max-height: 170px; outline: none;
+      }
+      #gitBtnRow { display: flex; gap: 6px; }
+      #gitBtnRow button {
+        flex: 1; border-radius: 7px; padding: 7px 0; font-size: 12px; font-weight: 600; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; gap: 5px;
+      }
+      #gitAiBtn { background: var(--surface); color: var(--accent); border: 1px solid var(--border); }
+      #gitAiBtn:hover { border-color: var(--accent); }
+      #gitCommitBtn { background: var(--accent); color: var(--accent-text, #fff); border: none; }
+      #gitBtnRow button:disabled { opacity: 0.55; cursor: default; }
+      #gitLists { flex: 1; overflow: auto; padding: 2px 0 8px; }
+      .gsec-head {
+        display: flex; align-items: center; gap: 6px; padding: 8px 8px 3px;
+        font-size: 10.5px; color: #9aa; text-transform: uppercase; letter-spacing: 0.4px;
+      }
+      .gsec-head .cnt { background: var(--surface); border-radius: 8px; padding: 1px 7px; font-size: 10px; }
+      .gsec-head .grow { flex: 1; }
+      .gsec-head .ga {
+        width: 20px; height: 20px; border: none; background: transparent; color: #9aa; border-radius: 5px;
+        cursor: pointer; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0;
+      }
+      .gsec-head .ga:hover { background: var(--surface); color: var(--text); }
+      .gitem { display: flex; align-items: center; gap: 6px; padding: 2px 8px; height: 24px; cursor: pointer; white-space: nowrap; overflow: hidden; user-select: none; }
+      .gitem:hover { background: var(--surface); }
+      .gitem .ic { width: 16px; height: 16px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      .gitem .ic svg { width: 15px; height: 15px; }
+      .gitem .nm { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+      .gitem .dr { color: #667; font-size: 11px; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; }
+      .gitem .gst { flex: 0 0 auto; font-weight: 700; font-size: 11px; width: 13px; text-align: center; }
+      .gst-M { color: #e2b75e; } .gst-A { color: #7ee0a0; } .gst-D { color: #ff9b9b; }
+      .gst-U { color: #7ee0a0; } .gst-R { color: #9d8cff; } .gst-C { color: #9d8cff; }
+      .gitem .gacts { display: none; gap: 2px; flex: 0 0 auto; }
+      .gitem:hover .gacts { display: flex; }
+      .gacts button {
+        width: 18px; height: 18px; border: none; background: transparent; color: #9aa; border-radius: 4px;
+        cursor: pointer; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0;
+      }
+      .gacts button:hover { background: var(--border); color: var(--text); }
+      #gitEmpty { padding: 20px 12px; color: #778; text-align: center; font-size: 12px; }
+      #sbLeft:hover { color: var(--text); cursor: pointer; }
       #edcol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       #editor { flex: 1; min-width: 0; min-height: 0; }
+      #diffeditor { flex: 1; min-width: 0; min-height: 0; display: none; }
       /* abas de arquivos (estilo VS Code) */
       #tabs {
         display: flex;
@@ -374,13 +426,32 @@
           <button class="tb" id="collapse" title="Recolher tudo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg></button>
           <button class="tb" id="refresh" title="Atualizar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
           <button class="tb" id="btnSearch" title="Buscar no projeto (Ctrl+Shift+F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
+          <button class="tb" id="btnGit" title="Controle de fontes (Ctrl+Shift+G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></button>
         </div>
         <div id="searchRow"><input id="wsSearch" type="text" placeholder="Buscar no projeto..." spellcheck="false" /></div>
         <div id="tree"></div>
+        <div id="gitview">
+          <div id="gitCommitBox">
+            <div id="gitBranchRow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <b id="gitBranchName">—</b>
+              <span id="gitSync"></span>
+              <span style="flex: 1"></span>
+              <button class="ga" id="gitRefresh" title="Atualizar">⟳</button>
+            </div>
+            <textarea id="gitMsg" placeholder="Mensagem do commit (Ctrl+Enter commita)" spellcheck="false"></textarea>
+            <div id="gitBtnRow">
+              <button id="gitAiBtn" title="A Lumi escreve a mensagem olhando o diff">✦ Lumi</button>
+              <button id="gitCommitBtn" title="Commita o que está preparado (staged)">✓ Commitar</button>
+            </div>
+          </div>
+          <div id="gitLists"></div>
+        </div>
       </div>
       <div id="edcol">
         <div id="tabs"></div>
         <div id="editor"></div>
+        <div id="diffeditor"></div>
         <div id="preview"><img id="previewImg" alt="" /><div id="previewMeta"></div></div>
         <div id="panelResize" hidden title="Arraste para redimensionar"></div>
         <div id="panel" hidden>
@@ -423,10 +494,12 @@
       const tree = document.getElementById('tree');
       const curpath = document.getElementById('curpath');
       const editorEl = document.getElementById('editor');
+      const diffEl = document.getElementById('diffeditor');
       const previewEl = document.getElementById('preview');
       const previewImg = document.getElementById('previewImg');
       const previewMeta = document.getElementById('previewMeta');
       let editor = null;
+      let diffEditor = null; // editor de diff do painel git (criado junto com o Monaco)
       let current = null;
       let isImage = false;
       let treeData = [];
@@ -621,10 +694,11 @@
         openTabs.forEach((t) => {
           const el = document.createElement('div');
           el.className = 'tab' + (t.path === active ? ' active' : '') + (t.dirty ? ' dirty' : '');
-          el.title = t.path;
+          el.title = t.diff ? t.rel + ' (alterações)' : t.path;
+          const nm = t.diff ? '⇆ ' + baseName(t.rel) : baseName(t.path);
           el.innerHTML =
-            '<span class="ticon">' + iconFor(baseName(t.path)) + '</span>' +
-            '<span class="tname">' + esc(baseName(t.path)) + '</span>' +
+            '<span class="ticon">' + iconFor(baseName(t.diff ? t.rel : t.path)) + '</span>' +
+            '<span class="tname">' + esc(nm) + '</span>' +
             '<span class="dot"></span><button class="tx" title="Fechar (clique do meio)">✕</button>';
           el.addEventListener('click', (e) => {
             if (!e.target.closest('.tx')) activate(t.path);
@@ -655,6 +729,7 @@
         sbLeft.textContent = git + (active || 'Lumi Workspace');
         if (!t) sbRight.textContent = '';
         else if (t.image) sbRight.textContent = 'imagem · ' + fmtBytes(t.bytes || 0);
+        else if (t.diff) sbRight.textContent = 'git diff · ' + langOf(t.rel);
         else {
           const pos = editor && editor.getPosition();
           sbRight.textContent = (pos ? 'Ln ' + pos.lineNumber + ', Col ' + pos.column + '   ·   ' : '') + langOf(t.path);
@@ -666,6 +741,7 @@
         window.api.setEditorActive('');
         curpath.textContent = 'Nenhum arquivo aberto';
         previewEl.style.display = 'none';
+        diffEl.style.display = 'none';
         editorEl.style.display = 'block';
         if (editor) editor.setModel(monaco.editor.createModel('', 'plaintext'));
         renderTabs();
@@ -676,21 +752,25 @@
         if (!t) return;
         if (active && active !== p) {
           const prev = findTab(active);
-          if (prev && prev.model && editor) prev.viewState = editor.saveViewState(); // memoriza cursor/scroll
+          if (prev && prev.model && !prev.diff && editor) prev.viewState = editor.saveViewState(); // memoriza cursor/scroll
         }
         if (t.stale) refreshTab(t); // arquivo mudou no disco enquanto a aba estava em segundo plano
         active = p;
-        current = p;
+        current = t.diff ? null : p;
         isImage = !!t.image;
-        curpath.textContent = p;
+        curpath.textContent = t.diff ? t.rel + '  ·  HEAD ⇆ atual' : p;
+        previewEl.style.display = 'none';
+        editorEl.style.display = 'none';
+        diffEl.style.display = 'none';
         if (t.image) {
-          editorEl.style.display = 'none';
           previewEl.style.display = 'flex';
           previewImg.src = t.url;
           previewImg.onload = () =>
             (previewMeta.textContent = previewImg.naturalWidth + ' × ' + previewImg.naturalHeight + ' px  ·  ' + fmtBytes(t.bytes));
+        } else if (t.diff) {
+          diffEl.style.display = 'block';
+          if (diffEditor) diffEditor.setModel({ original: t.orig, modified: t.model });
         } else {
-          previewEl.style.display = 'none';
           editorEl.style.display = 'block';
           if (editor) {
             editor.setModel(t.model);
@@ -701,7 +781,7 @@
         renderTabs();
         drawTree();
         updateStatus();
-        window.api.setEditorActive(t.image ? '' : p); // o chat mostra/anexa o arquivo ativo
+        window.api.setEditorActive(t.image || t.diff ? '' : p); // o chat mostra/anexa o arquivo ativo
       }
       function closeTab(p, force) {
         const i = openTabs.findIndex((t) => t.path === p);
@@ -709,6 +789,7 @@
         const t = openTabs[i];
         if (!force && t.dirty && !confirm('"' + baseName(p) + '" tem alterações não salvas. Fechar mesmo assim?')) return;
         if (t.model) t.model.dispose();
+        if (t.orig) t.orig.dispose(); // lado "original" das abas de diff
         openTabs.splice(i, 1);
         if (active === p) {
           const next = openTabs[i] || openTabs[i - 1];
@@ -739,7 +820,7 @@
 
       async function save() {
         const t = active && findTab(active);
-        if (!t || t.image || !editor) return;
+        if (!t || t.image || t.diff || !editor) return;
         const ok = await window.api.writeWorkspaceFile(t.path, t.model.getValue());
         if (ok) {
           t.savedVer = t.model.getAlternativeVersionId();
@@ -932,6 +1013,7 @@
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => {
           loadTree();
+          if (sideMode === 'git') loadGitPanel(); // painel git acompanha as mudanças
           // abas: a ativa recarrega na hora (se você não tiver edição pendente); as outras
           // ficam marcadas e recarregam quando você clicar nelas
           openTabs.forEach((t) => (t.stale = true));
@@ -1180,6 +1262,7 @@
       const wsSearch = document.getElementById('wsSearch');
       let searchMode = false;
       function toggleSearch(on) {
+        if (on && sideMode === 'git') setSideMode('files'); // busca vive no explorer
         searchMode = on;
         searchRow.classList.toggle('on', on);
         if (on) {
@@ -1253,8 +1336,202 @@
         updateStatus();
       }
 
+      // ============================================================
+      //  Controle de fontes (painel git, estilo VS Code)
+      // ============================================================
+      const gitviewEl = document.getElementById('gitview');
+      const gitListsEl = document.getElementById('gitLists');
+      const gitMsgEl = document.getElementById('gitMsg');
+      const gitAiBtn = document.getElementById('gitAiBtn');
+      const gitCommitBtn = document.getElementById('gitCommitBtn');
+      const gitBranchNameEl = document.getElementById('gitBranchName');
+      const gitSyncEl = document.getElementById('gitSync');
+      const btnGit = document.getElementById('btnGit');
+      let sideMode = 'files'; // 'files' (explorer) | 'git'
+      let gitSt = null; // último status carregado
+
+      function setSideMode(m) {
+        sideMode = m;
+        const git = m === 'git';
+        tree.style.display = git ? 'none' : '';
+        searchRow.style.display = git ? 'none' : '';
+        gitviewEl.style.display = git ? 'flex' : 'none';
+        ['newFile', 'newFolder', 'collapse'].forEach((id) => (document.getElementById(id).style.display = git ? 'none' : ''));
+        btnGit.style.color = git ? 'var(--accent)' : '';
+        if (git) {
+          rootnameEl.textContent = 'CONTROLE DE FONTES';
+          loadGitPanel();
+        } else updateRoot();
+      }
+      btnGit.onclick = () => setSideMode(sideMode === 'git' ? 'files' : 'git');
+      sbLeft.addEventListener('click', () => {
+        if (gitBranch) setSideMode(sideMode === 'git' ? 'files' : 'git'); // ⎇ na statusbar abre o painel
+      });
+
+      async function loadGitPanel() {
+        const st = await window.api.gitPanelStatus();
+        gitSt = st && !st.error ? st : null;
+        if (!gitSt) {
+          gitBranchNameEl.textContent = '—';
+          gitSyncEl.textContent = '';
+          gitListsEl.innerHTML = '<div id="gitEmpty">' + esc((st && st.error) || 'git indisponível') + '</div>';
+          return;
+        }
+        gitBranchNameEl.textContent = st.branch;
+        gitSyncEl.textContent = (st.ahead ? '↑' + st.ahead : '') + (st.behind ? ' ↓' + st.behind : '');
+        gitListsEl.innerHTML = '';
+        if (!st.staged.length && !st.unstaged.length) {
+          gitListsEl.innerHTML = '<div id="gitEmpty">Nenhuma alteração ✨</div>';
+        } else {
+          if (st.staged.length) gitListsEl.appendChild(gitSection('Preparadas (staged)', st.staged, true));
+          if (st.unstaged.length) gitListsEl.appendChild(gitSection('Alterações', st.unstaged, false));
+        }
+        loadGit(); // statusbar/explorer acompanham
+      }
+
+      async function gitAct(promise) {
+        const r = await promise;
+        if (r && r.error) toast('⚠ ' + String(r.error).slice(0, 160), false);
+        loadGitPanel();
+      }
+
+      function gitSection(title, files, staged) {
+        const sec = document.createElement('div');
+        const head = document.createElement('div');
+        head.className = 'gsec-head';
+        head.innerHTML =
+          '<span>' + title + '</span><span class="cnt">' + files.length + '</span><span class="grow"></span>' +
+          (staged
+            ? '<button class="ga" title="Despreparar tudo">−</button>'
+            : '<button class="ga" title="Descartar todas as alterações">↶</button><button class="ga" title="Preparar tudo (stage)">＋</button>');
+        const btns = head.querySelectorAll('.ga');
+        const paths = files.map((f) => f.path);
+        if (staged) btns[0].onclick = () => gitAct(window.api.gitUnstage(paths));
+        else {
+          btns[0].onclick = () => {
+            if (confirm('Descartar TODAS as alterações (' + paths.length + ' arquivos)? Os não rastreados serão apagados. Não dá pra desfazer.'))
+              gitAct(window.api.gitDiscard(paths));
+          };
+          btns[1].onclick = () => gitAct(window.api.gitStage(paths));
+        }
+        sec.appendChild(head);
+        files.forEach((f) => sec.appendChild(gitRow(f, staged)));
+        return sec;
+      }
+
+      function gitRow(f, staged) {
+        const d = document.createElement('div');
+        d.className = 'gitem';
+        d.title = f.path;
+        const nm = baseName(f.path);
+        d.innerHTML =
+          '<span class="ic">' + iconFor(nm) + '</span><span class="nm">' + esc(nm) + '</span><span class="dr">' + esc(dirOf(f.path)) + '</span>' +
+          '<span class="gacts">' +
+          (staged ? '<button title="Despreparar">−</button>' : '<button title="Descartar alterações">↶</button><button title="Preparar (stage)">＋</button>') +
+          '</span><span class="gst gst-' + f.st + '">' + f.st + '</span>';
+        d.addEventListener('click', (e) => {
+          if (e.target.closest('.gacts')) return;
+          openDiffFor(f);
+        });
+        const btns = d.querySelectorAll('.gacts button');
+        if (staged) btns[0].onclick = () => gitAct(window.api.gitUnstage([f.path]));
+        else {
+          btns[0].onclick = () => {
+            const aviso = f.st === 'U' ? ' O arquivo é novo e será APAGADO.' : '';
+            if (confirm('Descartar as alterações de "' + f.path + '"?' + aviso)) gitAct(window.api.gitDiscard([f.path]));
+          };
+          btns[1].onclick = () => gitAct(window.api.gitStage([f.path]));
+        }
+        return d;
+      }
+
+      // clique no arquivo → diff HEAD ⇆ atual numa aba (Monaco diff editor)
+      function openDiffFor(f) {
+        const ext = (f.path.split('.').pop() || '').toLowerCase();
+        if (IMG_EXT.includes(ext)) {
+          if (f.st !== 'D') openFile(f.path); // imagem não tem diff de texto — abre o preview
+          return;
+        }
+        openDiff(f.path);
+      }
+      async function openDiff(rel) {
+        if (!window.monaco || !diffEditor) return toast('⚠ o editor ainda está carregando…', false);
+        const p = 'diff:' + rel;
+        let t = findTab(p);
+        const [orig, cur] = await Promise.all([window.api.gitHeadFile(rel), window.api.readWorkspaceFile(rel)]);
+        if (!t) {
+          t = {
+            path: p,
+            diff: true,
+            rel,
+            orig: monaco.editor.createModel(orig || '', langOf(rel)),
+            model: monaco.editor.createModel(cur == null ? '' : cur, langOf(rel)),
+            dirty: false,
+          };
+          openTabs.push(t);
+        } else {
+          t.orig.setValue(orig || '');
+          t.model.setValue(cur == null ? '' : cur);
+        }
+        activate(p);
+      }
+
+      async function doCommit() {
+        const message = gitMsgEl.value.trim();
+        if (!message) {
+          toast('⚠ escreva a mensagem do commit', false);
+          gitMsgEl.focus();
+          return;
+        }
+        let stageAll = false;
+        if (!gitSt || !gitSt.staged.length) {
+          if (!gitSt || !gitSt.unstaged.length) return toast('⚠ nenhuma alteração para commitar', false);
+          if (!confirm('Nada está preparado (staged). Commitar TODAS as alterações?')) return;
+          stageAll = true;
+        }
+        gitCommitBtn.disabled = true;
+        const r = await window.api.gitCommit({ message, stageAll });
+        gitCommitBtn.disabled = false;
+        if (r && r.error) return toast('⚠ ' + String(r.error).slice(0, 160), false);
+        gitMsgEl.value = '';
+        toast('✓ commit feito');
+        loadGitPanel();
+        openTabs.filter((t) => t.diff).forEach((t) => refreshTab(t)); // HEAD mudou → diffs abertos atualizam
+      }
+      gitCommitBtn.onclick = doCommit;
+      gitMsgEl.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          doCommit();
+        }
+      });
+      gitAiBtn.onclick = async () => {
+        gitAiBtn.disabled = true;
+        const old = gitAiBtn.innerHTML;
+        gitAiBtn.textContent = '✦ escrevendo…';
+        const r = await window.api.gitAiMessage();
+        gitAiBtn.disabled = false;
+        gitAiBtn.innerHTML = old;
+        if (r && r.error) return toast('⚠ ' + String(r.error).slice(0, 160), false);
+        gitMsgEl.value = r.message;
+        gitMsgEl.focus();
+      };
+      document.getElementById('gitRefresh').onclick = loadGitPanel;
+      window.addEventListener('focus', () => {
+        if (sideMode === 'git') loadGitPanel(); // voltou pra janela → status fresco
+      });
+
       // ---- auto-reload de abas quando o arquivo muda no disco (ex.: a Lumi editou) ----
       function refreshTab(t) {
+        if (t && t.diff) {
+          // aba de diff: recarrega os DOIS lados (HEAD pode ter mudado com um commit)
+          t.stale = false;
+          Promise.all([window.api.gitHeadFile(t.rel), window.api.readWorkspaceFile(t.rel)]).then(([o, c]) => {
+            if (t.orig) t.orig.setValue(o || '');
+            if (t.model) t.model.setValue(c == null ? '' : c);
+          });
+          return;
+        }
         if (!t || t.image || t.dirty || !t.model) return;
         t.stale = false;
         window.api.readWorkspaceFile(t.path).then((c) => {
@@ -1333,7 +1610,8 @@
         if (searchMode) toggleSearch(false);
         wsSearch.value = '';
         loadTree();
-        updateRoot();
+        if (sideMode === 'git') setSideMode('git'); // re-renderiza o painel git pro novo repo
+        else updateRoot();
       }
       window.api.onWorkspaceSwitched((ws) => {
         resetWorkspaceUI();
@@ -1428,6 +1706,7 @@
               },
             },
             { label: 'Chat da Lumi', icon: MI.chat, fn: () => toggleChat.click() },
+            { label: 'Controle de fontes (git)', icon: GLYPH.git('currentColor'), hint: 'Ctrl+Shift+G', fn: () => setSideMode(sideMode === 'git' ? 'files' : 'git') },
             '-',
             {
               label: 'Recolher pastas',
@@ -1541,6 +1820,9 @@
         } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
           e.preventDefault();
           toggleSearch(true); // busca global no projeto
+        } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'g') {
+          e.preventDefault();
+          setSideMode(sideMode === 'git' ? 'files' : 'git'); // controle de fontes
         }
       });
 
@@ -1598,6 +1880,16 @@
             minimap: { enabled: true },
           });
           editor.onDidChangeCursorPosition(updateStatus); // Ln/Col na barra de status
+          // editor de diff do painel git (HEAD ⇆ atual); inline quando o espaço aperta
+          diffEditor = monaco.editor.createDiffEditor(diffEl, {
+            theme: 'lumi',
+            automaticLayout: true,
+            readOnly: true,
+            originalEditable: false,
+            fontSize: 13,
+            renderSideBySide: true,
+            useInlineViewWhenSpaceIsLimited: true,
+          });
           loadTree();
         });
       };

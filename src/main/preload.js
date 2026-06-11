@@ -35,6 +35,15 @@ contextBridge.exposeInMainWorld('api', {
   gitStatus: () => ipcRenderer.invoke('workspace:gitstatus'),
   gitInfo: () => ipcRenderer.invoke('workspace:gitinfo'),
 
+  // controle de fontes (painel git do workspace)
+  gitPanelStatus: () => ipcRenderer.invoke('git:panel-status'),
+  gitHeadFile: (rel) => ipcRenderer.invoke('git:head-file', rel),
+  gitStage: (paths) => ipcRenderer.invoke('git:stage', paths),
+  gitUnstage: (paths) => ipcRenderer.invoke('git:unstage', paths),
+  gitDiscard: (paths) => ipcRenderer.invoke('git:discard', paths),
+  gitCommit: (opts) => ipcRenderer.invoke('git:commit', opts),
+  gitAiMessage: () => ipcRenderer.invoke('git:ai-message'),
+
   // terminal integrado (painel do workspace, estilo VS Code)
   termCreate: (opts) => ipcRenderer.invoke('term:create', opts || {}),
   termInput: (id, data) => ipcRenderer.send('term:input', { id, data }),

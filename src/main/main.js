@@ -9,9 +9,10 @@ const fs = require('fs');
 const url = require('url');
 const crypto = require('crypto');
 const WebSocket = require('ws');
-const { exec, spawn } = require('child_process');
+const { exec, spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile); // args como array — sem dor de cabeça com aspas no Windows
 
 // ---- LINUX: flags necessárias pra janela transparente do avatar (não afetam Windows) ----
 if (process.platform === 'linux') {
@@ -4344,6 +4345,163 @@ ipcMain.handle('workspace:gitstatus', async () => {
     return {}; // sem git / não é repo → explorer fica normal
   }
 });
+// ============================================================
+//  CONTROLE DE FONTES (painel git do workspace, estilo VS Code)
+// ============================================================
+function gitRun(cfg, args, opts) {
+  return execFileAsync('git', args, {
+    cwd: cfg.workspace,
+    timeout: 20000,
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+    ...(opts || {}),
+  });
+}
+
+// status detalhado: staged e unstaged SEPARADOS (porcelain v1 -z aguenta espaço/rename no nome)
+ipcMain.handle('git:panel-status', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace definido' };
+  try {
+    const { stdout: br } = await gitRun(cfg, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const { stdout } = await gitRun(cfg, ['status', '--porcelain=v1', '-z', '-uall']);
+    const staged = [];
+    const unstaged = [];
+    const parts = stdout.split('\0');
+    for (let i = 0; i < parts.length; i++) {
+      const e = parts[i];
+      if (e.length < 4) continue;
+      const x = e[0];
+      const y = e[1];
+      const p = e.slice(3).replace(/\\/g, '/');
+      if (x === 'R' || x === 'C') i++; // no -z, o caminho ANTIGO vem na entrada seguinte — pula
+      if (x === '?') {
+        unstaged.push({ path: p, st: 'U' }); // não rastreado
+        continue;
+      }
+      if (x !== ' ') staged.push({ path: p, st: x });
+      if (y !== ' ') unstaged.push({ path: p, st: y });
+    }
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const { stdout: ab } = await gitRun(cfg, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']);
+      const m = ab.trim().split(/\s+/);
+      ahead = parseInt(m[0], 10) || 0;
+      behind = parseInt(m[1], 10) || 0;
+    } catch (e) {
+      /* sem upstream configurado — normal */
+    }
+    return { branch: br.trim(), staged, unstaged, ahead, behind };
+  } catch (e) {
+    return { error: 'não é um repositório git' };
+  }
+});
+
+// conteúdo do arquivo no HEAD (lado "original" do diff); '' se o arquivo é novo
+ipcMain.handle('git:head-file', async (_e, rel) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !rel) return '';
+  try {
+    const { stdout } = await gitRun(cfg, ['show', 'HEAD:' + String(rel).replace(/\\/g, '/')]);
+    return stdout;
+  } catch (e) {
+    return ''; // arquivo novo ou fora do HEAD
+  }
+});
+
+ipcMain.handle('git:stage', async (_e, paths) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !Array.isArray(paths) || !paths.length) return { error: 'nada para preparar' };
+  try {
+    await gitRun(cfg, ['add', '--', ...paths]);
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e) };
+  }
+});
+
+ipcMain.handle('git:unstage', async (_e, paths) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !Array.isArray(paths) || !paths.length) return { error: 'nada para despreparar' };
+  try {
+    await gitRun(cfg, ['reset', '-q', 'HEAD', '--', ...paths]);
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e) };
+  }
+});
+
+// descarta alterações: rastreado → volta pro HEAD; não rastreado → apaga o arquivo
+// (a CONFIRMAÇÃO é na UI — aqui só executa)
+ipcMain.handle('git:discard', async (_e, paths) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !Array.isArray(paths) || !paths.length) return { error: 'nada para descartar' };
+  const errors = [];
+  for (const rel of paths) {
+    try {
+      await gitRun(cfg, ['ls-files', '--error-unmatch', '--', rel]); // rastreado?
+      await gitRun(cfg, ['checkout', '-q', 'HEAD', '--', rel]);
+    } catch (e) {
+      // não rastreado: descartar = apagar (mesmo comportamento do VS Code)
+      try {
+        const fp = safeWsPath(cfg, rel);
+        if (fp && fs.existsSync(fp)) fs.rmSync(fp, { force: true });
+      } catch (e2) {
+        errors.push(rel + ': ' + String((e2 && e2.message) || e2));
+      }
+    }
+  }
+  return errors.length ? { error: errors.join('; ') } : { ok: true };
+});
+
+ipcMain.handle('git:commit', async (_e, { message, stageAll }) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace definido' };
+  if (!message || !message.trim()) return { error: 'mensagem vazia' };
+  try {
+    if (stageAll) await gitRun(cfg, ['add', '-A']);
+    const { stdout } = await gitRun(cfg, ['commit', '-m', message.trim()]);
+    return { ok: true, out: stdout.trim() };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.stdout) || (e && e.message) || e).trim() };
+  }
+});
+
+// ✦ a Lumi escreve a mensagem olhando o diff (staged se houver; senão, tudo)
+ipcMain.handle('git:ai-message', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace definido' };
+  try {
+    const { stdout: stagedNames } = await gitRun(cfg, ['diff', '--cached', '--name-only']);
+    const useStaged = !!stagedNames.trim();
+    const { stdout: diff } = await gitRun(cfg, useStaged ? ['diff', '--cached'] : ['diff']);
+    const { stdout: untracked } = await gitRun(cfg, ['ls-files', '--others', '--exclude-standard']);
+    let ctx = diff;
+    if (!useStaged && untracked.trim()) {
+      ctx += '\n\n# Arquivos novos (não rastreados):\n' + untracked.trim();
+    }
+    ctx = ctx.slice(0, 14000); // teto: diff gigante não precisa ir inteiro
+    if (!ctx.trim()) return { error: 'nenhuma alteração para descrever' };
+    const msg = await llmComplete(cfg, [
+      {
+        role: 'system',
+        content:
+          'Você escreve mensagens de commit do git em português. Responda SOMENTE com a mensagem, sem markdown, sem cercas de código, sem aspas ao redor. Formato: primeira linha imperativa e específica com no máximo 72 caracteres; se a mudança for grande, linha em branco e um corpo curto com itens iniciados por "- ".',
+      },
+      { role: 'user', content: 'Escreva a mensagem de commit para este diff:\n\n' + ctx },
+    ]);
+    const clean = String(msg || '')
+      .replace(/^```[a-z]*\n?|```$/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
+    if (!clean) return { error: 'a I.A. não retornou mensagem' };
+    return { message: clean };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+});
+
 ipcMain.handle('workspace:create', (_e, { rel, dir }) => {
   const cfg = loadConfig();
   const fp = cfg.workspace && safeWsPath(cfg, rel);
