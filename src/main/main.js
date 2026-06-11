@@ -117,6 +117,7 @@ function logChatEvent(channel, payload) {
 
 function broadcast(channel, ...args) {
   logChatEvent(channel, args[0]); // grava na linha do tempo do chat (quando for evento de chat)
+  if (channel === 'workspace:changed') liveNotifyReload(); // arquivos mudaram → live server recarrega as páginas
   BrowserWindow.getAllWindows().forEach((w) => {
     if (w.isDestroyed()) return;
     try {
@@ -4609,6 +4610,149 @@ ipcMain.handle('git:pull', async () => {
 // links clicados no terminal integrado (xterm web-links)
 ipcMain.on('open-external-url', (_e, u) => {
   if (typeof u === 'string' && /^https?:\/\//i.test(u)) shell.openExternal(u);
+});
+
+// ============================================================
+//  LIVE SERVER — preview ao vivo do workspace (estilo VS Code Live Server)
+//  Serve os arquivos estáticos + injeta um script nas páginas HTML com:
+//  recarga automática (SSE) e o modo "apontar elemento" (🎯 → chat da Lumi)
+// ============================================================
+let liveSrv = null;
+let livePort = 0;
+let liveSse = []; // conexões SSE das páginas abertas (recebem o sinal de reload)
+let liveReloadTimer = null;
+const LIVE_MIME = {
+  html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8', js: 'text/javascript', mjs: 'text/javascript',
+  css: 'text/css', json: 'application/json', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  svg: 'image/svg+xml', webp: 'image/webp', avif: 'image/avif', ico: 'image/x-icon', woff: 'font/woff', woff2: 'font/woff2',
+  ttf: 'font/ttf', otf: 'font/otf', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'video/mp4', webm: 'video/webm',
+  wasm: 'application/wasm', xml: 'application/xml', txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8', map: 'application/json',
+};
+
+// script injetado antes do </body>: live-reload + picker de elemento (roda DENTRO da página servida)
+const LIVE_CLIENT_JS =
+  '(function(){\n' +
+  "try { new EventSource('/__lumi/events').onmessage = function(e){ if (e.data==='reload') location.reload(); }; } catch(e){}\n" +
+  'var on=false, box=null;\n' +
+  "function overlay(){ if(box) return box; box=document.createElement('div'); box.style.cssText='position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #7aa2ff;background:rgba(122,162,255,.18);border-radius:3px;'; document.body.appendChild(box); return box; }\n" +
+  'function sel(el){ var parts=[]; var n=el; while(n && n.nodeType===1 && parts.length<5){ var s=n.tagName.toLowerCase(); ' +
+  "if(n.id){ parts.unshift(s+'#'+n.id); break; } " +
+  "var cl=(typeof n.className==='string')?n.className.trim().split(/\\s+/).filter(Boolean).slice(0,2).join('.'):''; if(cl) s+='.'+cl; " +
+  'var p=n.parentElement; if(p){ var sib=[].filter.call(p.children,function(c){return c.tagName===n.tagName;}); ' +
+  "if(sib.length>1) s+=':nth-of-type('+(sib.indexOf(n)+1)+')'; } parts.unshift(s); n=p; } return parts.join(' > '); }\n" +
+  'function move(e){ var el=document.elementFromPoint(e.clientX,e.clientY); if(!el||el===box) return; var r=el.getBoundingClientRect(); ' +
+  "var b=overlay(); b.style.left=r.left+'px'; b.style.top=r.top+'px'; b.style.width=r.width+'px'; b.style.height=r.height+'px'; }\n" +
+  'function click(e){ e.preventDefault(); e.stopPropagation(); var el=document.elementFromPoint(e.clientX,e.clientY); if(!el) return stop(); ' +
+  "var html=(el.outerHTML||'').slice(0,1200); " +
+  "parent.postMessage({__lumi:'picked', selector:sel(el), text:(el.innerText||'').trim().slice(0,200), html:html, page:location.pathname},'*'); stop(); }\n" +
+  "function key(e){ if(e.key==='Escape') stop(); }\n" +
+  "function start(){ if(on) return; on=true; document.addEventListener('mousemove',move,true); document.addEventListener('click',click,true); document.addEventListener('keydown',key,true); document.documentElement.style.cursor='crosshair'; }\n" +
+  "function stop(){ on=false; document.removeEventListener('mousemove',move,true); document.removeEventListener('click',click,true); document.removeEventListener('keydown',key,true); document.documentElement.style.cursor=''; if(box){ box.remove(); box=null; } parent.postMessage({__lumi:'pick-off'},'*'); }\n" +
+  "window.addEventListener('message', function(ev){ var d=ev.data||{}; if(d.__lumi==='pick') start(); else if(d.__lumi==='pick-cancel') stop(); });\n" +
+  '})();';
+
+function liveNotifyReload() {
+  if (!liveSrv) return;
+  clearTimeout(liveReloadTimer);
+  liveReloadTimer = setTimeout(() => {
+    liveSse = liveSse.filter((r) => !r.writableEnded);
+    liveSse.forEach((r) => {
+      try {
+        r.write('data: reload\n\n');
+      } catch (e) {
+        /* conexão caiu */
+      }
+    });
+  }, 120); // junta rajadas de saves num reload só
+}
+
+function liveHandler(req, res) {
+  const cfg = loadConfig();
+  const u = decodeURIComponent((req.url || '/').split('?')[0]);
+  if (u === '/__lumi/client.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    return res.end(LIVE_CLIENT_JS);
+  }
+  if (u === '/__lumi/events') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write('retry: 800\n\n');
+    liveSse.push(res);
+    req.on('close', () => {
+      liveSse = liveSse.filter((r) => r !== res);
+    });
+    return;
+  }
+  let fp = cfg.workspace && safeWsPath(cfg, u.replace(/^\/+/, ''));
+  if (!fp) {
+    res.writeHead(403);
+    return res.end('fora do workspace');
+  }
+  try {
+    let st = fs.existsSync(fp) && fs.statSync(fp);
+    if (st && st.isDirectory()) {
+      fp = path.join(fp, 'index.html');
+      st = fs.existsSync(fp) && fs.statSync(fp);
+    }
+    if (!st) {
+      res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end('<h3 style="font-family:sans-serif">404 — não achei <code>' + u.replace(/[<>&]/g, '') + '</code> no workspace</h3>');
+    }
+    const ext = path.extname(fp).slice(1).toLowerCase();
+    const mime = LIVE_MIME[ext] || 'application/octet-stream';
+    if (ext === 'html' || ext === 'htm') {
+      let html = fs.readFileSync(fp, 'utf8');
+      const tag = '<script src="/__lumi/client.js"></script>';
+      html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, tag + '</body>') : html + tag;
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store' });
+      return res.end(html);
+    }
+    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store' });
+    fs.createReadStream(fp).pipe(res);
+  } catch (e) {
+    res.writeHead(500);
+    res.end(String((e && e.message) || e));
+  }
+}
+
+ipcMain.handle('live:start', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'defina o workspace primeiro (Modo arquiteto)' };
+  if (liveSrv) return { port: livePort };
+  const http = require('http');
+  for (let port = 5500; port < 5520; port++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const s = http.createServer(liveHandler);
+        s.once('error', reject);
+        s.listen(port, '127.0.0.1', () => {
+          liveSrv = s;
+          livePort = port;
+          resolve();
+        });
+      });
+      return { port: livePort };
+    } catch (e) {
+      /* porta ocupada — tenta a próxima */
+    }
+  }
+  return { error: 'nenhuma porta livre entre 5500 e 5519' };
+});
+
+ipcMain.handle('live:stop', () => {
+  if (liveSrv) {
+    try {
+      liveSse.forEach((r) => {
+        try {
+          r.end();
+        } catch (e) {}
+      });
+      liveSrv.close();
+    } catch (e) {}
+    liveSrv = null;
+    liveSse = [];
+    livePort = 0;
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('workspace:create', (_e, { rel, dir }) => {

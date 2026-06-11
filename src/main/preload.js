@@ -50,6 +50,10 @@ contextBridge.exposeInMainWorld('api', {
   gitPull: () => ipcRenderer.invoke('git:pull'),
   openExternal: (url) => ipcRenderer.send('open-external-url', url),
 
+  // live server (preview ao vivo do workspace)
+  liveStart: () => ipcRenderer.invoke('live:start'),
+  liveStop: () => ipcRenderer.invoke('live:stop'),
+
   // terminal integrado (painel do workspace, estilo VS Code)
   termCreate: (opts) => ipcRenderer.invoke('term:create', opts || {}),
   termInput: (id, data) => ipcRenderer.send('term:input', { id, data }),

@@ -185,6 +185,18 @@
       #edcol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       #editor { flex: 1; min-width: 0; min-height: 0; }
       #diffeditor { flex: 1; min-width: 0; min-height: 0; display: none; }
+      /* ---- live server (preview ao vivo) ---- */
+      #liveview { flex: 1; min-width: 0; min-height: 0; display: none; flex-direction: column; background: var(--surface-2); }
+      #liveview[hidden] { display: none; }
+      #liveTools { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+      #liveTools button {
+        border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px;
+        padding: 3px 9px; font-size: 11.5px; cursor: pointer;
+      }
+      #liveTools button:hover { border-color: var(--accent); }
+      #liveTools button.on { background: color-mix(in srgb, var(--accent) 25%, transparent); border-color: var(--accent); color: var(--accent); }
+      #liveUrl { font-size: 11px; color: #889; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #liveFrame { flex: 1; border: none; background: #fff; }
       /* abas de arquivos (estilo VS Code) */
       #tabs {
         display: flex;
@@ -461,6 +473,7 @@
     <div id="menubar"></div>
     <div id="top">
       <span class="path" id="curpath">Nenhum arquivo aberto</span>
+      <button id="liveBtn" title="Live Server — preview ao vivo com recarga automática">⚡ Live</button>
       <button id="toggleTerm" title="Terminal (Ctrl+`)">⌨ Terminal</button>
       <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi">💬 Chat</button>
       <button id="save" title="Salvar (Ctrl+S)">💾 Salvar</button>
@@ -505,6 +518,15 @@
         <div id="tabs"></div>
         <div id="editor"></div>
         <div id="diffeditor"></div>
+        <div id="liveview" hidden>
+          <div id="liveTools">
+            <button id="livePick" title="Apontar um elemento da página e mandar pro chat da Lumi">🎯 apontar</button>
+            <button id="liveReloadBtn" title="Recarregar o preview">⟳</button>
+            <button id="liveExt" title="Abrir no navegador">↗</button>
+            <span id="liveUrl"></span>
+          </div>
+          <iframe id="liveFrame" title="Preview ao vivo"></iframe>
+        </div>
         <div id="preview"><img id="previewImg" alt="" /><div id="previewMeta"></div></div>
         <div id="panelResize" hidden title="Arraste para redimensionar"></div>
         <div id="panel" hidden>
@@ -756,10 +778,10 @@
         openTabs.forEach((t) => {
           const el = document.createElement('div');
           el.className = 'tab' + (t.path === active ? ' active' : '') + (t.dirty ? ' dirty' : '');
-          el.title = t.diff ? t.rel + ' (alterações)' : t.path;
-          const nm = t.diff ? '⇆ ' + baseName(t.rel) : baseName(t.path);
+          el.title = t.live ? 'Live Server (preview ao vivo)' : t.diff ? t.rel + ' (alterações)' : t.path;
+          const nm = t.live ? t.title : t.diff ? '⇆ ' + baseName(t.rel) : baseName(t.path);
           el.innerHTML =
-            '<span class="ticon">' + iconFor(baseName(t.diff ? t.rel : t.path)) + '</span>' +
+            '<span class="ticon">' + (t.live ? LIVE_ICON : iconFor(baseName(t.diff ? t.rel : t.path))) + '</span>' +
             '<span class="tname">' + esc(nm) + '</span>' +
             '<span class="dot"></span><button class="tx" title="Fechar (clique do meio)">✕</button>';
           el.addEventListener('click', (e) => {
@@ -792,6 +814,7 @@
         if (!t) sbRight.textContent = '';
         else if (t.image) sbRight.textContent = 'imagem · ' + fmtBytes(t.bytes || 0);
         else if (t.diff) sbRight.textContent = 'git diff · ' + langOf(t.rel);
+        else if (t.live) sbRight.textContent = 'live server · recarrega ao salvar';
         else {
           const pos = editor && editor.getPosition();
           sbRight.textContent = (pos ? 'Ln ' + pos.lineNumber + ', Col ' + pos.column + '   ·   ' : '') + langOf(t.path);
@@ -804,6 +827,8 @@
         curpath.textContent = 'Nenhum arquivo aberto';
         previewEl.style.display = 'none';
         diffEl.style.display = 'none';
+        liveviewEl.hidden = true;
+        liveviewEl.style.display = 'none';
         editorEl.style.display = 'block';
         if (editor) editor.setModel(monaco.editor.createModel('', 'plaintext'));
         renderTabs();
@@ -818,12 +843,14 @@
         }
         if (t.stale) refreshTab(t); // arquivo mudou no disco enquanto a aba estava em segundo plano
         active = p;
-        current = t.diff ? null : p;
+        current = t.diff || t.live ? null : p;
         isImage = !!t.image;
-        curpath.textContent = t.diff ? t.rel + '  ·  HEAD ⇆ atual' : p;
+        curpath.textContent = t.diff ? t.rel + '  ·  HEAD ⇆ atual' : t.live ? liveUrl : p;
         previewEl.style.display = 'none';
         editorEl.style.display = 'none';
         diffEl.style.display = 'none';
+        liveviewEl.hidden = true;
+        liveviewEl.style.display = 'none';
         if (t.image) {
           previewEl.style.display = 'flex';
           previewImg.src = t.url;
@@ -832,6 +859,9 @@
         } else if (t.diff) {
           diffEl.style.display = 'block';
           if (diffEditor) diffEditor.setModel({ original: t.orig, modified: t.model });
+        } else if (t.live) {
+          liveviewEl.hidden = false;
+          liveviewEl.style.display = 'flex';
         } else {
           editorEl.style.display = 'block';
           if (editor) {
@@ -844,7 +874,7 @@
         drawTree();
         updateStatus();
         updateGitGutter(); // barrinhas de linhas alteradas
-        window.api.setEditorActive(t.image || t.diff ? '' : p); // o chat mostra/anexa o arquivo ativo
+        window.api.setEditorActive(t.image || t.diff || t.live ? '' : p); // o chat mostra/anexa o arquivo ativo
       }
       function closeTab(p, force) {
         const i = openTabs.findIndex((t) => t.path === p);
@@ -853,6 +883,7 @@
         if (!force && t.dirty && !confirm('"' + baseName(p) + '" tem alterações não salvas. Fechar mesmo assim?')) return;
         if (t.model) t.model.dispose();
         if (t.orig) t.orig.dispose(); // lado "original" das abas de diff
+        if (t.live) stopLiveServer(); // fechar a aba desliga o servidor
         openTabs.splice(i, 1);
         if (active === p) {
           const next = openTabs[i] || openTabs[i - 1];
@@ -883,7 +914,7 @@
 
       async function save() {
         const t = active && findTab(active);
-        if (!t || t.image || t.diff || !editor) return;
+        if (!t || t.image || t.diff || t.live || !editor) return;
         const ok = await window.api.writeWorkspaceFile(t.path, t.model.getValue());
         if (ok) {
           t.savedVer = t.model.getAlternativeVersionId();
@@ -1803,8 +1834,81 @@
         document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: !!autoSend }, '*');
       }
 
+      // ============================================================
+      //  Live Server: aba de preview ao vivo + apontar elemento → chat
+      // ============================================================
+      const liveviewEl = document.getElementById('liveview');
+      const liveFrame = document.getElementById('liveFrame');
+      const liveBtn = document.getElementById('liveBtn');
+      const livePickBtn = document.getElementById('livePick');
+      const liveUrlEl = document.getElementById('liveUrl');
+      const LIVE_TAB = 'live:server';
+      const LIVE_ICON =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#e8c84d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 11-13h-8l1-7z"/></svg>';
+      let liveUrl = '';
+
+      async function openLiveServer() {
+        const r = await window.api.liveStart();
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        liveUrl = 'http://127.0.0.1:' + r.port + '/';
+        liveUrlEl.textContent = liveUrl;
+        liveFrame.src = liveUrl;
+        let t = findTab(LIVE_TAB);
+        if (!t) {
+          t = { path: LIVE_TAB, live: true, title: '⚡ localhost:' + r.port, dirty: false };
+          openTabs.push(t);
+        }
+        liveBtn.classList.add('on');
+        activate(LIVE_TAB);
+        toast('⚡ live server em ' + liveUrl + ' (recarrega ao salvar)');
+      }
+      function stopLiveServer() {
+        window.api.liveStop();
+        liveBtn.classList.remove('on');
+        livePickBtn.classList.remove('on');
+        liveFrame.src = 'about:blank';
+        liveUrl = '';
+      }
+      liveBtn.onclick = () => {
+        if (findTab(LIVE_TAB)) closeTab(LIVE_TAB, true); // fechar a aba desliga o servidor
+        else openLiveServer();
+      };
+      document.getElementById('liveReloadBtn').onclick = () => {
+        if (liveUrl) liveFrame.src = liveUrl;
+      };
+      document.getElementById('liveExt').onclick = () => {
+        if (liveUrl) window.api.openExternal(liveUrl);
+      };
+      livePickBtn.onclick = () => {
+        if (!liveFrame.contentWindow) return;
+        const turnOn = !livePickBtn.classList.contains('on');
+        livePickBtn.classList.toggle('on', turnOn);
+        liveFrame.contentWindow.postMessage({ __lumi: turnOn ? 'pick' : 'pick-cancel' }, '*');
+      };
+      // elemento apontado na página (🎯) → vira contexto pronto no input do chat
+      window.addEventListener('message', (ev) => {
+        const d = ev.data || {};
+        if (d.__lumi === 'pick-off') {
+          livePickBtn.classList.remove('on');
+          return;
+        }
+        if (d.__lumi !== 'picked') return;
+        livePickBtn.classList.remove('on');
+        const msg =
+          '🎯 Elemento apontado no preview ao vivo (página ' + (d.page || '/') + '):\n' +
+          'Seletor: `' + (d.selector || '?') + '`\n' +
+          (d.text ? 'Texto visível: ' + d.text + '\n' : '') +
+          '```html\n' + (d.html || '') + '\n```\n';
+        if (chatpane.classList.contains('hidden')) document.getElementById('toggleChat').click();
+        document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: false }, '*');
+      });
+
       // ---- auto-reload de abas quando o arquivo muda no disco (ex.: a Lumi editou) ----
       function refreshTab(t) {
+        if (t && t.live) {
+          t.stale = false; // a página se recarrega sozinha via SSE
+          return;
+        }
         if (t && t.diff) {
           // aba de diff: recarrega os DOIS lados (HEAD pode ter mudado com um commit)
           t.stale = false;
@@ -2018,6 +2122,7 @@
             },
             { label: 'Chat da Lumi', icon: MI.chat, fn: () => toggleChat.click() },
             { label: 'Controle de fontes (git)', icon: GLYPH.git('currentColor'), hint: 'Ctrl+Shift+G', fn: () => setSideMode(sideMode === 'git' ? 'files' : 'git') },
+            { label: 'Live Server (preview ao vivo)', icon: MI.plug, fn: () => liveBtn.click() },
             '-',
             // toggles do editor (✓ = ligado; persistem entre sessões)
             { label: (edPrefs.wrap ? '✓ ' : ' ') + 'Quebra de linha', fn: () => { edPrefs.wrap = !edPrefs.wrap; applyEditorPrefs(); } },
