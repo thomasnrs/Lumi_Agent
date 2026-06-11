@@ -2641,17 +2641,18 @@ async function runSubAgent(cfg, agent, task, label) {
   const did = []; // ações executadas (fallback p/ quando o modelo não resume no fim)
   let completed = false; // terminou de fato (vs. atingiu o limite de passos)
   const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
+  const onTok = (tk) => broadcast('chat:agent-token', { agent: who, t: tk }); // narração ao vivo no chat
   for (let step = 0; step < MAX_STEPS; step++) {
     if (chatAbort && chatAbort.signal.aborted) break; // botão Stop para os subagentes também
     compactTurnMessages(messages); // subagente em tarefa longa também compacta
     let turn;
     try {
-      turn = await turnFn(sub, messages, tools, () => {}, () => {});
+      turn = await turnFn(sub, messages, tools, onTok, () => {});
     } catch (e) {
       if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
       if (tools.length) {
         tools = [];
-        turn = await turnFn(sub, messages, tools, () => {}, () => {});
+        turn = await turnFn(sub, messages, tools, onTok, () => {});
       } else {
         throw e;
       }

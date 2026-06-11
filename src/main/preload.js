@@ -161,6 +161,7 @@ contextBridge.exposeInMainWorld('api', {
   onNewBubble: (cb) => ipcRenderer.on('chat:newbubble', () => cb()),
   onError: (cb) => ipcRenderer.on('chat:error', (_e, m) => cb(m)),
   onAgent: (cb) => ipcRenderer.on('chat:agent', (_e, info) => cb(info)),
+  onAgentToken: (cb) => ipcRenderer.on('chat:agent-token', (_e, d) => cb(d)),
   onTool: (cb) => ipcRenderer.on('chat:tool', (_e, info) => cb(info)),
   onNote: (cb) => ipcRenderer.on('chat:note', (_e, d) => cb(d)),
   onPlan: (cb) => ipcRenderer.on('chat:plan', (_e, items) => cb(items)),

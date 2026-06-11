@@ -1310,17 +1310,32 @@ function stripMd(t) {
 }
 
 // ---- streaming de resposta ----
+// O balão NÃO acumula a resposta inteira: mostra a frase corrente (balão "novo" a cada
+// frase) e se esconde sozinho quando a stream fica sem texto novo (ex.: ferramentas rodando).
+let bubBuf = ''; // frase em construção (só pro balão; o TTS tem o buffer próprio)
+function bubbleLive(text) {
+  if (!bubble.classList.contains('show')) void bubble.offsetWidth; // re-dispara a animação (balão novo)
+  bubble.textContent = text;
+  bubble.classList.add('show');
+  bubble.scrollTop = bubble.scrollHeight;
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  const ttl = Math.min(9000, 2500 + 45 * text.length); // tempo de leitura proporcional
+  bubbleTimer = setTimeout(() => bubble.classList.remove('show'), ttl);
+}
 window.api.onToken((t) => {
   if (!talking) {
     talking = true;
-    bubble.textContent = ''; // limpa o "..." de espera
-    bubble.classList.add('show');
+    bubBuf = '';
     currentResponse = '';
     stopSpeaking(); // corta a fala anterior + zera a fila (nova mensagem)
   }
   currentResponse += t;
-  bubble.textContent = stripMd(currentResponse); // balao sem markdown
-  bubble.scrollTop = bubble.scrollHeight;
+  bubBuf += t;
+  // frase terminou e já começou outra? o balão recomeça mostrando só a frase nova
+  let m;
+  while ((m = bubBuf.match(/^[\s\S]*?[.!?…\n]+\s*(?=\S)/))) bubBuf = bubBuf.slice(m[0].length);
+  const shown = stripMd(bubBuf);
+  if (shown.trim()) bubbleLive(shown);
   // Edge (gratis): fala frase-a-frase (comeca rapido). Provedores com chave:
   // espera a resposta inteira (1 requisicao = menos consumo).
   if (ttsProvider === 'edge') {
@@ -1330,8 +1345,9 @@ window.api.onToken((t) => {
 });
 window.api.onDone(() => {
   talking = false;
-  if (bubbleTimer) clearTimeout(bubbleTimer);
-  bubbleTimer = setTimeout(() => (bubble.classList.remove('show')), 9000);
+  const tail = stripMd(bubBuf); // última frase ganha o tempo de leitura dela e some
+  if (tail.trim()) bubbleLive(tail);
+  bubBuf = '';
   if (ttsProvider === 'edge') {
     flushSentences(true); // fala o que sobrou (ultima frase sem pontuacao)
   } else if (ttsProvider !== 'off') {

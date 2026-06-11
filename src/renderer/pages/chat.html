@@ -574,6 +574,12 @@
       .actgroup[open] > summary::before { content: '▾ '; }
       .actgroup .actbody { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; }
       .actgroup .actbody .msg { align-self: stretch; max-width: 100%; animation: none; }
+      /* narração ao vivo do subagente (stream dentro do card dele) */
+      .agstream {
+        margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border);
+        max-height: 140px; overflow: auto; font-size: 11.5px; line-height: 1.5;
+        color: #9aa9b8; white-space: pre-wrap; word-break: break-word;
+      }
       .msg.assistant .lnk {
         color: #8ab4ff;
         text-decoration: underline;
@@ -2334,26 +2340,32 @@
         curThinkingDet = null;
         showTyping();
       });
-      const liveAgents = {}; // label -> elemento (pra atualizar "trabalhando" → "concluiu" no lugar)
+      const liveAgents = {}; // label -> {d, head, body} (atualiza "trabalhando" → "concluiu" no lugar)
       window.api.onAgent((info) => {
         if (!info) return;
         if (info.phase === 'start') {
           const d = document.createElement('div');
           d.className = 'msg tool agentlive';
           d.style.borderLeft = '2px solid var(--accent)';
-          d.innerHTML =
+          const head = document.createElement('div');
+          head.innerHTML =
             '<span class="spin">⏳</span> <b>' + info.name + '</b> trabalhando…' +
             (info.task ? ' — ' + info.task.replace(/[<>&]/g, '') : '');
-          liveAgents[info.name] = d;
+          const body = document.createElement('div');
+          body.className = 'agstream'; // narração ao vivo do agente (stream)
+          body.hidden = true; // aparece no 1º token
+          d.appendChild(head);
+          d.appendChild(body);
+          liveAgents[info.name] = { d, head, body };
           actBody().appendChild(d);
           actCount();
         } else {
-          const d = liveAgents[info.name];
-          if (d) {
-            d.classList.remove('agentlive');
-            d.style.borderLeftColor = '#7ee0a0';
-            d.innerHTML = '✓ <b>' + info.name + '</b> concluiu';
-            delete liveAgents[info.name];
+          const a = liveAgents[info.name];
+          if (a) {
+            a.d.classList.remove('agentlive');
+            a.d.style.borderLeftColor = '#7ee0a0';
+            a.head.innerHTML = '✓ <b>' + info.name + '</b> concluiu';
+            delete liveAgents[info.name]; // a narração (agstream) fica no card
           } else {
             const x = document.createElement('div');
             x.className = 'msg tool';
@@ -2363,6 +2375,15 @@
           }
         }
         bumpTyping();
+        scrollBottom();
+      });
+      // stream do agente: o que ele vai "pensando alto" aparece dentro do card dele
+      window.api.onAgentToken((d) => {
+        const a = d && liveAgents[d.agent];
+        if (!a) return;
+        a.body.hidden = false;
+        a.body.textContent = (a.body.textContent + d.t).slice(-4000); // capado: é acompanhamento, não transcrição
+        a.body.scrollTop = a.body.scrollHeight;
         scrollBottom();
       });
       window.api.onTool((info) => addTool(info));
