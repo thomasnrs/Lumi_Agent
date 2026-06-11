@@ -1131,6 +1131,7 @@ const PRESETS = {
   'Together AI': { provider: 'openai', baseUrl: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
   'Fireworks AI': { provider: 'openai', baseUrl: 'https://api.fireworks.ai/inference/v1', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct' },
   'Cerebras 🆓': { provider: 'openai', baseUrl: 'https://api.cerebras.ai/v1', model: 'llama-3.3-70b' },
+  'Blackbox 🆓': { provider: 'openai', baseUrl: 'https://api.blackbox.ai', model: 'blackboxai/x-ai/grok-code-fast-1:free' },
   Perplexity: { provider: 'openai', baseUrl: 'https://api.perplexity.ai', model: 'sonar' },
   Cohere: { provider: 'openai', baseUrl: 'https://api.cohere.ai/compatibility/v1', model: 'command-a-03-2025' },
   'Ollama (local)': { provider: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' },
