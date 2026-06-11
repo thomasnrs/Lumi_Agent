@@ -305,86 +305,139 @@ async function readSSE(res, onData) {
   }
 }
 
-// Padrao OpenAI -> cobre OpenAI, OpenRouter, Qwen, Groq, DeepSeek, Ollama local, etc.
-async function streamOpenAI(cfg, history, onToken) {
-  const endpoint = cfg.baseUrl.replace(/\/$/, '') + '/chat/completions';
-  const messages = [{ role: 'system', content: buildSystemPrompt(cfg) }, ...history];
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages,
-      temperature: cfg.temperature,
-      stream: true,
-    }),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  await readSSE(res, (data) => {
-    if (data === '[DONE]') return;
-    try {
-      const j = JSON.parse(data);
-      const t = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
-      if (t) onToken(t);
-    } catch (e) {
-      /* ignora linhas que nao sao JSON */
+// Converte o histórico interno (formato OpenAI) pro formato COMPLETO da Anthropic,
+// incluindo ferramentas: assistant.tool_calls → blocos tool_use, role:"tool" → blocos
+// tool_result (consecutivos se fundem num único turno de usuário, como a API espera).
+function convertToAnthropic(messages) {
+  let system = '';
+  const out = [];
+  const pushUser = (blocks) => {
+    if (!blocks.length) return;
+    const last = out[out.length - 1];
+    if (last && last.role === 'user') last.content.push(...blocks);
+    else out.push({ role: 'user', content: blocks });
+  };
+  for (const m of messages) {
+    if (m.role === 'system') {
+      if (typeof m.content === 'string' && m.content) system += (system ? '\n\n' : '') + m.content;
+      continue;
     }
-  });
-}
-
-// Converte o historico (formato OpenAI) para o formato de imagens do Anthropic
-function toAnthropicMessages(history) {
-  return history.map((m) => {
-    if (typeof m.content === 'string') return { role: m.role, content: m.content };
-    const parts = m.content.map((p) => {
+    if (m.role === 'tool') {
+      pushUser([
+        {
+          type: 'tool_result',
+          tool_use_id: m.tool_call_id,
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        },
+      ]);
+      continue;
+    }
+    if (m.role === 'assistant') {
+      const blocks = [];
+      if (typeof m.content === 'string' && m.content.trim()) blocks.push({ type: 'text', text: m.content });
+      if (Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls) {
+          let input = {};
+          try {
+            input = JSON.parse((tc.function && tc.function.arguments) || '{}');
+          } catch (e) {
+            /* argumentos compactados no histórico viram {} — é só contexto passado */
+          }
+          blocks.push({ type: 'tool_use', id: tc.id, name: (tc.function && tc.function.name) || 'tool', input });
+        }
+      }
+      if (blocks.length) out.push({ role: 'assistant', content: blocks });
+      continue;
+    }
+    // user: string ou array (texto + imagens dataURL → blocos image base64)
+    if (typeof m.content === 'string') {
+      if (m.content.trim()) pushUser([{ type: 'text', text: m.content }]);
+      continue;
+    }
+    const blocks = [];
+    for (const p of m.content || []) {
       if (p.type === 'image_url') {
         const mt = /^data:([^;]+);base64,(.*)$/.exec(p.image_url.url);
-        if (mt) return { type: 'image', source: { type: 'base64', media_type: mt[1], data: mt[2] } };
+        if (mt) blocks.push({ type: 'image', source: { type: 'base64', media_type: mt[1], data: mt[2] } });
+      } else if (p.text && p.text.trim()) {
+        blocks.push({ type: 'text', text: p.text });
       }
-      return { type: 'text', text: p.text || '' };
-    });
-    return { role: m.role, content: parts };
-  });
+    }
+    pushUser(blocks);
+  }
+  // a conversa precisa começar com um turno de usuário
+  if (!out.length || out[0].role !== 'user') out.unshift({ role: 'user', content: [{ type: 'text', text: '(início da conversa)' }] });
+  return { system, msgs: out };
 }
 
-// Padrao Anthropic (Claude) -> formato proprio
-async function streamAnthropic(cfg, history, onToken) {
+// Uma "rodada" na API Anthropic COM FERRAMENTAS (tool use) — espelho do openaiTurn:
+// streaming SSE, tool_use montado via input_json_delta, e devolve o MESMO contrato
+// { text, toolCalls:[{id,name,arguments:<string JSON>}], usage, ms, aborted } pra
+// encaixar direto no loop do agente. Sem temperature: modelos novos (Opus 4.7+) rejeitam.
+async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
+  const t0 = Date.now();
   const base = (cfg.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
+  const { system, msgs } = convertToAnthropic(messages);
+  const body = { model: cfg.model, max_tokens: 8192, messages: msgs, stream: true };
+  if (system) body.system = system;
+  if (tools && tools.length) {
+    // formato Anthropic: {name, description, input_schema} (sem o wrapper "function")
+    body.tools = tools.map((t) => ({
+      name: t.function.name,
+      description: t.function.description,
+      input_schema: t.function.parameters,
+    }));
+  }
   const res = await fetch(base + '/messages', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': cfg.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: cfg.model,
-      system: buildSystemPrompt(cfg),
-      messages: toAnthropicMessages(history),
-      max_tokens: 1024,
-      temperature: cfg.temperature,
-      stream: true,
-    }),
+    headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify(body),
     signal: chatAbort ? chatAbort.signal : undefined, // botão Stop
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  await readSSE(res, (data) => {
-    try {
-      const j = JSON.parse(data);
-      if (j.type === 'content_block_delta' && j.delta && j.delta.text) onToken(j.delta.text);
-    } catch (e) {
-      /* ignora */
-    }
-  });
-}
+  if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}: ${await res.text()}`);
 
-function streamChat(cfg, history, onToken) {
-  return cfg.provider === 'anthropic'
-    ? streamAnthropic(cfg, history, onToken)
-    : streamOpenAI(cfg, history, onToken);
+  let text = '';
+  const toolCalls = []; // indexado pelo índice do bloco (buracos são filtrados no fim)
+  let usage = null;
+  let inputTokens = 0;
+  try {
+    await readSSE(res, (data) => {
+      let j;
+      try {
+        j = JSON.parse(data);
+      } catch (e) {
+        return;
+      }
+      if (j.type === 'message_start' && j.message && j.message.usage) {
+        inputTokens = j.message.usage.input_tokens || 0;
+      } else if (j.type === 'content_block_start' && j.content_block) {
+        if (j.content_block.type === 'tool_use') {
+          toolCalls[j.index] = { id: j.content_block.id, name: j.content_block.name, arguments: '' };
+        }
+      } else if (j.type === 'content_block_delta' && j.delta) {
+        const d = j.delta;
+        if (d.type === 'text_delta' && d.text) {
+          text += d.text;
+          onToken(d.text);
+        } else if (d.type === 'input_json_delta') {
+          const tc = toolCalls[j.index];
+          if (tc) tc.arguments += d.partial_json || '';
+        } else if (d.type === 'thinking_delta' && d.thinking && onThink) {
+          onThink(d.thinking);
+        }
+      } else if (j.type === 'message_delta' && j.usage) {
+        const outTok = j.usage.output_tokens || 0;
+        usage = { prompt_tokens: inputTokens, completion_tokens: outTok, total_tokens: inputTokens + outTok };
+      }
+    });
+  } catch (e) {
+    // botão Stop: devolve o parcial em vez de estourar erro (mesmo contrato do openaiTurn)
+    if (chatAbort && chatAbort.signal.aborted) {
+      return { text, toolCalls: toolCalls.filter(Boolean), usage, ms: Date.now() - t0, aborted: true };
+    }
+    throw e;
+  }
+  return { text, toolCalls: toolCalls.filter(Boolean), usage, ms: Date.now() - t0 };
 }
 
 // ============================================================
@@ -2558,6 +2611,7 @@ async function runSubAgent(cfg, agent, task, label) {
   // tools como array (mesmo vazio) = lista exata permitida; ausente/não-array = todas
   const allow = Array.isArray(agent.tools) ? agent.tools : null;
   let tools = toolSchemas({ allow, delegate: false });
+  const turnFn = sub.provider === 'anthropic' ? anthropicTurn : openaiTurn; // Claude também faz tool use
   let full = '';
   let lastText = ''; // última narração não-vazia (caso o turno final venha sem texto)
   const did = []; // ações executadas (fallback p/ quando o modelo não resume no fim)
@@ -2568,12 +2622,12 @@ async function runSubAgent(cfg, agent, task, label) {
     compactTurnMessages(messages); // subagente em tarefa longa também compacta
     let turn;
     try {
-      turn = await openaiTurn(sub, messages, tools, () => {}, () => {});
+      turn = await turnFn(sub, messages, tools, () => {}, () => {});
     } catch (e) {
       if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
       if (tools.length) {
         tools = [];
-        turn = await openaiTurn(sub, messages, tools, () => {}, () => {});
+        turn = await turnFn(sub, messages, tools, () => {}, () => {});
       } else {
         throw e;
       }
@@ -2630,6 +2684,7 @@ async function runAgent(cfg) {
   let verifyAttempts = 0;
   let runCfg = cfg; // pode trocar pro modelo reserva no meio do turno (fallback)
   let usedFallback = false;
+  const turnFn = cfg.provider === 'anthropic' ? anthropicTurn : openaiTurn; // Claude faz tool use nativo
   // teto de passos CONFIGURÁVEL (⚙ → Passos por turno): proxy local aguenta muito; API paga, menos
   const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
   let finished = false;
@@ -2645,7 +2700,7 @@ async function runAgent(cfg) {
     }
     let turn;
     try {
-      turn = await openaiTurn(runCfg, messages, tools, onToken, onThink);
+      turn = await turnFn(runCfg, messages, tools, onToken, onThink);
     } catch (e) {
       if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
       // FALLBACK: modelo principal falhou → tenta o reserva (mantendo as ferramentas)
@@ -2658,7 +2713,7 @@ async function runAgent(cfg) {
       }
       if (tools.length) {
         tools = []; // modelo pode nao suportar ferramentas -> tenta sem
-        turn = await openaiTurn(runCfg, messages, tools, onToken, onThink);
+        turn = await turnFn(runCfg, messages, tools, onToken, onThink);
       } else {
         throw e;
       }
@@ -4695,16 +4750,8 @@ async function runChatTurn(cfg, popUserOnError) {
   currentCp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map() }; // checkpoint deste turno
   let full = '';
   try {
-    if (cfg.provider === 'anthropic') {
-      // Anthropic: streaming simples (sem ferramentas nesta versao)
-      await streamAnthropic(cfg, history, (tok) => {
-        full += tok;
-        broadcast('chat:token', tok);
-      });
-    } else {
-      // OpenAI-compativel: loop do agente com ferramentas
-      full = await runAgent(cfg);
-    }
+    // loop do agente com ferramentas — runAgent escolhe o adaptador (OpenAI-compatível ou Anthropic)
+    full = await runAgent(cfg);
     // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] (invisível) → anima o avatar
     const em = /\[emo[cç][aã]o:\s*([a-zçãáéí]+)\s*\]/i.exec(full || '');
     if (em) {
