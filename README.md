@@ -144,10 +144,14 @@ Suporte **X11** (Wayland roda via XWayland, forçado automaticamente). Detalhes,
 | Global | `Ctrl+Shift+Q` | Sair |
 | Chat | `Ctrl+F` | Buscar na conversa |
 | Chat | `Enter` / `Shift+Enter` | Enviar / nova linha |
+| Editor | `Ctrl+P` | Abrir arquivo rápido (busca pelo nome) |
 | Editor | `Ctrl+S` | Salvar |
 | Editor | `` Ctrl+` `` | Terminal integrado |
+| Editor | `Ctrl+Shift+G` | Controle de fontes (git) |
 | Editor | `Ctrl+Shift+F` | Buscar no projeto |
+| Editor | `Ctrl+Shift+O` | Símbolo no arquivo |
 | Editor | `Ctrl+G` | Ir para a linha |
+| Editor | `Shift+Alt+F` | Formatar documento |
 
 ---
 
