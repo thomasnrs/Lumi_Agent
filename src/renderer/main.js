@@ -109,6 +109,15 @@ let taskbarTop = Infinity; // topo da barra de tarefas, em pixels de tela
 let hasBottomBar = true; // false = painel em cima (Linux/GNOME) → senta na BORDA da tela
 const SIT_SNAP_PX = 70; // distancia para "grudar" os pes na taskbar
 
+// "sentar no fundo da tela" (Linux): a janela é tipo "dock" (escapa do clamp do KWin), com a
+// base na borda FÍSICA da tela, e o BUMBUM é empurrado p/ a base DENTRO do canvas. As pernas
+// ficam abaixo da borda (penduradas p/ fora). NÃO depende de detectar barra (workArea mente).
+const IS_LINUX = window.api.platform === 'linux';
+let screenBottom = Infinity; // base FÍSICA da tela (px), por monitor
+let sitOffsetY = 0; // deslocamento atual do corpo no canvas (world Y, suavizado)
+let sitOffsetTarget = 0; // alvo do deslocamento
+const SIT_SEAT_LIFT_PX = 0; // folga acima da borda (0 = bumbum encostado na base da tela)
+
 // capsula de colisao (aproxima o corpo) - hover/clique O(1) em vez de raycast na malha
 let capsuleBottom = null;
 let capsuleTop = null;
@@ -519,7 +528,26 @@ function sitContactPixelY() {
   return hipPx + (bodyH ? bodyH * 0.1 : 30);
 }
 
-// re-cola o corpo na taskbar usando a pose REAL (corrige o sentar flutuando)
+// (Linux) empurra o corpo p/ baixo DENTRO do canvas até o BUMBUM (quadril + ~10%) encostar na
+// base FÍSICA da tela → senta no fundo, pernas penduradas p/ fora da borda. Roda a CADA frame
+// (sem IPC) → trava o assento sem "voar", mesmo com o bobbing da animação de sentar.
+const _projA = new THREE.Vector3();
+const _projB = new THREE.Vector3();
+function anchorSitToCanvas() {
+  if (!isSitting || !currentVrm) return;
+  const z = capsuleBottom ? capsuleBottom.z : 0;
+  // amostra a escala world↔px na profundidade do corpo (perspectiva)
+  const aPx = ((1 - _projA.set(0, 0, z).project(camera).y) / 2) * window.innerHeight;
+  const bPx = ((1 - _projB.set(0, 1, z).project(camera).y) / 2) * window.innerHeight;
+  const denom = bPx - aPx; // < 0: +world Y sobe na tela. worldPerPx = 1/denom
+  if (!denom) return;
+  const seatPx = sitContactPixelY(); // BUMBUM atual (já reflete o offset deste frame)
+  const targetPx = window.innerHeight - SIT_SEAT_LIFT_PX; // base FÍSICA da tela
+  sitOffsetTarget = sitOffsetY + (targetPx - seatPx) / denom; // (targetPx-seatPx)*worldPerPx
+  sitOffsetY += (sitOffsetTarget - sitOffsetY) * 0.25; // suaviza (sem "pulo")
+}
+
+// re-cola o corpo na base da tela usando a pose REAL (corrige o sentar flutuando)
 let sitSnapTimer = null;
 async function resnapToTaskbar() {
   if (!isSitting || !currentVrm) return;
@@ -527,10 +555,26 @@ async function resnapToTaskbar() {
     const w = await window.api.getWorkArea(); // fresco: monitor certo + painel atual
     if (w) {
       taskbarTop = w.taskbarTop;
+      screenBottom = w.screenBottom != null ? w.screenBottom : w.taskbarTop;
       hasBottomBar = w.hasBottomBar !== false;
     }
   } catch (e) {
     /* mantém o cacheado */
+  }
+  // LINUX: a janela fica 100% on-screen (base = base FÍSICA da tela). NÃO movemos a janela p/
+  // fora (o WM trava → "voa"); o bumbum é ancorado no canvas a cada frame (anchorSitToCanvas).
+  if (IS_LINUX) {
+    if (screenBottom === Infinity) return;
+    const b = await window.api.getWindowBounds(); // [x,y,w,h] em DIPs
+    winX = b[0];
+    const targetY = Math.round(screenBottom - b[3]);
+    if (Math.abs(targetY - b[1]) > 2) {
+      winY = targetY;
+      window.api.setWindowPos(winX, winY);
+    } else {
+      winY = b[1];
+    }
+    return;
   }
   if (taskbarTop === Infinity) return;
   // COM barra embaixo: bumbum na barra, pernas penduradas na frente dela.
@@ -543,12 +587,20 @@ async function resnapToTaskbar() {
   // escala DIP↔pixel CSS (Linux com scaling fracionário diverge; no Windows costuma ser 1)
   const scale = window.innerHeight ? b[3] / window.innerHeight : 1;
   const targetY = Math.round(taskbarTop - seat * scale);
-  if (window.api.platform === 'linux')
-    console.log('[sit]', { taskbarTop, hasBottomBar, seat: Math.round(seat), scale: +scale.toFixed(3), winY, targetY });
   if (Math.abs(targetY - winY) > 2) {
     winY = targetY;
     window.api.setWindowPos(winX, winY);
   }
+}
+
+// (Linux) coloca a janela 100% on-screen com a base na base FÍSICA da tela e senta
+async function sitToScreenBottom() {
+  if (screenBottom === Infinity) return;
+  const b = await window.api.getWindowBounds(); // [x,y,w,h] em DIPs
+  winX = b[0];
+  winY = Math.round(screenBottom - b[3]);
+  window.api.setWindowPos(winX, winY);
+  startSitting(); // anchorSitToCanvas() empurra o bumbum p/ a base, a cada frame
 }
 
 // senta (na taskbar): toca a animacao de sentar em loop, se houver
@@ -768,12 +820,20 @@ const ndc = new THREE.Vector2();
 
 // Teste barato O(1): o cursor (nx,ny em NDC) acerta a capsula do corpo?
 // Substitui o raycast na malha inteira (que travava sobre o cabelo denso).
+const _capB = new THREE.Vector3();
+const _capT = new THREE.Vector3();
 function hitsAvatar(nx, ny) {
   if (!capsuleTop) return false;
   ndc.x = nx;
   ndc.y = ny;
   raycaster.setFromCamera(ndc, camera);
-  return raycaster.ray.distanceSqToSegment(capsuleBottom, capsuleTop) <= capsuleR2;
+  // o corpo pode estar empurrado p/ baixo no canvas (sentado) → desloca a cápsula junto
+  const dy = currentVrm ? currentVrm.scene.position.y : 0;
+  _capB.copy(capsuleBottom);
+  _capB.y += dy;
+  _capT.copy(capsuleTop);
+  _capT.y += dy;
+  return raycaster.ray.distanceSqToSegment(_capB, _capT) <= capsuleR2;
 }
 let dragging = false;
 let startSX = 0;
@@ -816,24 +876,32 @@ canvas.addEventListener('pointerup', async () => {
   if (!dragging) return;
   dragging = false;
 
-  // taskbar fresca (monitor onde ela está agora + mudanças de painel)
+  // área fresca (monitor onde ela está agora + mudanças de painel)
   try {
     const w = await window.api.getWorkArea();
     if (w) {
       taskbarTop = w.taskbarTop;
+      screenBottom = w.screenBottom != null ? w.screenBottom : w.taskbarTop;
       hasBottomBar = w.hasBottomBar !== false;
     }
   } catch (e) {
     /* usa o cacheado */
   }
-  // se soltou com os pes perto/abaixo da taskbar, "senta" nela
-  if (currentVrm && taskbarTop !== Infinity) {
-    const footScreenY = winY + footPixelY;
-    if (footScreenY > taskbarTop - SIT_SNAP_PX) {
-      winY = Math.round(taskbarTop - footPixelY);
-      window.api.setWindowPos(winX, winY);
-      startSitting();
-      setTimeout(resnapToTaskbar, 80); // corrige logo pro assento real (quadril)
+  // se soltou com os pes perto/abaixo da base, "senta" nela
+  if (currentVrm) {
+    if (IS_LINUX) {
+      // Linux: senta na BASE FÍSICA da tela (janela on-screen; o bumbum desce no canvas)
+      if (screenBottom !== Infinity && winY + footPixelY > screenBottom - SIT_SNAP_PX) {
+        await sitToScreenBottom();
+      }
+    } else if (taskbarTop !== Infinity) {
+      const footScreenY = winY + footPixelY;
+      if (footScreenY > taskbarTop - SIT_SNAP_PX) {
+        winY = Math.round(taskbarTop - footPixelY);
+        window.api.setWindowPos(winX, winY);
+        startSitting();
+        setTimeout(resnapToTaskbar, 80); // corrige logo pro assento real (quadril)
+      }
     }
   }
 
@@ -909,7 +977,13 @@ function animate(now) {
 
   if (currentVrm) {
     if (mixer) mixer.update(dt); // toca animacoes de mixer (gestos, sit, idle.vrma)
-    currentVrm.scene.position.y = Math.sin(t * 1.4) * 0.005; // respirar
+    // (Linux) sentada: empurra o bumbum p/ a base da tela; ao levantar, volta suave a 0
+    if (isSitting && IS_LINUX) anchorSitToCanvas();
+    else if (sitOffsetY) {
+      sitOffsetY += (0 - sitOffsetY) * 0.25;
+      if (Math.abs(sitOffsetY) < 1e-4) sitOffsetY = 0;
+    }
+    currentVrm.scene.position.y = Math.sin(t * 1.4) * 0.005 + sitOffsetY; // respirar (+ assento)
     // idle base direto nos ossos (so quando nao ha gesto/sentada/preview ativos)
     if (!activeGesture && !isSitting && !currentPreview) {
       if (idleMode === 'unity') applyUnityIdle(t);

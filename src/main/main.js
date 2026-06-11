@@ -3544,6 +3544,10 @@ function createWindow() {
     alwaysOnTop: true,
     hasShadow: false,
     skipTaskbar: true, // controlado pela bandeja, nao pela barra de tarefas
+    // Linux/KWin: tipo "dock" escapa do clamp do WM (janelas normais são puxadas p/ dentro da
+    // workArea ~500ms depois → "voa" 44px). Dock pode cobrir o painel, chegar na borda FÍSICA
+    // (e abaixo dela) e fica sempre no topo — e o chat continua recebendo foco/teclado.
+    ...(IS_LINUX ? { type: 'dock' } : {}),
     backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -3593,13 +3597,22 @@ function startDrag() {
 function endDrag() {
   if (!dragging) return;
   dragging = false;
-  // tenta sentar na taskbar
+  // tenta sentar na base da tela (monitor sob a base da janela)
   const b = win.getBounds();
-  const d = screen.getPrimaryDisplay();
-  const taskbarTop = d.workArea.y + d.workArea.height;
-  if (footPixelY && b.y + footPixelY > taskbarTop - 70) {
-    win.setPosition(b.x, Math.round(taskbarTop - footPixelY));
-    win.webContents.send('sit-start');
+  const d = screen.getDisplayNearestPoint({ x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height) });
+  if (IS_LINUX) {
+    // Linux: janela 100% on-screen (base = base FÍSICA); o renderer empurra o bumbum no canvas
+    const screenBottom = d.bounds.y + d.bounds.height;
+    if (footPixelY && b.y + footPixelY > screenBottom - 70) {
+      win.setPosition(b.x, Math.round(screenBottom - b.height));
+      win.webContents.send('sit-start');
+    }
+  } else {
+    const taskbarTop = d.workArea.y + d.workArea.height;
+    if (footPixelY && b.y + footPixelY > taskbarTop - 70) {
+      win.setPosition(b.x, Math.round(taskbarTop - footPixelY));
+      win.webContents.send('sit-start');
+    }
   }
   applyIgnore(); // volta ao estado normal (atravessavel sobre o corpo)
 }
@@ -4423,14 +4436,20 @@ ipcMain.handle('get-unity-idle', () => {
   }
 });
 
-// topo da barra de tarefas (para a avatar "sentar" nela)
+// topo da barra de tarefas + base FÍSICA da tela (para a avatar "sentar")
 ipcMain.handle('get-work-area', () => {
-  // usa o monitor onde a JANELA está (multi-monitor + painéis diferentes por display)
-  const d = win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
+  // usa o monitor sob a BASE da janela (multi-monitor + painéis diferentes por display)
+  let d;
+  if (win && !win.isDestroyed()) {
+    const b = win.getBounds();
+    d = screen.getDisplayNearestPoint({ x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height) });
+  } else {
+    d = screen.getPrimaryDisplay();
+  }
   const waBottom = d.workArea.y + d.workArea.height;
-  const boundsBottom = d.bounds.y + d.bounds.height;
-  // painel em CIMA (GNOME etc.): não há barra embaixo → ela senta na BORDA da tela
-  return { taskbarTop: waBottom, hasBottomBar: waBottom < boundsBottom - 1 };
+  const screenBottom = d.bounds.y + d.bounds.height;
+  // painel em CIMA (GNOME etc.): não há barra embaixo → ela senta na BORDA física da tela
+  return { taskbarTop: waBottom, screenBottom, hasBottomBar: waBottom < screenBottom - 1 };
 });
 ipcMain.handle('get-window-bounds', () => {
   const b = win.getBounds();
