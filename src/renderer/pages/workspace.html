@@ -2043,11 +2043,28 @@
         const ov = document.createElement('div');
         ov.className = 'modal';
         ov.innerHTML =
-          '<div class="box" style="width:380px"><div class="t" style="font-size:14px;font-weight:600">Atalhos do editor</div>' +
+          '<div class="box" style="width:460px;max-height:80vh;overflow:auto"><div class="t" style="font-size:14px;font-weight:600">Atalhos do editor</div>' +
           '<div style="font-size:12px;line-height:2;color:var(--text)">' +
-          '<b>Ctrl+S</b> — salvar arquivo<br><b>Ctrl+`</b> — terminal<br><b>Ctrl+Shift+F</b> — buscar no projeto<br>' +
-          '<b>Ctrl+F / Ctrl+H</b> — buscar/substituir no arquivo<br><b>Ctrl+G</b> — ir para a linha<br>' +
-          '<b>Clique do meio</b> — fecha aba<br><b>Clique direito</b> — menu na árvore<br><b>Arrastar</b> — mover arquivos/pastas' +
+          '<div style="color:#9aa;text-transform:uppercase;font-size:10.5px;letter-spacing:.4px;margin-top:2px">Arquivos & navegação</div>' +
+          '<b>Ctrl+P</b> — abrir arquivo rápido (busca pelo nome)<br>' +
+          '<b>Ctrl+S</b> — salvar arquivo<br>' +
+          '<b>Ctrl+Shift+F</b> — buscar no projeto<br>' +
+          '<b>Ctrl+F / Ctrl+H</b> — buscar/substituir no arquivo<br>' +
+          '<b>Ctrl+G</b> — ir para a linha<br>' +
+          '<b>Ctrl+Shift+O</b> — símbolo no arquivo (função/classe)<br>' +
+          '<div style="color:#9aa;text-transform:uppercase;font-size:10.5px;letter-spacing:.4px;margin-top:8px">Edição</div>' +
+          '<b>Shift+Alt+F</b> — formatar documento<br>' +
+          '<b>Ctrl+scroll</b> — zoom da fonte do editor<br>' +
+          '<b>Clique direito na seleção</b> — ✦ enviar/explicar/refatorar com a Lumi<br>' +
+          '<div style="color:#9aa;text-transform:uppercase;font-size:10.5px;letter-spacing:.4px;margin-top:8px">Painéis & git</div>' +
+          '<b>Ctrl+`</b> — terminal integrado<br>' +
+          '<b>Ctrl+Shift+G</b> — controle de fontes (git)<br>' +
+          '<b>Ctrl+Enter</b> — commitar (no campo de mensagem)<br>' +
+          '<b>⚡ Live</b> — preview ao vivo · <b>🎯 apontar</b> manda o elemento pro chat (Esc cancela)<br>' +
+          '<div style="color:#9aa;text-transform:uppercase;font-size:10.5px;letter-spacing:.4px;margin-top:8px">Abas & árvore</div>' +
+          '<b>Clique do meio</b> — fecha aba<br>' +
+          '<b>Clique direito</b> — menu na árvore<br>' +
+          '<b>Arrastar</b> — mover arquivos/pastas (e redimensionar explorador/chat/terminal pelas divisórias)' +
           '</div><div class="b"><button class="ok">Fechar</button></div></div>';
         document.body.appendChild(ov);
         ov.querySelector('.ok').onclick = () => ov.remove();
