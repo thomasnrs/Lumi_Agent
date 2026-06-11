@@ -4666,6 +4666,37 @@ function liveNotifyReload() {
   }, 120); // junta rajadas de saves num reload só
 }
 
+// pasta sem index.html → página de listagem navegável (estilo live-server clássico)
+function liveListing(res, dir, u) {
+  const base = u.replace(/\/+$/, ''); // caminho da URL sem barra final
+  let items = [];
+  try {
+    items = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    /* sem permissão → lista vazia */
+  }
+  items.sort((a, b) => (b.isDirectory() - a.isDirectory()) || a.name.localeCompare(b.name));
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const rows = items
+    .map((it) => {
+      const href = base + '/' + encodeURIComponent(it.name) + (it.isDirectory() ? '/' : '');
+      const ico = it.isDirectory() ? '📁' : /\.html?$/i.test(it.name) ? '🌐' : '📄';
+      return '<a href="' + href + '">' + ico + ' ' + esc(it.name) + (it.isDirectory() ? '/' : '') + '</a>';
+    })
+    .join('');
+  const up = base ? '<a href="' + (base.slice(0, base.lastIndexOf('/')) || '/') + '">⬆ voltar</a>' : '';
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(
+    '<!doctype html><meta charset="utf-8"><title>Lumi Live — ' + esc(base || '/') + '</title>' +
+      '<body style="font-family:Segoe UI,sans-serif;background:#16161e;color:#eee;margin:0;padding:24px">' +
+      '<h3 style="margin:0 0 4px">⚡ Lumi Live Server</h3>' +
+      '<div style="color:#9aa;font-size:13px;margin-bottom:14px">' + esc(base || '/') + ' — esta pasta não tem <code>index.html</code>; escolha um arquivo:</div>' +
+      '<div style="display:flex;flex-direction:column;gap:2px;max-width:560px">' + up + rows + '</div>' +
+      '<style>a{color:#7aa2ff;text-decoration:none;padding:6px 10px;border-radius:7px;font-size:14px}a:hover{background:#24242f}</style>' +
+      '<script src="/__lumi/client.js"></script></body>'
+  );
+}
+
 function liveHandler(req, res) {
   const cfg = loadConfig();
   const u = decodeURIComponent((req.url || '/').split('?')[0]);
@@ -4690,12 +4721,21 @@ function liveHandler(req, res) {
   try {
     let st = fs.existsSync(fp) && fs.statSync(fp);
     if (st && st.isDirectory()) {
-      fp = path.join(fp, 'index.html');
-      st = fs.existsSync(fp) && fs.statSync(fp);
+      const idx = path.join(fp, 'index.html');
+      if (fs.existsSync(idx)) {
+        fp = idx;
+        st = fs.statSync(fp);
+      } else {
+        return liveListing(res, fp, u); // sem index.html → lista a pasta (navegável)
+      }
     }
     if (!st) {
       res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-      return res.end('<h3 style="font-family:sans-serif">404 — não achei <code>' + u.replace(/[<>&]/g, '') + '</code> no workspace</h3>');
+      return res.end(
+        '<body style="font-family:sans-serif;background:#16161e;color:#eee"><h3>404 — não achei <code>' +
+          u.replace(/[<>&]/g, '') +
+          '</code> no workspace</h3><a href="/" style="color:#7aa2ff">← ver os arquivos do workspace</a></body>'
+      );
     }
     const ext = path.extname(fp).slice(1).toLowerCase();
     const mime = LIVE_MIME[ext] || 'application/octet-stream';

@@ -1852,7 +1852,11 @@
         if (r && r.error) return toast('⚠ ' + r.error, false);
         liveUrl = 'http://127.0.0.1:' + r.port + '/';
         liveUrlEl.textContent = liveUrl;
-        liveFrame.src = liveUrl;
+        // abre já na página do arquivo .html ativo no editor (se houver)
+        const cur = active && findTab(active);
+        const startRel =
+          cur && !cur.diff && !cur.live && !cur.image && /\.html?$/i.test(cur.path) ? cur.path.split('/').map(encodeURIComponent).join('/') : '';
+        liveFrame.src = liveUrl + startRel;
         let t = findTab(LIVE_TAB);
         if (!t) {
           t = { path: LIVE_TAB, live: true, title: '⚡ localhost:' + r.port, dirty: false };
