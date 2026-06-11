@@ -791,8 +791,28 @@ const COMPANION_BASE =
   '- Seja capaz e proativa: use suas ferramentas (arquivos, comandos, web, imagem, ver/controlar a tela) para realmente RESOLVER, não só descrever.\n' +
   '- No bate-papo, respostas curtas; no técnico, foco e precisão. NUNCA invente fatos/APIs — se não sabe, descubra (pesquise/leia).\n' +
   '- Tome iniciativa: se faltar um passo óbvio, faça; se algo der errado, conserte a causa em vez de só relatar.\n' +
-  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag [emoção:feliz|triste|brava|surpresa|pensativa] — ela é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).\n' +
+  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag [emoção:X] — X em português (feliz, triste, brava, surpresa, pensativa, vergonha... sinônimos valem). A tag é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).\n' +
   '- LEMBRETES: se o usuário pedir pra lembrar de algo ("me lembra em 20min de..."), use set_reminder — você avisa em voz alta na hora certa.';
+
+// Entende emoções em PT e EN (a I.A. costuma responder em português) → nome canônico do avatar.
+// A comparação ignora acentos, então "melancólica" e "melancolica" funcionam igual.
+const EMOTION_WORDS = {
+  happy: ['happy', 'joy', 'feliz', 'alegre', 'alegria', 'animada', 'animado', 'contente', 'empolgada', 'empolgado', 'sorrindo', 'sorridente', 'rindo', 'divertida', 'divertido', 'radiante', 'orgulhosa', 'orgulhoso'],
+  sad: ['sad', 'triste', 'tristeza', 'chateada', 'chateado', 'desanimada', 'desanimado', 'melancolica', 'melancolico', 'deprimida', 'deprimido', 'magoada', 'magoado', 'chorando', 'desapontada', 'desapontado', 'arrependida', 'arrependido'],
+  angry: ['angry', 'mad', 'brava', 'bravo', 'raiva', 'irritada', 'irritado', 'furiosa', 'furioso', 'nervosa', 'nervoso', 'zangada', 'zangado', 'indignada', 'indignado'],
+  surprised: ['surprised', 'wow', 'surpresa', 'surpreso', 'espantada', 'espantado', 'chocada', 'chocado', 'impressionada', 'impressionado', 'assustada', 'assustado', 'uau'],
+  relaxed: ['relaxed', 'zen', 'pensativa', 'pensativo', 'calma', 'calmo', 'tranquila', 'tranquilo', 'relaxada', 'relaxado', 'serena', 'sereno', 'reflexiva', 'reflexivo', 'curiosa', 'curioso', 'concentrada', 'concentrado'],
+  blush: ['blush', 'blushing', 'vergonha', 'envergonhada', 'envergonhado', 'timida', 'timido', 'corada', 'corado'],
+};
+const EMOTION_LOOKUP = {};
+Object.entries(EMOTION_WORDS).forEach(([canon, words]) => words.forEach((w) => (EMOTION_LOOKUP[w] = canon)));
+function normalizeEmotion(input) {
+  const txt = String(input || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // remove acentos
+  for (const tok of txt.split(/[^a-z]+/)) {
+    if (tok && EMOTION_LOOKUP[tok]) return EMOTION_LOOKUP[tok]; // "muito feliz!" → happy
+  }
+  return null;
+}
 
 // Monta o system prompt com os fatos memorizados + (opcional) memoria do projeto
 // SO da máquina — pro modelo gerar comandos certos (PowerShell no Windows, bash no Linux)
@@ -1424,12 +1444,13 @@ const TOOLS = {
     category: null,
     schema: {
       name: 'play_animation',
-      description: 'Faz a avatar reagir com uma emoção. Valores: happy, sad, angry, surprised, blush.',
+      description: 'Faz a avatar reagir com uma emoção. Aceita português ou inglês: feliz/happy, triste/sad, brava/angry, surpresa/surprised, pensativa/relaxed, vergonha/blush.',
       parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
     },
     run: async ({ name }) => {
-      broadcast('tool:animation', String(name || '').toLowerCase());
-      return { played: name };
+      const canon = normalizeEmotion(name) || String(name || '').toLowerCase(); // PT/EN → nome canônico
+      broadcast('tool:animation', canon);
+      return { played: canon };
     },
   },
   remember_fact: {
@@ -4998,10 +5019,10 @@ async function runChatTurn(cfg, popUserOnError) {
     // loop do agente com ferramentas — runAgent escolhe o adaptador (OpenAI-compatível ou Anthropic)
     full = await runAgent(cfg);
     // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] (invisível) → anima o avatar
-    const em = /\[emo[cç][aã]o:\s*([a-zçãáéí]+)\s*\]/i.exec(full || '');
+    // aceita qualquer palavra PT/EN (com ou sem acento) via normalizeEmotion
+    const em = /\[emo[cç][aã]o:\s*([^\]]+?)\s*\]/i.exec(full || '');
     if (em) {
-      const map = { feliz: 'happy', alegre: 'happy', animada: 'happy', triste: 'sad', brava: 'angry', raiva: 'angry', surpresa: 'surprised', pensativa: 'relaxed', calma: 'relaxed' };
-      const e2 = map[em[1].toLowerCase()];
+      const e2 = normalizeEmotion(em[1]);
       if (e2) broadcast('tool:animation', e2); // mesmo canal do play_animation → avatar reage
       full = full.replace(/\s*\[emo[cç][aã]o:[^\]]*\]\s*/gi, ' ').trim();
     }
