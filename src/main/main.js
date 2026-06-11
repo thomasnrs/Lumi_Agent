@@ -4,8 +4,10 @@ const path = require('path');
 function resBase() {
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
 }
-const ICON_PATH = path.join(resBase(), 'icone.png'); // ícone do app
 const fs = require('fs');
+// marca oficial da Lumi (✦, gerada pelo `npm run icon`); se faltar, cai no icone.png da raiz (mascote)
+const BRAND_ICON = path.join(resBase(), 'assets', 'brand', 'lumi-mark.png');
+const ICON_PATH = fs.existsSync(BRAND_ICON) ? BRAND_ICON : path.join(resBase(), 'icone.png');
 const url = require('url');
 const crypto = require('crypto');
 const WebSocket = require('ws');

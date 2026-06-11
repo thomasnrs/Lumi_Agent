@@ -44,6 +44,14 @@
           "**/*.vrma"
         ]
       },
+      {
+        "from": "assets/brand",
+        "to": "assets/brand",
+        "filter": [
+          "**/*.png",
+          "**/*.svg"
+        ]
+      },
       "icone.png"
     ],
     "asar": true,

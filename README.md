@@ -1,6 +1,8 @@
 <div align="center">
 
-# ✦ Lumi
+<img src="assets/brand/lumi.svg" width="92" alt="Lumi" />
+
+# Lumi
 
 ### Sua companheira de I.A. na área de trabalho
 
