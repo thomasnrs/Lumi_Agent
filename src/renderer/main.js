@@ -125,7 +125,17 @@ let capsuleR2 = 0;
 
 // ---------- helpers ----------
 function showHint(text, autoHideMs) {
-  const h = document.getElementById('hint');
+  let h = document.getElementById('hint');
+  if (!h) {
+    // o elemento saiu do index.html num redesign — recria pra não derrubar o boot
+    h = document.createElement('div');
+    h.id = 'hint';
+    h.style.cssText =
+      'position:fixed;top:46px;left:50%;transform:translateX(-50%);max-width:80%;text-align:center;' +
+      'background:rgba(20,20,30,.85);color:#eee;font:12px/1.5 "Segoe UI",sans-serif;padding:8px 14px;' +
+      'border-radius:10px;z-index:50;transition:opacity .3s;pointer-events:none;';
+    document.body.appendChild(h);
+  }
   h.textContent = text;
   h.style.opacity = '1';
   if (autoHideMs) setTimeout(() => (h.style.opacity = '0'), autoHideMs);
@@ -1103,15 +1113,28 @@ function applySink() {
   }
 }
 
-// Presets de provedores (1 adaptador OpenAI-compativel cobre quase todos)
+// Presets de provedores — endpoints pré-cadastrados (1 adaptador OpenAI-compatível
+// cobre quase todos; Anthropic tem adaptador próprio). Escolher um preenche
+// Tipo de API + Base URL + um modelo inicial (troque pelo 🔄 que lista os reais).
 const PRESETS = {
-  OpenAI: { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  OpenAI: { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini' },
+  'Anthropic (Claude)': { provider: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-opus-4-8' },
+  'Google Gemini 🆓': { provider: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
+  'xAI (Grok)': { provider: 'openai', baseUrl: 'https://api.x.ai/v1', model: 'grok-4' },
+  'Groq 🆓': { provider: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  DeepSeek: { provider: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  Mistral: { provider: 'openai', baseUrl: 'https://api.mistral.ai/v1', model: 'mistral-small-latest' },
   OpenRouter: { provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
   'Qwen (DashScope)': { provider: 'openai', baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-  Groq: { provider: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
-  DeepSeek: { provider: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  'Local (Ollama / LM Studio)': { provider: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' },
-  'Anthropic (Claude)': { provider: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-sonnet-latest' },
+  'Moonshot (Kimi)': { provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1', model: 'kimi-k2-turbo-preview' },
+  'Z.ai (GLM)': { provider: 'openai', baseUrl: 'https://api.z.ai/api/paas/v4', model: 'glm-4.6' },
+  'Together AI': { provider: 'openai', baseUrl: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
+  'Fireworks AI': { provider: 'openai', baseUrl: 'https://api.fireworks.ai/inference/v1', model: 'accounts/fireworks/models/llama-v3p3-70b-instruct' },
+  'Cerebras 🆓': { provider: 'openai', baseUrl: 'https://api.cerebras.ai/v1', model: 'llama-3.3-70b' },
+  Perplexity: { provider: 'openai', baseUrl: 'https://api.perplexity.ai', model: 'sonar' },
+  Cohere: { provider: 'openai', baseUrl: 'https://api.cohere.ai/compatibility/v1', model: 'command-a-03-2025' },
+  'Ollama (local)': { provider: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1' },
+  'LM Studio (local)': { provider: 'openai', baseUrl: 'http://localhost:1234/v1', model: '' },
   Personalizado: null,
 };
 Object.keys(PRESETS).forEach((name) => {
@@ -1120,6 +1143,16 @@ Object.keys(PRESETS).forEach((name) => {
   opt.textContent = name;
   presetSel.appendChild(opt);
 });
+// identifica qual preset corresponde à Base URL salva (pra mostrar o nome em vez de "Personalizado")
+function presetForBaseUrl(url) {
+  const norm = (u) => String(u || '').trim().toLowerCase().replace(/\/+$/, '');
+  const u = norm(url);
+  if (!u) return 'Personalizado';
+  for (const [name, p] of Object.entries(PRESETS)) {
+    if (p && norm(p.baseUrl) === u) return name;
+  }
+  return 'Personalizado';
+}
 
 // Presets de STT (transcricao): preenchem URL + modelo automaticamente
 const STT_PRESETS = {
@@ -1384,7 +1417,7 @@ async function openSettings() {
   sttApiKeyEl.value = c.sttApiKey || '';
   sttBaseUrlEl.value = c.sttBaseUrl || '';
   sttModelEl.value = c.sttModel || '';
-  presetSel.value = 'Personalizado';
+  presetSel.value = presetForBaseUrl(c.baseUrl); // mostra o provedor em uso (em vez de sempre "Personalizado")
   modelsStatus.textContent = '';
   // sempre abre na primeira aba (I.A.)
   document.querySelectorAll('#settings .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
