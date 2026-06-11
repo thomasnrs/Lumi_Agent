@@ -2165,6 +2165,16 @@
           modelLabel.textContent = c.model;
         }
       });
+      // mudou o modelo em OUTRA janela (⚙ configurações, ajustes rápidos…) → o seletor acompanha
+      if (window.api.onConfigChanged)
+        window.api.onConfigChanged(async () => {
+          const c = await window.api.getConfig();
+          if (c.model && modelLabel.textContent !== c.model) {
+            modelBtn.title = 'Modelo: ' + c.model + ' (clique pra trocar)';
+            modelLabel.textContent = c.model;
+            mpCurrent = c.model;
+          }
+        });
 
       // ---------- chip do arquivo ativo do editor (anexa a cada mensagem; clique liga/desliga) ----------
       const activeChip = document.getElementById('activeChip');
