@@ -511,6 +511,11 @@
             <option value="high">Tagarela — + puxa papo de vez em quando (pausa em 1h)</option>
           </select>
           <p class="hint">Ela fala em voz alta e no chat. Lembretes ("me lembra em 20min de...") <b>sempre</b> disparam, em qualquer nível — inclusive desligada.</p>
+          <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px">
+            <input id="reactApps" type="checkbox" style="width: auto; margin: 0" />
+            Reagir ao app em foco ("abriu o VS Code, bora codar?")
+          </label>
+          <p class="hint">Opt-in (Windows): ela vê só o <b>nome</b> do app/janela ativa — nunca o conteúdo — e comenta de vez em quando (precisa de proatividade Normal+).</p>
           <div id="modelsStatus" class="hint"></div>
 
           <label>Temperatura (criatividade): <span id="tempVal"></span></label>
@@ -527,6 +532,10 @@
             Memória persistente (lembra conversas e fatos)
           </label>
           <p class="hint">Desligar economiza tokens: não injeta os fatos no contexto nem salva o histórico.</p>
+          <button id="viewFacts" type="button"
+            style="margin-top: 4px; width: 100%; padding: 8px; border: 1px solid var(--border, #2a2a38); border-radius: 8px; background: transparent; color: var(--text, #eee); cursor: pointer">
+            🧠 Ver o que ela memorizou (editar/apagar fatos)
+          </button>
           <button id="clearFacts" type="button"
             style="margin-top: 4px; width: 100%; padding: 8px; border: none; border-radius: 8px; background: #3a2030; color: #ffb4b4; cursor: pointer">
             Apagar memória de longo prazo (fatos)

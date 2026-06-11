@@ -72,6 +72,11 @@ contextBridge.exposeInMainWorld('api', {
   writeWorkspaceFile: (rel, content) => ipcRenderer.invoke('workspace:write', { rel, content }),
   onDiff: (cb) => ipcRenderer.on('chat:diff', (_e, d) => cb(d)),
   clearFacts: () => ipcRenderer.invoke('facts:clear'),
+  factsList: () => ipcRenderer.invoke('facts:list'),
+  factsAdd: (fact) => ipcRenderer.invoke('facts:add', fact),
+  factsSet: (index, fact) => ipcRenderer.invoke('facts:set', { index, fact }),
+  factsDelete: (index) => ipcRenderer.invoke('facts:delete', index),
+  openMemoryPage: () => ipcRenderer.send('memory:open'),
 
   // diagnostico de memoria
   onMemReport: (cb) => ipcRenderer.on('mem-report', () => cb()),
@@ -160,6 +165,8 @@ contextBridge.exposeInMainWorld('api', {
   onToken: (cb) => ipcRenderer.on('chat:token', (_e, t) => cb(t)),
   onThinking: (cb) => ipcRenderer.on('chat:thinking', (_e, t) => cb(t)),
   onStats: (cb) => ipcRenderer.on('chat:stats', (_e, s) => cb(s)),
+  onSpend: (cb) => ipcRenderer.on('chat:spend', (_e, s) => cb(s)),
+  usageToday: () => ipcRenderer.invoke('usage:today'),
   onCompacted: (cb) => ipcRenderer.on('chat:compacted', (_e, info) => cb(info)),
   onDone: (cb) => ipcRenderer.on('chat:done', () => cb()),
   onNewBubble: (cb) => ipcRenderer.on('chat:newbubble', () => cb()),

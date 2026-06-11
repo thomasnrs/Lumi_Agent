@@ -1069,6 +1069,7 @@ const searchApiKeyEl = document.getElementById('searchApiKey');
 const searxUrlEl = document.getElementById('searxUrl');
 const fallbackModelEl = document.getElementById('fallbackModel');
 const proactivityEl = document.getElementById('proactivity');
+const reactAppsEl = document.getElementById('reactApps');
 const maxStepsEl = document.getElementById('maxSteps');
 const clearFactsBtn = document.getElementById('clearFacts');
 const permEls = {
@@ -1411,6 +1412,7 @@ async function openSettings() {
   searxUrlEl.value = c.searxUrl || '';
   fallbackModelEl.value = c.fallbackModel || '';
   proactivityEl.value = c.proactivity || 'normal';
+  reactAppsEl.checked = !!c.reactApps;
   maxStepsEl.value = c.maxSteps || 48;
   const perms = c.perms || {};
   permEls.read.value = perms.read || 'ask';
@@ -1493,7 +1495,11 @@ const THEME_INPUTS = {
 };
 const THEME_PRESETS = {
   Padrão: {},
+  AMOLED: { bg: '#000000', surface: '#101016', 'surface-2': '#000000', accent: '#7aa2ff', 'accent-text': '#ffffff', text: '#e8e8ee', border: '#1c1c26' },
   'Meia-noite': { bg: '#0e0e1a', surface: '#1b1b2e', 'surface-2': '#0a0a14', accent: '#8b7aff', 'accent-text': '#ffffff', text: '#e8e8f4', border: '#2a2a44' },
+  Claro: { bg: '#f4f5f9', surface: '#ffffff', 'surface-2': '#e8eaf1', accent: '#5b7cfa', 'accent-text': '#ffffff', text: '#23263a', border: '#d4d8e4' },
+  Pastel: { bg: '#f7f3fb', surface: '#ffffff', 'surface-2': '#efe8f6', accent: '#b58aed', 'accent-text': '#ffffff', text: '#3a3344', border: '#e2d8ee' },
+  Sakura: { bg: '#fdf2f6', surface: '#ffffff', 'surface-2': '#f8e4ec', accent: '#e96ba8', 'accent-text': '#ffffff', text: '#45323c', border: '#f0d4e0' },
   Rosé: { bg: '#1a1418', surface: '#2a1f27', 'surface-2': '#140f13', accent: '#ff7aa2', 'accent-text': '#ffffff', text: '#f0e6ec', border: '#3a2a34' },
   Floresta: { bg: '#0f1714', surface: '#16241e', 'surface-2': '#0a110d', accent: '#5fd08a', 'accent-text': '#0a1a10', text: '#e6f0ea', border: '#20342a' },
   Âmbar: { bg: '#1a160e', surface: '#2a2418', 'surface-2': '#14110a', accent: '#ffb347', 'accent-text': '#1a1206', text: '#f0e9dc', border: '#3a3220' },
@@ -1553,6 +1559,7 @@ function readForm() {
     searxUrl: searxUrlEl.value.trim(),
     fallbackModel: fallbackModelEl.value.trim(),
     proactivity: proactivityEl.value,
+    reactApps: reactAppsEl.checked,
     maxSteps: Math.min(200, Math.max(4, parseInt(maxStepsEl.value, 10) || 48)),
     perms: {
       read: permEls.read.value,
@@ -1672,6 +1679,7 @@ clearFactsBtn.addEventListener('click', async () => {
   await window.api.clearFacts();
   showBubble('Esqueci tudo sobre você 🫥', 3500);
 });
+document.getElementById('viewFacts').addEventListener('click', () => window.api.openMemoryPage());
 
 // ---- perfis de configuracao ----
 async function refreshProfiles() {

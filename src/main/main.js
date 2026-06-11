@@ -176,6 +176,7 @@ const DEFAULT_CONFIG = {
   searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
+  reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   includeActiveTab: true, // anexa o arquivo ativo do editor a cada mensagem do chat (chip liga/desliga)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
@@ -824,8 +825,16 @@ const OS_NOTE =
       ? 'Sistema operacional: Linux (terminal = bash; use ls/grep/apt, NUNCA comandos de Windows).'
       : 'Sistema operacional: macOS (terminal = zsh/bash).';
 
+// "agora" humanizado pro prompt: dia da semana, hora e período (madrugada/manhã/tarde/noite)
+function timeNote() {
+  const d = new Date();
+  const h = d.getHours();
+  const periodo = h < 6 ? 'madrugada' : h < 12 ? 'manhã' : h < 18 ? 'tarde' : 'noite';
+  return 'Agora: ' + d.toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' — ' + periodo + '.';
+}
+
 function buildSystemPrompt(cfg) {
-  let sp = (cfg.systemPrompt || '') + '\n\n' + COMPANION_BASE + '\n' + OS_NOTE;
+  let sp = (cfg.systemPrompt || '') + '\n\n' + COMPANION_BASE + '\n' + OS_NOTE + '\n' + timeNote();
   if (cfg.memoryEnabled !== false) {
     const facts = loadFacts().map((x) => x.fact).slice(-50);
     if (facts.length) {
@@ -2582,6 +2591,83 @@ function nextAgentLabel(name) {
   return `${name} ${agentSeq[name]}`;
 }
 
+// ============================================================
+//  GASTÔMETRO: tokens e custo estimado do DIA (por provedor)
+// ============================================================
+function usagePath() {
+  return path.join(app.getPath('userData'), 'usage.json');
+}
+let usageDay = null;
+function loadUsageDay() {
+  if (!usageDay) {
+    try {
+      usageDay = JSON.parse(fs.readFileSync(usagePath(), 'utf8'));
+    } catch (e) {
+      usageDay = { day: '', prov: {} };
+    }
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (usageDay.day !== today) usageDay = { day: today, prov: {} }; // virou o dia → o medidor zera
+  return usageDay;
+}
+// preços APROXIMADOS (US$ por 1M de tokens, entrada/saída) por prefixo do modelo — é estimativa
+const MODEL_PRICES = [
+  ['claude-opus-4', 5, 25], ['claude-sonnet-4', 3, 15], ['claude-haiku-4', 1, 5],
+  ['gpt-5.5', 5, 30], ['gpt-5-mini', 0.25, 2], ['gpt-5-nano', 0.05, 0.4], ['gpt-5', 1.25, 10],
+  ['gpt-4o-mini', 0.15, 0.6], ['gpt-4o', 2.5, 10], ['gpt-4.1-mini', 0.4, 1.6], ['gpt-4.1', 2, 8],
+  ['deepseek-v4-pro', 0.44, 0.87], ['deepseek-v4', 0.28, 0.42], ['deepseek-chat', 0.27, 1.1], ['deepseek-reasoner', 0.55, 2.19],
+  ['gemini-2.5-pro', 1.25, 10], ['gemini-2.5-flash-lite', 0.1, 0.4], ['gemini-2.5-flash', 0.3, 2.5],
+  ['grok-code-fast', 0.2, 1.5], ['grok-4-fast', 0.2, 0.5], ['grok-4', 3, 15],
+  ['kimi-k2', 0.6, 2.5], ['glm-4.6', 0.6, 2.2], ['minimax', 0.3, 1.65],
+  ['llama-3.3-70b', 0.59, 0.79], ['llama-3.1-8b', 0.05, 0.08],
+  ['mistral-small', 0.1, 0.3], ['mistral-large', 2, 6],
+  ['qwen-plus', 0.4, 1.2], ['qwen-turbo', 0.05, 0.2], ['qwen-max', 1.6, 6.4],
+  ['sonar', 1, 1], ['command-a', 2.5, 10],
+];
+function priceFor(model) {
+  const m = String(model || '').toLowerCase();
+  if (!m || m.includes(':free')) return [0, 0];
+  for (const [pfx, pin, pout] of MODEL_PRICES) if (m.includes(pfx)) return [pin, pout];
+  return null; // desconhecido (ex.: proxy local) → só conta tokens
+}
+function usageTotals() {
+  const u = loadUsageDay();
+  let usd = 0;
+  let tin = 0;
+  let tout = 0;
+  let unknown = false;
+  for (const p of Object.values(u.prov)) {
+    usd += p.usd;
+    tin += p.in;
+    tout += p.out;
+    if (p.unknown) unknown = true;
+  }
+  return { day: u.day, usd, in: tin, out: tout, unknown };
+}
+function recordUsage(cfg, usage) {
+  try {
+    if (!usage || (!usage.prompt_tokens && !usage.completion_tokens)) return;
+    const u = loadUsageDay();
+    let host = 'api';
+    try {
+      host = cfg.provider === 'anthropic' ? 'anthropic' : new URL(cfg.baseUrl).hostname;
+    } catch (e) {
+      /* baseUrl estranha — agrupa em "api" */
+    }
+    const p = u.prov[host] || (u.prov[host] = { in: 0, out: 0, usd: 0 });
+    p.in += usage.prompt_tokens || 0;
+    p.out += usage.completion_tokens || 0;
+    const pr = priceFor(cfg.model);
+    if (pr) p.usd += ((usage.prompt_tokens || 0) * pr[0] + (usage.completion_tokens || 0) * pr[1]) / 1e6;
+    else p.unknown = true;
+    fs.writeFileSync(usagePath(), JSON.stringify(u));
+    broadcast('chat:spend', usageTotals());
+  } catch (e) {
+    /* o medidor nunca pode derrubar um turno */
+  }
+}
+ipcMain.handle('usage:today', () => usageTotals());
+
 // Monta o system prompt do subagente: persona + projeto/workspace + contexto da conversa
 function subAgentSystemPrompt(cfg, agent) {
   let sp = (agent.systemPrompt || 'Você é um assistente especializado.') + '\n' + OS_NOTE;
@@ -2658,6 +2744,7 @@ async function runSubAgent(cfg, agent, task, label) {
         throw e;
       }
     }
+    recordUsage(sub, turn.usage); // gastômetro: cada passo do subagente conta
     if (turn.text && turn.text.trim()) lastText = turn.text; // guarda narração (some no fim em alguns modelos)
     if (turn.aborted) { full = turn.text; completed = true; break; } // Stop: devolve o parcial do subagente
     if (turn.toolCalls.length) {
@@ -2744,6 +2831,7 @@ async function runAgent(cfg) {
         throw e;
       }
     }
+    recordUsage(runCfg, turn.usage); // gastômetro: cada passo conta (o contexto re-enviado é cobrado)
     if (turn.toolCalls.length) {
       messages.push({
         role: 'assistant',
@@ -3798,6 +3886,7 @@ function createTray() {
     { label: 'MCP (ferramentas)', click: () => openPage('mcp', 'mcp.html', 'MCP', 560, 620) },
       { label: 'Agentes (multi-agente)', click: () => openPage('agents', 'agents.html', 'Agentes', 620, 680) },
       { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
+      { label: 'Memória da Lumi', click: () => openPage('memory', 'memory.html', 'Memória', 540, 640) },
       { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
       { label: 'Personagem', submenu: vrmMenuItems() },
       { label: 'Configurações…', click: () => openSettingsWindow() },
@@ -3938,6 +4027,7 @@ function showContextMenu() {
     { label: 'MCP (ferramentas)', click: () => openPage('mcp', 'mcp.html', 'MCP', 560, 620) },
     { label: 'Agentes (multi-agente)', click: () => openPage('agents', 'agents.html', 'Agentes', 620, 680) },
     { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
+    { label: 'Memória da Lumi', click: () => openPage('memory', 'memory.html', 'Memória', 540, 640) },
     { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
     { label: 'Personagem', submenu: vrmMenuItems() },
     { label: 'Configurações…', click: () => openSettingsWindow() },
@@ -4929,6 +5019,29 @@ ipcMain.handle('facts:clear', () => {
   }
   return true;
 });
+// página de memória: ver/editar/apagar fatos um a um (transparência total)
+ipcMain.handle('facts:list', () => loadFacts());
+ipcMain.handle('facts:add', (_e, fact) => {
+  const t = String(fact || '').trim();
+  if (!t) return loadFacts();
+  const f = loadFacts();
+  f.push({ fact: t, at: new Date().toISOString() });
+  saveFacts(f.slice(-100));
+  return loadFacts();
+});
+ipcMain.handle('facts:set', (_e, { index, fact }) => {
+  const f = loadFacts();
+  if (f[index] && String(fact || '').trim()) f[index].fact = String(fact).trim();
+  saveFacts(f);
+  return f;
+});
+ipcMain.handle('facts:delete', (_e, index) => {
+  const f = loadFacts();
+  if (index >= 0 && index < f.length) f.splice(index, 1);
+  saveFacts(f);
+  return f;
+});
+ipcMain.on('memory:open', () => openPage('memory', 'memory.html', 'Memória', 540, 640));
 
 // le o texto de um .anim do Unity (para conversao experimental de idle)
 ipcMain.handle('get-unity-idle', () => {
@@ -5279,6 +5392,77 @@ let lastProactiveAt = 0; // cooldown global (não virar spam)
 let sessionStart = Date.now(); // início do período contínuo de uso
 let lastBreakNudge = Date.now();
 let lastSmallTalk = Date.now();
+let lastNightNudge = ''; // "vai dormir não?" — no máximo 1x por noite
+
+// ---- app ativo (OPT-IN, Windows): ela percebe o programa em foco e comenta ----
+// privacidade: só o NOME do processo e o título da janela — nunca o conteúdo.
+let appWatch = null; // processo powershell de longa duração (1 spawn só)
+let activeApp = { proc: '', title: '', since: 0 };
+let lastAppComment = 0;
+let lastAppCommented = '';
+let appLongNoticed = '';
+const APP_IGNORE = /^(|explorer|searchhost|applicationframehost|electron|ai-desktop-mate|lumi|textinputhost|shellexperiencehost|startmenuexperiencehost|lockapp|dwm|taskmgr)$/;
+
+function startAppWatcher() {
+  if (appWatch || process.platform !== 'win32') return;
+  const ps =
+    'Add-Type @"\n' +
+    'using System; using System.Runtime.InteropServices; using System.Text;\n' +
+    'public class FG {\n' +
+    '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();\n' +
+    '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);\n' +
+    '[DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder sb, int n);\n' +
+    '}\n' +
+    '"@\n' +
+    'while ($true) {\n' +
+    '  try {\n' +
+    '    $h = [FG]::GetForegroundWindow()\n' +
+    '    $procId = 0; [void][FG]::GetWindowThreadProcessId($h, [ref]$procId)\n' +
+    '    $sb = New-Object System.Text.StringBuilder 256\n' +
+    '    [void][FG]::GetWindowText($h, $sb, 256)\n' +
+    '    $p = (Get-Process -Id $procId -ErrorAction SilentlyContinue).ProcessName\n' +
+    '    Write-Output ("$p|" + $sb.ToString())\n' +
+    '  } catch {}\n' +
+    '  Start-Sleep -Seconds 20\n' +
+    '}';
+  try {
+    appWatch = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let buf = '';
+    appWatch.stdout.on('data', (d) => {
+      buf += d.toString();
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        const sep = line.indexOf('|');
+        if (sep < 0) continue;
+        const proc = line.slice(0, sep).toLowerCase().trim();
+        const title = line.slice(sep + 1).trim();
+        if (proc !== activeApp.proc) activeApp = { proc, title, since: Date.now() };
+        else activeApp.title = title;
+      }
+    });
+    appWatch.on('exit', () => {
+      appWatch = null;
+    });
+  } catch (e) {
+    appWatch = null;
+  }
+}
+function stopAppWatcher() {
+  if (appWatch) {
+    try {
+      appWatch.kill();
+    } catch (e) {
+      /* ok */
+    }
+    appWatch = null;
+    activeApp = { proc: '', title: '', since: 0 };
+  }
+}
 
 function proactivityLevel() {
   return ['off', 'low', 'normal', 'high'].indexOf(loadConfig().proactivity || 'normal'); // -1/0=off
@@ -5305,7 +5489,8 @@ async function proactiveLLM(instruction, fallback) {
         role: 'system',
         content:
           (cfg.systemPrompt || 'Você é a Lumi, uma companheira de desktop calorosa.') +
-          '\nGere APENAS uma fala curta (1 a 2 frases), natural e em português, sem aspas e sem prefixos.' +
+          '\nGere APENAS uma fala curta (1 a 2 frases), natural e em português, sem aspas e sem prefixos.\n' +
+          timeNote() + // ela sabe que horas são (muda o tom: manhã animada, madrugada manhosa)
           (facts.length ? '\nO que você sabe do usuário:\n- ' + facts.join('\n- ') : ''),
       },
       { role: 'user', content: instruction },
@@ -5360,7 +5545,14 @@ setInterval(() => {
 // loop do companheirismo (1x/min)
 setInterval(async () => {
   const lvl = proactivityLevel();
-  if (lvl <= 0) return;
+  if (lvl <= 0) {
+    stopAppWatcher();
+    return;
+  }
+  // watcher do app ativo liga/desliga conforme a config (opt-in, Windows)
+  const cfgNow = loadConfig();
+  if (cfgNow.reactApps && lvl >= 2 && process.platform === 'win32') startAppWatcher();
+  else stopAppWatcher();
   const now = Date.now();
   const idleMin = (now - lastUserActivity) / 60000;
   if (idleMin > 30) {
@@ -5377,6 +5569,16 @@ setInterval(async () => {
     }
     return;
   }
+  // madrugada (00h–04h59): UMA cutucada carinhosa por noite pra ir dormir
+  const hourNow = new Date().getHours();
+  if (lvl >= 2 && hourNow < 5 && new Date().toDateString() !== lastNightNudge && now - lastProactiveAt > 20 * 60000) {
+    lastNightNudge = new Date().toDateString();
+    proactiveSay(
+      await proactiveLLM('Já é madrugada (' + hourNow + 'h) e o usuário continua acordado no computador. Faça UM comentário carinhoso e levinho sobre descansar — sem sermão, com humor.', 'Já é madrugada… vai dormir não? 👀💚'),
+      'relaxed'
+    );
+    return;
+  }
   // cuidado: pausa após uso contínuo (normal: 2h · tagarela: 1h)
   const limitMin = lvl >= 3 ? 60 : 120;
   if (lvl >= 2 && (now - sessionStart) / 60000 >= limitMin && (now - lastBreakNudge) / 60000 >= limitMin && now - lastProactiveAt > 20 * 60000) {
@@ -5387,6 +5589,30 @@ setInterval(async () => {
       'relaxed'
     );
     return;
+  }
+  // reação ao app ativo (opt-in): trocou de app e ficou nele → um comentário leve (cooldown 45min)
+  if (cfgNow.reactApps && lvl >= 2 && activeApp.proc && !APP_IGNORE.test(activeApp.proc)) {
+    const inAppMin = (now - activeApp.since) / 60000;
+    if (activeApp.proc !== lastAppCommented && inAppMin >= 3 && inAppMin < 30 && now - lastAppComment > 45 * 60000 && now - lastProactiveAt > 20 * 60000) {
+      lastAppCommented = activeApp.proc;
+      lastAppComment = now;
+      const t = await proactiveLLM(
+        'O usuário está usando o app "' + activeApp.proc + '" (janela: "' + String(activeApp.title).slice(0, 80) + '"). Faça UM comentário curtinho, leve e contextual — é companhia, não suporte técnico.',
+        ''
+      );
+      if (t) proactiveSay(t);
+      return;
+    }
+    // tá há HORAS no mesmo app (ex.: 2h de YouTube 👀) → percebe uma vez
+    if (inAppMin >= 120 && appLongNoticed !== activeApp.proc + activeApp.since && now - lastProactiveAt > 20 * 60000) {
+      appLongNoticed = activeApp.proc + activeApp.since;
+      const t = await proactiveLLM(
+        'O usuário está há ' + (Math.round((inAppMin / 60) * 10) / 10) + ' horas seguidas no app "' + activeApp.proc + '". Comente de leve, com carinho/humor (ex.: tá rendendo? 👀) — sem sermão.',
+        ''
+      );
+      if (t) proactiveSay(t);
+      return;
+    }
   }
   // papo espontâneo (só no nível tagarela, a cada ~90min)
   if (lvl >= 3 && (now - lastSmallTalk) / 60000 >= 90 && now - lastProactiveAt > 20 * 60000) {
@@ -5399,6 +5625,7 @@ setInterval(async () => {
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  stopAppWatcher(); // encerra o powershell do app ativo
   if (cursorTimer) clearInterval(cursorTimer);
   if (hookOk) {
     try {

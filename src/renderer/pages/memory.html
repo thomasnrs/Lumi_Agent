@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Memória</title>
+    <style>
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; height: 100%; font-family: "Segoe UI", sans-serif;
+        background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+      }
+      .scroll { flex: 1; overflow-y: auto; padding: 16px; }
+      h1 { margin: 0 0 4px; font-size: 16px; }
+      .sub { font-size: 12px; color: #8a8a99; margin-bottom: 12px; line-height: 1.5; }
+      #addRow { display: flex; gap: 8px; margin-bottom: 14px; }
+      #addInput {
+        flex: 1; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px;
+        background: var(--surface-2); color: var(--text); font-size: 13px; font-family: inherit; outline: none;
+      }
+      #addBtn {
+        border: none; background: var(--accent); color: var(--accent-text); border-radius: 9px;
+        padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+      }
+      .fact {
+        background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+        padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 8px; align-items: flex-start;
+      }
+      .fact .tx {
+        flex: 1; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; cursor: text;
+      }
+      .fact textarea {
+        flex: 1; background: var(--surface-2); color: var(--text); border: 1px solid var(--accent);
+        border-radius: 7px; padding: 6px 8px; font: 13px/1.5 "Segoe UI", sans-serif; resize: vertical; min-height: 40px; outline: none;
+      }
+      .fact .dt { font-size: 10.5px; color: #667; margin-top: 3px; }
+      .fact .col { flex: 1; min-width: 0; }
+      .fact button {
+        flex: 0 0 auto; width: 26px; height: 26px; border: none; border-radius: 6px; cursor: pointer;
+        background: transparent; color: #9aa; font-size: 13px; display: flex; align-items: center; justify-content: center;
+      }
+      .fact button:hover { background: var(--border); color: var(--text); }
+      .fact button.del:hover { background: #3a2030; color: #ff9b9b; }
+      #empty { text-align: center; color: #667; font-size: 13px; padding: 30px 10px; }
+      #foot { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); }
+      #count { flex: 1; font-size: 12px; color: #8a8a99; }
+      #clearBtn {
+        border: 1px solid var(--border); background: transparent; color: #ff9b9b; border-radius: 8px;
+        padding: 7px 14px; font-size: 12px; cursor: pointer;
+      }
+      #clearBtn:hover { background: #3a2030; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-thumb { background: #33333f; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="scroll">
+      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;vertical-align:-3px;margin-right:6px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Memória da Lumi</h1>
+      <div class="sub">
+        Tudo que ela memorizou sobre você (e que entra no contexto de cada conversa).
+        Clique num fato para <b>editar</b>; ✕ apaga só aquele fato. Você no controle. 💚
+      </div>
+      <div id="addRow">
+        <input id="addInput" type="text" placeholder="Adicionar um fato manualmente (ex.: prefiro respostas curtas)..." spellcheck="false" />
+        <button id="addBtn">＋</button>
+      </div>
+      <div id="list"></div>
+    </div>
+    <div id="foot">
+      <span id="count"></span>
+      <button id="clearBtn">🗑 Apagar tudo</button>
+    </div>
+
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+    <script>
+      const listEl = document.getElementById('list');
+      const countEl = document.getElementById('count');
+      const addInput = document.getElementById('addInput');
+
+      function fmtDate(iso) {
+        try {
+          return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+        } catch (e) {
+          return '';
+        }
+      }
+
+      function render(facts) {
+        listEl.innerHTML = '';
+        countEl.textContent = facts.length ? facts.length + ' fato(s) memorizado(s) · máx. 100' : '';
+        if (!facts.length) {
+          listEl.innerHTML = '<div id="empty">Nada memorizado ainda — converse com ela, ou peça "lembre que..." 😊</div>';
+          return;
+        }
+        facts.forEach((f, i) => {
+          const d = document.createElement('div');
+          d.className = 'fact';
+          const col = document.createElement('div');
+          col.className = 'col';
+          const tx = document.createElement('div');
+          tx.className = 'tx';
+          tx.textContent = f.fact;
+          tx.title = 'Clique para editar';
+          const dt = document.createElement('div');
+          dt.className = 'dt';
+          dt.textContent = f.at ? 'memorizado em ' + fmtDate(f.at) : '';
+          col.appendChild(tx);
+          col.appendChild(dt);
+          // editar no lugar: clique vira textarea; Enter/blur salva, Esc cancela
+          tx.addEventListener('click', () => {
+            const ta = document.createElement('textarea');
+            ta.value = f.fact;
+            col.replaceChild(ta, tx);
+            ta.focus();
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+            let done = false;
+            const commit = async () => {
+              if (done) return;
+              done = true;
+              const v = ta.value.trim();
+              if (v && v !== f.fact) render(await window.api.factsSet(i, v));
+              else render(await window.api.factsList());
+            };
+            ta.addEventListener('blur', commit);
+            ta.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                commit();
+              } else if (e.key === 'Escape') {
+                done = true;
+                render(facts);
+              }
+            });
+          });
+          const del = document.createElement('button');
+          del.className = 'del';
+          del.textContent = '✕';
+          del.title = 'Apagar este fato';
+          del.addEventListener('click', async () => render(await window.api.factsDelete(i)));
+          d.appendChild(col);
+          d.appendChild(del);
+          listEl.appendChild(d);
+        });
+      }
+
+      async function addFact() {
+        const v = addInput.value.trim();
+        if (!v) return;
+        addInput.value = '';
+        render(await window.api.factsAdd(v));
+      }
+      document.getElementById('addBtn').addEventListener('click', addFact);
+      addInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') addFact();
+      });
+      document.getElementById('clearBtn').addEventListener('click', async () => {
+        if (!confirm('Apagar TUDO que a Lumi memorizou sobre você? Não dá pra desfazer.')) return;
+        await window.api.clearFacts();
+        render([]);
+      });
+
+      window.api.factsList().then(render);
+    </script>
+  </body>
+</html>
