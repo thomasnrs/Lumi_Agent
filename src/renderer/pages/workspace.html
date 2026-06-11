@@ -64,10 +64,11 @@
         display: flex; align-items: center; gap: 2px; padding: 5px 8px;
         border-bottom: 1px solid var(--border); font-size: 11px; color: #9aa; text-transform: uppercase; letter-spacing: 0.3px;
       }
-      #sidebar .ttl { flex: 1; }
+      /* o título encolhe com reticências — os botões NUNCA estouram a largura do painel */
+      #sidebar .ttl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #sidebar .tb {
         width: 24px; height: 24px; border: none; background: transparent; color: #9aa; cursor: pointer;
-        border-radius: 5px; display: flex; align-items: center; justify-content: center; position: relative;
+        border-radius: 5px; display: flex; align-items: center; justify-content: center; position: relative; flex: 0 0 auto;
       }
       #sidebar .tb:hover { background: var(--surface); color: var(--text); }
       #sidebar .tb svg { width: 15px; height: 15px; }
@@ -252,6 +253,12 @@
         overflow: hidden;
       }
       #sbLeft { overflow: hidden; text-overflow: ellipsis; }
+      /* divisória do explorador (painel lateral redimensionável) */
+      #sideresize {
+        width: 5px; flex: 0 0 auto; cursor: col-resize; background: var(--border);
+        transition: background 0.15s;
+      }
+      #sideresize:hover { background: var(--accent); }
       /* painel do chat (iframe reaproveitando chat.html) */
       #chatresize {
         width: 5px; flex: 0 0 auto; cursor: col-resize; background: var(--border);
@@ -493,6 +500,7 @@
           <div id="gitLists"></div>
         </div>
       </div>
+      <div id="sideresize" title="Arraste para redimensionar"></div>
       <div id="edcol">
         <div id="tabs"></div>
         <div id="editor"></div>
@@ -1851,6 +1859,33 @@
           dragging = false;
           document.body.style.userSelect = '';
           chatframe.style.pointerEvents = '';
+        });
+      })();
+
+      // divisória do explorador: arrasta a largura do painel lateral (persiste entre sessões)
+      (function () {
+        const sideEl = document.getElementById('side');
+        const handle = document.getElementById('sideresize');
+        const saved = parseInt(localStorage.getItem('ws.sidew'), 10);
+        if (saved) sideEl.style.width = Math.min(600, Math.max(170, saved)) + 'px';
+        let dragging = false;
+        handle.addEventListener('mousedown', (e) => {
+          dragging = true;
+          e.preventDefault();
+          document.body.style.userSelect = 'none';
+          chatframe.style.pointerEvents = 'none'; // o iframe não engole o mousemove
+        });
+        window.addEventListener('mousemove', (e) => {
+          if (!dragging) return;
+          const w = Math.min(Math.max(e.clientX, 170), Math.floor(window.innerWidth * 0.5));
+          sideEl.style.width = w + 'px';
+        });
+        window.addEventListener('mouseup', () => {
+          if (!dragging) return;
+          dragging = false;
+          document.body.style.userSelect = '';
+          chatframe.style.pointerEvents = '';
+          localStorage.setItem('ws.sidew', parseInt(sideEl.style.width, 10) || 250);
         });
       })();
 
