@@ -197,6 +197,22 @@
       #liveTools button.on { background: color-mix(in srgb, var(--accent) 25%, transparent); border-color: var(--accent); color: var(--accent); }
       #liveUrl { font-size: 11px; color: #889; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #liveFrame { flex: 1; border: none; background: #fff; }
+      /* ---- navegador embutido (webview) ---- */
+      #webroot { flex: 1; min-width: 0; min-height: 0; display: none; flex-direction: column; background: var(--surface-2); }
+      #webroot[hidden] { display: none; }
+      #webTools { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+      #webTools button {
+        border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px;
+        padding: 3px 9px; font-size: 11.5px; cursor: pointer; flex: 0 0 auto;
+      }
+      #webTools button:hover { border-color: var(--accent); }
+      #webTools button.on { background: color-mix(in srgb, var(--accent) 25%, transparent); border-color: var(--accent); color: var(--accent); }
+      #wbUrl {
+        flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+        border-radius: 6px; padding: 5px 9px; font-size: 12px; outline: none; font-family: Consolas, monospace;
+      }
+      #wbUrl:focus { border-color: var(--accent); }
+      #wb { flex: 1; background: #fff; display: flex; }
       /* abas de arquivos (estilo VS Code) */
       #tabs {
         display: flex;
@@ -474,6 +490,7 @@
     <div id="top">
       <span class="path" id="curpath">Nenhum arquivo aberto</span>
       <button id="liveBtn" title="Live Server — preview ao vivo com recarga automática">⚡ Live</button>
+      <button id="webBtn" title="Navegador embutido — acesse o localhost dos seus dev servers">🌐 Web</button>
       <button id="toggleTerm" title="Terminal (Ctrl+`)">⌨ Terminal</button>
       <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi">💬 Chat</button>
       <button id="save" title="Salvar (Ctrl+S)">💾 Salvar</button>
@@ -526,6 +543,17 @@
             <span id="liveUrl"></span>
           </div>
           <iframe id="liveFrame" title="Preview ao vivo"></iframe>
+        </div>
+        <div id="webroot" hidden>
+          <div id="webTools">
+            <button id="wbBack" title="Voltar">←</button>
+            <button id="wbFwd" title="Avançar">→</button>
+            <button id="wbReload" title="Recarregar">⟳</button>
+            <input id="wbUrl" type="text" placeholder="localhost:3000 — Enter pra navegar" spellcheck="false" />
+            <button id="wbPick" title="Apontar um elemento da página e mandar pro chat da Lumi">🎯</button>
+            <button id="wbExt" title="Abrir no navegador do sistema">↗</button>
+          </div>
+          <webview id="wb" src="about:blank"></webview>
         </div>
         <div id="preview"><img id="previewImg" alt="" /><div id="previewMeta"></div></div>
         <div id="panelResize" hidden title="Arraste para redimensionar"></div>
@@ -778,10 +806,10 @@
         openTabs.forEach((t) => {
           const el = document.createElement('div');
           el.className = 'tab' + (t.path === active ? ' active' : '') + (t.dirty ? ' dirty' : '');
-          el.title = t.live ? 'Live Server (preview ao vivo)' : t.diff ? t.rel + ' (alterações)' : t.path;
-          const nm = t.live ? t.title : t.diff ? '⇆ ' + baseName(t.rel) : baseName(t.path);
+          el.title = t.live ? 'Live Server (preview ao vivo)' : t.web ? 'Navegador embutido' : t.diff ? t.rel + ' (alterações)' : t.path;
+          const nm = t.live || t.web ? t.title : t.diff ? '⇆ ' + baseName(t.rel) : baseName(t.path);
           el.innerHTML =
-            '<span class="ticon">' + (t.live ? LIVE_ICON : iconFor(baseName(t.diff ? t.rel : t.path))) + '</span>' +
+            '<span class="ticon">' + (t.live ? LIVE_ICON : t.web ? WEB_ICON : iconFor(baseName(t.diff ? t.rel : t.path))) + '</span>' +
             '<span class="tname">' + esc(nm) + '</span>' +
             '<span class="dot"></span><button class="tx" title="Fechar (clique do meio)">✕</button>';
           el.addEventListener('click', (e) => {
@@ -815,6 +843,7 @@
         else if (t.image) sbRight.textContent = 'imagem · ' + fmtBytes(t.bytes || 0);
         else if (t.diff) sbRight.textContent = 'git diff · ' + langOf(t.rel);
         else if (t.live) sbRight.textContent = 'live server · recarrega ao salvar';
+        else if (t.web) sbRight.textContent = 'navegador embutido';
         else {
           const pos = editor && editor.getPosition();
           sbRight.textContent = (pos ? 'Ln ' + pos.lineNumber + ', Col ' + pos.column + '   ·   ' : '') + langOf(t.path);
@@ -829,6 +858,8 @@
         diffEl.style.display = 'none';
         liveviewEl.hidden = true;
         liveviewEl.style.display = 'none';
+        webrootEl.hidden = true;
+        webrootEl.style.display = 'none';
         editorEl.style.display = 'block';
         if (editor) editor.setModel(monaco.editor.createModel('', 'plaintext'));
         renderTabs();
@@ -843,14 +874,16 @@
         }
         if (t.stale) refreshTab(t); // arquivo mudou no disco enquanto a aba estava em segundo plano
         active = p;
-        current = t.diff || t.live ? null : p;
+        current = t.diff || t.live || t.web ? null : p;
         isImage = !!t.image;
-        curpath.textContent = t.diff ? t.rel + '  ·  HEAD ⇆ atual' : t.live ? liveUrl : p;
+        curpath.textContent = t.diff ? t.rel + '  ·  HEAD ⇆ atual' : t.live ? liveUrl : t.web ? 'navegador embutido' : p;
         previewEl.style.display = 'none';
         editorEl.style.display = 'none';
         diffEl.style.display = 'none';
         liveviewEl.hidden = true;
         liveviewEl.style.display = 'none';
+        webrootEl.hidden = true;
+        webrootEl.style.display = 'none';
         if (t.image) {
           previewEl.style.display = 'flex';
           previewImg.src = t.url;
@@ -862,6 +895,9 @@
         } else if (t.live) {
           liveviewEl.hidden = false;
           liveviewEl.style.display = 'flex';
+        } else if (t.web) {
+          webrootEl.hidden = false;
+          webrootEl.style.display = 'flex';
         } else {
           editorEl.style.display = 'block';
           if (editor) {
@@ -874,7 +910,7 @@
         drawTree();
         updateStatus();
         updateGitGutter(); // barrinhas de linhas alteradas
-        window.api.setEditorActive(t.image || t.diff || t.live ? '' : p); // o chat mostra/anexa o arquivo ativo
+        window.api.setEditorActive(t.image || t.diff || t.live || t.web ? '' : p); // o chat mostra/anexa o arquivo ativo
       }
       function closeTab(p, force) {
         const i = openTabs.findIndex((t) => t.path === p);
@@ -884,6 +920,11 @@
         if (t.model) t.model.dispose();
         if (t.orig) t.orig.dispose(); // lado "original" das abas de diff
         if (t.live) stopLiveServer(); // fechar a aba desliga o servidor
+        if (t.web) {
+          try {
+            wb.src = 'about:blank'; // libera a página carregada
+          } catch (e) {}
+        }
         openTabs.splice(i, 1);
         if (active === p) {
           const next = openTabs[i] || openTabs[i - 1];
@@ -914,7 +955,7 @@
 
       async function save() {
         const t = active && findTab(active);
-        if (!t || t.image || t.diff || t.live || !editor) return;
+        if (!t || t.image || t.diff || t.live || t.web || !editor) return;
         const ok = await window.api.writeWorkspaceFile(t.path, t.model.getValue());
         if (ok) {
           t.savedVer = t.model.getAlternativeVersionId();
@@ -1331,8 +1372,14 @@
           tr.innerHTML = '<td><b>:' + p.port + '</b></td><td>' + esc(p.name || '?') + '</td><td>' + (p.pid || '—') + '</td>';
           const td = document.createElement('td');
           td.className = 'pact';
+          const inApp = document.createElement('button');
+          inApp.textContent = '🗔 aqui';
+          inApp.title = 'Abrir no navegador embutido';
+          inApp.onclick = () => openBrowserTab('http://localhost:' + p.port);
+          td.appendChild(inApp);
           const open = document.createElement('button');
-          open.textContent = '🌐 abrir';
+          open.textContent = '↗ abrir';
+          open.title = 'Abrir no navegador do sistema';
           open.onclick = () => window.api.portsOpen(p.port);
           td.appendChild(open);
           if (p.pid) {
@@ -1907,10 +1954,134 @@
         document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: false }, '*');
       });
 
+      // ============================================================
+      //  Navegador embutido (webview): localhost dos dev servers, docs etc.
+      // ============================================================
+      const webrootEl = document.getElementById('webroot');
+      const wb = document.getElementById('wb');
+      const wbUrl = document.getElementById('wbUrl');
+      const wbPickBtn = document.getElementById('wbPick');
+      const WEB_TAB = 'web:browser';
+      const WEB_ICON =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#53c1de" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+
+      // "3000", ":3000", "localhost:3000", "site.com" → URL navegável
+      function normalizeUrl(u) {
+        u = String(u || '').trim();
+        if (!u) return '';
+        if (/^\d+$/.test(u)) u = 'localhost:' + u;
+        if (/^:\d+/.test(u)) u = 'localhost' + u;
+        if (/^(localhost|127\.|0\.0\.0\.0|192\.168\.|\[::1\])/i.test(u)) u = 'http://' + u;
+        else if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+        return u;
+      }
+      function openBrowserTab(url) {
+        let t = findTab(WEB_TAB);
+        if (!t) {
+          t = { path: WEB_TAB, web: true, title: '🌐 navegador', dirty: false };
+          openTabs.push(t);
+        }
+        activate(WEB_TAB);
+        if (url) {
+          wbUrl.value = url;
+          wb.src = url;
+        } else wbUrl.focus();
+      }
+      document.getElementById('webBtn').onclick = () => {
+        if (findTab(WEB_TAB)) closeTab(WEB_TAB, true);
+        else openBrowserTab('');
+      };
+      wbUrl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const u = normalizeUrl(wbUrl.value);
+          if (u) {
+            wbUrl.value = u;
+            wb.src = u;
+          }
+        }
+      });
+      document.getElementById('wbReload').onclick = () => {
+        try {
+          wb.reload();
+        } catch (e) {}
+      };
+      document.getElementById('wbBack').onclick = () => {
+        try {
+          wb.goBack();
+        } catch (e) {}
+      };
+      document.getElementById('wbFwd').onclick = () => {
+        try {
+          wb.goForward();
+        } catch (e) {}
+      };
+      document.getElementById('wbExt').onclick = () => {
+        const u = (wb.getURL && wb.getURL()) || wbUrl.value;
+        if (u && u !== 'about:blank') window.api.openExternal(u);
+      };
+      wb.addEventListener('did-navigate', (e) => {
+        if (e.url && e.url !== 'about:blank') wbUrl.value = e.url;
+      });
+      wb.addEventListener('did-navigate-in-page', (e) => {
+        if (e.isMainFrame && e.url) wbUrl.value = e.url;
+      });
+      wb.addEventListener('did-fail-load', (e) => {
+        if (e.errorCode !== -3) toast('⚠ não carregou: ' + (e.errorDescription || e.errorCode), false);
+      });
+      wb.addEventListener('page-title-updated', (e) => {
+        const t = findTab(WEB_TAB);
+        if (t) {
+          t.title = '🌐 ' + (e.title || 'navegador').slice(0, 20);
+          renderTabs();
+        }
+      });
+
+      // 🎯 apontar DENTRO do navegador: injeta o picker na página e recebe via console-message
+      const WB_PICKER =
+        '(function(){' +
+        'var box=null;' +
+        'function ov(){if(box)return box;box=document.createElement("div");box.style.cssText="position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #7aa2ff;background:rgba(122,162,255,.18);border-radius:3px;";document.body.appendChild(box);return box;}' +
+        'function sel(el){var parts=[];var n=el;while(n&&n.nodeType===1&&parts.length<5){var s=n.tagName.toLowerCase();if(n.id){parts.unshift(s+"#"+n.id);break;}var cl=(typeof n.className==="string")?n.className.trim().split(/\\s+/).filter(Boolean).slice(0,2).join("."):"";if(cl)s+="."+cl;var p=n.parentElement;if(p){var sib=[].filter.call(p.children,function(c){return c.tagName===n.tagName;});if(sib.length>1)s+=":nth-of-type("+(sib.indexOf(n)+1)+")";}parts.unshift(s);n=p;}return parts.join(" > ");}' +
+        'function mv(e){var el=document.elementFromPoint(e.clientX,e.clientY);if(!el||el===box)return;var r=el.getBoundingClientRect();var b=ov();b.style.left=r.left+"px";b.style.top=r.top+"px";b.style.width=r.width+"px";b.style.height=r.height+"px";}' +
+        'function st(){document.removeEventListener("mousemove",mv,true);document.removeEventListener("click",ck,true);document.removeEventListener("keydown",ky,true);document.documentElement.style.cursor="";if(box){box.remove();box=null;}console.log("__LUMIPICK_OFF__");}' +
+        'function ck(e){e.preventDefault();e.stopPropagation();var el=document.elementFromPoint(e.clientX,e.clientY);if(el){console.log("__LUMIPICK__"+JSON.stringify({selector:sel(el),text:(el.innerText||"").trim().slice(0,200),html:(el.outerHTML||"").slice(0,1200),page:location.href}));}st();}' +
+        'function ky(e){if(e.key==="Escape")st();}' +
+        'document.addEventListener("mousemove",mv,true);document.addEventListener("click",ck,true);document.addEventListener("keydown",ky,true);document.documentElement.style.cursor="crosshair";' +
+        '})();';
+      wbPickBtn.onclick = () => {
+        wbPickBtn.classList.add('on');
+        try {
+          wb.executeJavaScript(WB_PICKER);
+        } catch (e) {
+          wbPickBtn.classList.remove('on');
+        }
+      };
+      wb.addEventListener('console-message', (e) => {
+        const m = e.message || '';
+        if (m === '__LUMIPICK_OFF__') {
+          wbPickBtn.classList.remove('on');
+          return;
+        }
+        if (!m.startsWith('__LUMIPICK__')) return;
+        wbPickBtn.classList.remove('on');
+        try {
+          const d = JSON.parse(m.slice(12));
+          const msg =
+            '🎯 Elemento apontado no navegador (' + (d.page || '?') + '):\n' +
+            'Seletor: `' + (d.selector || '?') + '`\n' +
+            (d.text ? 'Texto visível: ' + d.text + '\n' : '') +
+            '```html\n' + (d.html || '') + '\n```\n';
+          if (chatpane.classList.contains('hidden')) document.getElementById('toggleChat').click();
+          document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: false }, '*');
+        } catch (err) {
+          /* mensagem de console que não era nossa */
+        }
+      });
+
       // ---- auto-reload de abas quando o arquivo muda no disco (ex.: a Lumi editou) ----
       function refreshTab(t) {
-        if (t && t.live) {
-          t.stale = false; // a página se recarrega sozinha via SSE
+        if (t && (t.live || t.web)) {
+          t.stale = false; // essas abas se cuidam sozinhas
           return;
         }
         if (t && t.diff) {
@@ -2144,6 +2315,7 @@
             { label: 'Chat da Lumi', icon: MI.chat, fn: () => toggleChat.click() },
             { label: 'Controle de fontes (git)', icon: GLYPH.git('currentColor'), hint: 'Ctrl+Shift+G', fn: () => setSideMode(sideMode === 'git' ? 'files' : 'git') },
             { label: 'Live Server (preview ao vivo)', icon: MI.plug, fn: () => liveBtn.click() },
+            { label: 'Navegador (localhost)', icon: MI.reveal, fn: () => openBrowserTab('') },
             '-',
             // toggles do editor (✓ = ligado; persistem entre sessões)
             { label: (edPrefs.wrap ? '✓ ' : ' ') + 'Quebra de linha', fn: () => { edPrefs.wrap = !edPrefs.wrap; applyEditorPrefs(); } },

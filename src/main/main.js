@@ -4006,6 +4006,7 @@ function openPage(id, file, title, w, h) {
       contextIsolation: true,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: true, // o preload (window.api) também roda dentro de iframes (chat embutido no editor)
+      webviewTag: true, // navegador embutido do workspace (<webview> não sofre X-Frame-Options)
     },
     ...acrylicOpts(), // vidro nativo do Win11 (sobrescreve o backgroundColor quando ativo)
   });
