@@ -67,10 +67,19 @@
       #sidebar .ttl { flex: 1; }
       #sidebar .tb {
         width: 24px; height: 24px; border: none; background: transparent; color: #9aa; cursor: pointer;
-        border-radius: 5px; display: flex; align-items: center; justify-content: center;
+        border-radius: 5px; display: flex; align-items: center; justify-content: center; position: relative;
       }
       #sidebar .tb:hover { background: var(--surface); color: var(--text); }
       #sidebar .tb svg { width: 15px; height: 15px; }
+      #sidebar .tsep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; flex: 0 0 auto; }
+      /* par de views (explorador ⇄ git): o ativo fica aceso */
+      #sidebar .tb.viewon { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+      /* badge de alterações pendentes no botão do git */
+      .tb .bdg {
+        position: absolute; top: -3px; right: -4px; background: var(--accent); color: var(--accent-text, #fff);
+        font-size: 8.5px; font-weight: 700; line-height: 1; padding: 2px 4px; border-radius: 7px; display: none; pointer-events: none;
+      }
+      .tb .bdg.on { display: block; }
       #tree { flex: 1; overflow: auto; padding: 4px 0; font-size: 13px; }
       .item {
         display: flex; align-items: center; gap: 4px; padding: 2px 8px; cursor: pointer;
@@ -426,7 +435,9 @@
           <button class="tb" id="collapse" title="Recolher tudo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg></button>
           <button class="tb" id="refresh" title="Atualizar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
           <button class="tb" id="btnSearch" title="Buscar no projeto (Ctrl+Shift+F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
-          <button class="tb" id="btnGit" title="Controle de fontes (Ctrl+Shift+G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></button>
+          <span class="tsep"></span>
+          <button class="tb" id="btnFiles" title="Explorador de arquivos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/></svg></button>
+          <button class="tb" id="btnGit" title="Controle de fontes (Ctrl+Shift+G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span class="bdg" id="gitBdg"></span></button>
         </div>
         <div id="searchRow"><input id="wsSearch" type="text" placeholder="Buscar no projeto..." spellcheck="false" /></div>
         <div id="tree"></div>
@@ -1333,6 +1344,10 @@
         gitMap = map || {};
         gitBranch = (info && info.branch) || '';
         gitChanges = (info && info.changes) || 0;
+        // badge de pendências no botão do git (some quando está tudo limpo)
+        const bdg = document.getElementById('gitBdg');
+        bdg.textContent = gitChanges > 99 ? '99+' : gitChanges;
+        bdg.classList.toggle('on', gitChanges > 0);
         updateStatus();
       }
 
@@ -1347,6 +1362,7 @@
       const gitBranchNameEl = document.getElementById('gitBranchName');
       const gitSyncEl = document.getElementById('gitSync');
       const btnGit = document.getElementById('btnGit');
+      const btnFiles = document.getElementById('btnFiles');
       let sideMode = 'files'; // 'files' (explorer) | 'git'
       let gitSt = null; // último status carregado
 
@@ -1357,13 +1373,16 @@
         searchRow.style.display = git ? 'none' : '';
         gitviewEl.style.display = git ? 'flex' : 'none';
         ['newFile', 'newFolder', 'collapse'].forEach((id) => (document.getElementById(id).style.display = git ? 'none' : ''));
-        btnGit.style.color = git ? 'var(--accent)' : '';
+        btnFiles.classList.toggle('viewon', !git);
+        btnGit.classList.toggle('viewon', git);
         if (git) {
           rootnameEl.textContent = 'CONTROLE DE FONTES';
           loadGitPanel();
         } else updateRoot();
       }
-      btnGit.onclick = () => setSideMode(sideMode === 'git' ? 'files' : 'git');
+      btnFiles.classList.add('viewon'); // estado inicial: explorador
+      btnFiles.onclick = () => setSideMode('files');
+      btnGit.onclick = () => setSideMode('git');
       sbLeft.addEventListener('click', () => {
         if (gitBranch) setSideMode(sideMode === 'git' ? 'files' : 'git'); // ⎇ na statusbar abre o painel
       });
@@ -1804,7 +1823,10 @@
 
       document.getElementById('newFile').onclick = () => newEntry('', false);
       document.getElementById('newFolder').onclick = () => newEntry('', true);
-      document.getElementById('refresh').onclick = loadTree;
+      document.getElementById('refresh').onclick = () => {
+        loadTree();
+        if (sideMode === 'git') loadGitPanel(); // no modo git, o ⟳ atualiza o painel também
+      };
       document.getElementById('collapse').onclick = () => {
         expanded.clear();
         drawTree();
