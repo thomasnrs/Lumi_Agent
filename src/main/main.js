@@ -4504,6 +4504,91 @@ ipcMain.handle('git:ai-message', async () => {
   }
 });
 
+// linhas alteradas de UM arquivo vs HEAD (barrinhas de gutter no editor)
+ipcMain.handle('git:line-status', async (_e, rel) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !rel) return null;
+  try {
+    const { stdout } = await gitRun(cfg, ['diff', 'HEAD', '--unified=0', '--no-color', '--', rel]);
+    const added = [];
+    const modified = [];
+    const deleted = [];
+    const re = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+    let m;
+    while ((m = re.exec(stdout))) {
+      const oldN = m[1] == null ? 1 : parseInt(m[1], 10);
+      const newStart = parseInt(m[2], 10);
+      const newN = m[3] == null ? 1 : parseInt(m[3], 10);
+      if (oldN === 0 && newN > 0) added.push([newStart, newStart + newN - 1]);
+      else if (newN === 0) deleted.push(Math.max(1, newStart)); // removido logo após esta linha
+      else modified.push([newStart, newStart + newN - 1]);
+    }
+    return { added, modified, deleted };
+  } catch (e) {
+    return null; // sem git / arquivo fora do HEAD → sem barrinhas
+  }
+});
+
+ipcMain.handle('git:branches', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  try {
+    const { stdout } = await gitRun(cfg, ['branch', '--format=%(refname:short)']);
+    return stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+});
+
+ipcMain.handle('git:checkout', async (_e, { name, create }) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !name) return { error: 'branch inválida' };
+  try {
+    await gitRun(cfg, create ? ['checkout', '-b', name] : ['checkout', name]);
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).trim() };
+  }
+});
+
+ipcMain.handle('git:push', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace' };
+  try {
+    const { stdout } = await gitRun(cfg, ['push']);
+    return { ok: true, out: stdout.trim() };
+  } catch (e) {
+    const msg = String((e && e.stderr) || (e && e.message) || e);
+    if (/set-upstream|no upstream/i.test(msg)) {
+      // primeira vez desta branch: publica com upstream
+      try {
+        const { stdout: br } = await gitRun(cfg, ['rev-parse', '--abbrev-ref', 'HEAD']);
+        await gitRun(cfg, ['push', '-u', 'origin', br.trim()]);
+        return { ok: true, out: 'branch publicada no origin' };
+      } catch (e2) {
+        return { error: String((e2 && e2.stderr) || (e2 && e2.message) || e2).trim() };
+      }
+    }
+    return { error: msg.trim() };
+  }
+});
+
+ipcMain.handle('git:pull', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace' };
+  try {
+    const { stdout } = await gitRun(cfg, ['pull', '--ff-only']);
+    return { ok: true, out: stdout.trim() };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).trim() };
+  }
+});
+
+// links clicados no terminal integrado (xterm web-links)
+ipcMain.on('open-external-url', (_e, u) => {
+  if (typeof u === 'string' && /^https?:\/\//i.test(u)) shell.openExternal(u);
+});
+
 ipcMain.handle('workspace:create', (_e, { rel, dir }) => {
   const cfg = loadConfig();
   const fp = cfg.workspace && safeWsPath(cfg, rel);

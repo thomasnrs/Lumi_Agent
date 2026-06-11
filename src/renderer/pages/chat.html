@@ -2746,6 +2746,16 @@
         inputHL.scrollTop = input.scrollTop;
       }
       input.addEventListener('scroll', () => (inputHL.scrollTop = input.scrollTop));
+      // ponte com o editor do workspace: "seleção → Lumi" chega por postMessage
+      window.addEventListener('message', (e) => {
+        const d = e.data || {};
+        if (d.__lumi !== 'insert' || typeof d.text !== 'string') return;
+        input.value = d.text;
+        autoGrowInput();
+        input.focus();
+        if (d.send) send();
+        else input.setSelectionRange(0, 0); // cursor no topo pra completar a pergunta
+      });
       function send() {
         const t = input.value.trim();
         if (!t && !attachedImages.length) return;

@@ -148,6 +148,38 @@
       }
       .gacts button:hover { background: var(--border); color: var(--text); }
       #gitEmpty { padding: 20px 12px; color: #778; text-align: center; font-size: 12px; }
+      .gsec-head .ga:disabled, #gitBranchRow .ga:disabled { opacity: 0.5; cursor: default; }
+      /* menu de troca de branch */
+      .brmenu {
+        position: fixed; z-index: 90; background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: 9px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); padding: 4px; min-width: 180px; max-height: 300px; overflow: auto;
+      }
+      .bri { padding: 6px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bri:hover { background: var(--surface); }
+      .bri.cur { color: var(--accent); }
+      .bri.new { color: #9aa; border-top: 1px solid var(--border); margin-top: 3px; }
+      /* barrinhas de git na margem do editor */
+      .gut-add { border-left: 3px solid #7ee0a0; margin-left: 3px; }
+      .gut-mod { border-left: 3px solid #e2b75e; margin-left: 3px; }
+      .gut-del { border-left: 3px solid #ff9b9b; margin-left: 3px; }
+      /* ---- Ctrl+P: abrir arquivo rápido ---- */
+      #qopen { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.25); z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding-top: 64px; }
+      #qopen[hidden] { display: none; }
+      #qbox {
+        width: min(560px, 86vw); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); overflow: hidden;
+      }
+      #qinput {
+        width: 100%; box-sizing: border-box; background: transparent; border: none; outline: none; color: var(--text);
+        font-size: 14px; padding: 11px 14px; border-bottom: 1px solid var(--border); font-family: inherit;
+      }
+      #qlist { max-height: 320px; overflow: auto; padding: 4px 0; }
+      .qitem { display: flex; align-items: center; gap: 8px; padding: 4px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; }
+      .qitem .ic { width: 16px; height: 16px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+      .qitem .ic svg { width: 15px; height: 15px; }
+      .qitem .qn { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+      .qitem .qp { color: #667; font-size: 11px; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+      .qitem.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
       #sbLeft:hover { color: var(--text); cursor: pointer; }
       #edcol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       #editor { flex: 1; min-width: 0; min-height: 0; }
@@ -448,6 +480,8 @@
               <b id="gitBranchName">—</b>
               <span id="gitSync"></span>
               <span style="flex: 1"></span>
+              <button class="ga" id="gitPull" title="Pull (puxar do remoto)">↓</button>
+              <button class="ga" id="gitPush" title="Push (enviar pro remoto)">↑</button>
               <button class="ga" id="gitRefresh" title="Atualizar">⟳</button>
             </div>
             <textarea id="gitMsg" placeholder="Mensagem do commit (Ctrl+Enter commita)" spellcheck="false"></textarea>
@@ -489,8 +523,17 @@
     </div>
     <div id="statusbar"><span id="sbLeft">Lumi Workspace</span><span id="sbRight"></span></div>
 
+    <!-- Ctrl+P: abrir arquivo rápido -->
+    <div id="qopen" hidden>
+      <div id="qbox">
+        <input id="qinput" type="text" placeholder="Buscar arquivo pelo nome..." spellcheck="false" />
+        <div id="qlist"></div>
+      </div>
+    </div>
+
     <script src="../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="../../../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
     <script>
       const CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min';
       self.MonacoEnvironment = {
@@ -792,6 +835,7 @@
         renderTabs();
         drawTree();
         updateStatus();
+        updateGitGutter(); // barrinhas de linhas alteradas
         window.api.setEditorActive(t.image || t.diff ? '' : p); // o chat mostra/anexa o arquivo ativo
       }
       function closeTab(p, force) {
@@ -838,6 +882,7 @@
           t.dirty = false;
           renderTabs();
           toast('✓ ' + baseName(t.path) + ' salvo');
+          updateGitGutter(); // o salvamento muda o diff vs HEAD
         } else toast('⚠ erro ao salvar', false);
       }
 
@@ -1030,6 +1075,7 @@
           openTabs.forEach((t) => (t.stale = true));
           const cur = active && findTab(active);
           if (cur) refreshTab(cur);
+          updateGitGutter();
         }, 150);
       });
 
@@ -1111,6 +1157,8 @@
         });
         const fit = new FitAddon.FitAddon();
         term.loadAddon(fit);
+        // URLs viram links clicáveis (ex.: o http://localhost:3000 do dev server)
+        if (window.WebLinksAddon) term.loadAddon(new WebLinksAddon.WebLinksAddon((_ev, uri) => window.api.openExternal(uri)));
         term.open(host);
         if (ptyMode) {
           term.onData((d) => window.api.termInput(id, d)); // PTY real: teclas direto pro shell
@@ -1406,6 +1454,7 @@
           if (st.unstaged.length) gitListsEl.appendChild(gitSection('Alterações', st.unstaged, false));
         }
         loadGit(); // statusbar/explorer acompanham
+        updateGitGutter(); // commits/descartes mudam as barrinhas do editor
       }
 
       async function gitAct(promise) {
@@ -1539,6 +1588,212 @@
       window.addEventListener('focus', () => {
         if (sideMode === 'git') loadGitPanel(); // voltou pra janela → status fresco
       });
+
+      // ---- push / pull (cabeçalho do painel git) ----
+      const gitPullBtn = document.getElementById('gitPull');
+      const gitPushBtn = document.getElementById('gitPush');
+      async function gitSyncRun(kind) {
+        const btn = kind === 'push' ? gitPushBtn : gitPullBtn;
+        const old = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '…';
+        const r = await (kind === 'push' ? window.api.gitPush() : window.api.gitPull());
+        btn.disabled = false;
+        btn.textContent = old;
+        if (r && r.error) toast('⚠ ' + String(r.error).slice(0, 180), false);
+        else toast('✓ ' + kind + ' feito' + (r.out ? ' · ' + r.out.split('\n')[0].slice(0, 60) : ''));
+        loadGitPanel();
+      }
+      gitPushBtn.onclick = () => gitSyncRun('push');
+      gitPullBtn.onclick = () => gitSyncRun('pull');
+
+      // ---- trocar de branch: clique no nome → menu com as branches + criar nova ----
+      gitBranchNameEl.style.cursor = 'pointer';
+      gitBranchNameEl.title = 'Trocar de branch';
+      gitBranchNameEl.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.brmenu').forEach((x) => x.remove());
+        const branches = await window.api.gitBranches();
+        if (!branches.length) return;
+        const menu = document.createElement('div');
+        menu.className = 'brmenu';
+        const rect = gitBranchNameEl.getBoundingClientRect();
+        menu.style.left = rect.left + 'px';
+        menu.style.top = rect.bottom + 4 + 'px';
+        const doCheckout = async (name, create) => {
+          menu.remove();
+          const r = await window.api.gitCheckout({ name, create });
+          if (r && r.error) return toast('⚠ ' + String(r.error).slice(0, 180), false);
+          toast('✓ branch: ' + name);
+          loadGitPanel();
+          loadTree();
+          openTabs.forEach((t) => (t.stale = true)); // o checkout troca os arquivos no disco
+          const cur = active && findTab(active);
+          if (cur) refreshTab(cur);
+          updateGitGutter();
+        };
+        branches.forEach((b) => {
+          const it = document.createElement('div');
+          it.className = 'bri' + (b === gitBranch ? ' cur' : '');
+          it.textContent = (b === gitBranch ? '✓ ' : '') + b;
+          it.onclick = () => (b === gitBranch ? menu.remove() : doCheckout(b, false));
+          menu.appendChild(it);
+        });
+        const nw = document.createElement('div');
+        nw.className = 'bri new';
+        nw.textContent = '＋ nova branch…';
+        nw.onclick = async () => {
+          menu.remove();
+          const name = await askName('Nome da nova branch', '');
+          if (name) doCheckout(name.trim().replace(/\s+/g, '-'), true);
+        };
+        menu.appendChild(nw);
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+      });
+
+      // ============================================================
+      //  Preferências do editor + gutter git + Ctrl+P + seleção→Lumi
+      // ============================================================
+      const edPrefs = {
+        wrap: localStorage.getItem('ws.wrap') === '1',
+        minimap: localStorage.getItem('ws.minimap') !== '0',
+        sticky: localStorage.getItem('ws.sticky') !== '0',
+      };
+      function applyEditorPrefs() {
+        localStorage.setItem('ws.wrap', edPrefs.wrap ? '1' : '0');
+        localStorage.setItem('ws.minimap', edPrefs.minimap ? '1' : '0');
+        localStorage.setItem('ws.sticky', edPrefs.sticky ? '1' : '0');
+        if (editor)
+          editor.updateOptions({ wordWrap: edPrefs.wrap ? 'on' : 'off', minimap: { enabled: edPrefs.minimap }, stickyScroll: { enabled: edPrefs.sticky } });
+        if (diffEditor) diffEditor.updateOptions({ wordWrap: edPrefs.wrap ? 'on' : 'off' });
+      }
+
+      // barrinhas de git na margem do editor (linhas alteradas vs HEAD, estilo VS Code)
+      let gitDecor = null;
+      async function updateGitGutter() {
+        if (!editor || !window.monaco) return;
+        const t = active && findTab(active);
+        if (gitDecor) {
+          gitDecor.clear();
+          gitDecor = null;
+        }
+        if (!t || t.image || t.diff) return;
+        const ls = await window.api.gitLineStatus(t.path);
+        if (!ls || active !== t.path) return; // trocou de aba enquanto buscava
+        const decs = [];
+        const mk = (a, b, cls) => decs.push({ range: new monaco.Range(a, 1, b, 1), options: { isWholeLine: true, linesDecorationsClassName: cls } });
+        (ls.added || []).forEach(([a, b]) => mk(a, b, 'gut-add'));
+        (ls.modified || []).forEach(([a, b]) => mk(a, b, 'gut-mod'));
+        (ls.deleted || []).forEach((n) => mk(n, n, 'gut-del'));
+        if (decs.length) gitDecor = editor.createDecorationsCollection(decs);
+      }
+
+      // ---- Ctrl+P: abrir arquivo rápido (busca fuzzy no nome/caminho) ----
+      const qopen = document.getElementById('qopen');
+      const qinput = document.getElementById('qinput');
+      const qlist = document.getElementById('qlist');
+      let qItems = [];
+      let qSel = 0;
+      function flatFiles(nodes, out) {
+        (nodes || []).forEach((n) => {
+          if (n.dir) flatFiles(n.children, out);
+          else out.push(n.path);
+        });
+        return out;
+      }
+      function fuzzyScore(q, s) {
+        // subsequência com bônus: trechos contíguos e match no nome do arquivo pesam mais
+        let qi = 0;
+        let score = 0;
+        let streak = 0;
+        for (let i = 0; i < s.length && qi < q.length; i++) {
+          if (s[i] === q[qi]) {
+            qi++;
+            streak++;
+            score += 2 + streak;
+          } else streak = 0;
+        }
+        if (qi < q.length) return -1; // não casou tudo
+        const nm = s.split('/').pop();
+        if (nm.startsWith(q)) score += 30;
+        else if (nm.includes(q)) score += 18;
+        return score - s.length * 0.05; // empate: caminho mais curto primeiro
+      }
+      function qRender() {
+        qlist.innerHTML = '';
+        qItems.slice(0, 40).forEach((p, i) => {
+          const d = document.createElement('div');
+          d.className = 'qitem' + (i === qSel ? ' sel' : '');
+          const nm = baseName(p);
+          d.innerHTML = '<span class="ic">' + iconFor(nm) + '</span><span class="qn">' + esc(nm) + '</span><span class="qp">' + esc(dirOf(p)) + '</span>';
+          d.onclick = () => {
+            qClose();
+            openFile(p);
+          };
+          qlist.appendChild(d);
+        });
+        const sel = qlist.children[qSel];
+        if (sel) sel.scrollIntoView({ block: 'nearest' });
+      }
+      function qFilter() {
+        const q = qinput.value.trim().toLowerCase();
+        const all = flatFiles(treeData, []);
+        qItems = !q
+          ? all.slice(0, 40)
+          : all
+              .map((p) => [fuzzyScore(q, p.toLowerCase()), p])
+              .filter((x) => x[0] >= 0)
+              .sort((a, b) => b[0] - a[0])
+              .map((x) => x[1]);
+        qSel = 0;
+        qRender();
+      }
+      function qOpen() {
+        qopen.hidden = false;
+        qinput.value = '';
+        qFilter();
+        qinput.focus();
+      }
+      function qClose() {
+        qopen.hidden = true;
+      }
+      qinput.addEventListener('input', qFilter);
+      qinput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          qSel = Math.min(qSel + 1, Math.min(qItems.length, 40) - 1);
+          qRender();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          qSel = Math.max(qSel - 1, 0);
+          qRender();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          const p = qItems[qSel];
+          if (p) {
+            qClose();
+            openFile(p);
+          }
+        } else if (e.key === 'Escape') qClose();
+      });
+      qopen.addEventListener('mousedown', (e) => {
+        if (e.target === qopen) qClose(); // clicou fora da caixa
+      });
+
+      // ---- seleção → Lumi: manda o trecho pro chat lateral (com arquivo e linhas) ----
+      function sendSelectionToLumi(instruction, autoSend) {
+        const t = active && findTab(active);
+        if (!t || t.diff || t.image || !editor) return;
+        const sel = editor.getSelection();
+        const code = editor.getModel().getValueInRange(sel);
+        if (!code.trim()) return toast('⚠ selecione um trecho primeiro', false);
+        const msg =
+          (instruction ? instruction + '\n\n' : '') +
+          t.path + ' (linhas ' + sel.startLineNumber + '–' + sel.endLineNumber + '):\n```' + langOf(t.path) + '\n' + code + '\n```';
+        if (chatpane.classList.contains('hidden')) document.getElementById('toggleChat').click(); // garante o chat visível
+        document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: !!autoSend }, '*');
+      }
 
       // ---- auto-reload de abas quando o arquivo muda no disco (ex.: a Lumi editou) ----
       function refreshTab(t) {
@@ -1710,11 +1965,13 @@
             '-',
             { label: 'Buscar no arquivo', icon: MI.search, hint: 'Ctrl+F', fn: () => editor && (editor.focus(), editor.trigger('menu', 'actions.find')) },
             { label: 'Substituir', icon: MI.pencil, hint: 'Ctrl+H', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.startFindReplaceAction')) },
+            '-',
+            { label: 'Formatar documento', icon: MI.pencil, hint: 'Shift+Alt+F', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.formatDocument')) },
           ],
         },
         {
           label: 'Exibir',
-          items: [
+          items: () => [
             { label: 'Terminal', icon: MI.term, hint: 'Ctrl+`', fn: () => document.getElementById('toggleTerm').click() },
             {
               label: 'Portas',
@@ -1726,6 +1983,11 @@
             },
             { label: 'Chat da Lumi', icon: MI.chat, fn: () => toggleChat.click() },
             { label: 'Controle de fontes (git)', icon: GLYPH.git('currentColor'), hint: 'Ctrl+Shift+G', fn: () => setSideMode(sideMode === 'git' ? 'files' : 'git') },
+            '-',
+            // toggles do editor (✓ = ligado; persistem entre sessões)
+            { label: (edPrefs.wrap ? '✓ ' : ' ') + 'Quebra de linha', fn: () => { edPrefs.wrap = !edPrefs.wrap; applyEditorPrefs(); } },
+            { label: (edPrefs.minimap ? '✓ ' : ' ') + 'Minimapa', fn: () => { edPrefs.minimap = !edPrefs.minimap; applyEditorPrefs(); } },
+            { label: (edPrefs.sticky ? '✓ ' : ' ') + 'Sticky scroll', fn: () => { edPrefs.sticky = !edPrefs.sticky; applyEditorPrefs(); } },
             '-',
             {
               label: 'Recolher pastas',
@@ -1741,6 +2003,8 @@
         {
           label: 'Ir',
           items: [
+            { label: 'Abrir arquivo rápido…', icon: MI.search, hint: 'Ctrl+P', fn: () => qOpen() },
+            { label: 'Símbolo no arquivo…', icon: MI.goto, hint: 'Ctrl+Shift+O', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.quickOutline')) },
             { label: 'Buscar no projeto…', icon: MI.search, hint: 'Ctrl+Shift+F', fn: () => toggleSearch(true) },
             { label: 'Ir para a linha…', icon: MI.goto, hint: 'Ctrl+G', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.gotoLine')) },
           ],
@@ -1845,6 +2109,9 @@
         } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'g') {
           e.preventDefault();
           setSideMode(sideMode === 'git' ? 'files' : 'git'); // controle de fontes
+        } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'p') {
+          e.preventDefault();
+          qOpen(); // abrir arquivo rápido
         }
       });
 
@@ -1899,9 +2166,17 @@
             theme: 'lumi',
             automaticLayout: true,
             fontSize: 13,
-            minimap: { enabled: true },
+            minimap: { enabled: edPrefs.minimap },
+            wordWrap: edPrefs.wrap ? 'on' : 'off',
+            stickyScroll: { enabled: edPrefs.sticky }, // função/classe atual grudada no topo
+            mouseWheelZoom: true, // Ctrl+scroll = zoom da fonte
           });
           editor.onDidChangeCursorPosition(updateStatus); // Ln/Col na barra de status
+          editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, qOpen); // Ctrl+P dentro do editor
+          // seleção → Lumi (menu de contexto do editor)
+          editor.addAction({ id: 'lumi-send', label: '✦ Enviar seleção pra Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 1, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('', false) });
+          editor.addAction({ id: 'lumi-explain', label: '✦ Explicar com a Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 2, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('Me explica esse trecho:', true) });
+          editor.addAction({ id: 'lumi-refactor', label: '✦ Refatorar com a Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 3, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('Refatore este trecho (pode editar o arquivo direto):', false) });
           // editor de diff do painel git (HEAD ⇆ atual); inline quando o espaço aperta
           diffEditor = monaco.editor.createDiffEditor(diffEl, {
             theme: 'lumi',
@@ -1911,6 +2186,8 @@
             fontSize: 13,
             renderSideBySide: true,
             useInlineViewWhenSpaceIsLimited: true,
+            wordWrap: edPrefs.wrap ? 'on' : 'off',
+            mouseWheelZoom: true,
           });
           loadTree();
         });
