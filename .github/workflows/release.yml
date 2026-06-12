@@ -19,6 +19,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Compilar node-pty pro Electron (PTY real no instalador)
+        run: npm run rebuild:pty
       - name: Build + publicar (NSIS)
         run: npm run dist
         env:
@@ -35,6 +37,8 @@ jobs:
       # libs de build dos módulos nativos (uiohook usa X11/XTest)
       - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libxkbfile-dev libpng-dev
       - run: npm ci
+      - name: Compilar node-pty pro Electron (PTY real no AppImage/deb)
+        run: npm run rebuild:pty
       - name: Build + publicar (AppImage + deb)
         run: npm run dist -- --linux
         env:
