@@ -149,6 +149,28 @@
       }
       .gacts button:hover { background: var(--border); color: var(--text); }
       #gitEmpty { padding: 20px 12px; color: #778; text-align: center; font-size: 12px; }
+      /* caixa da revisão pré-commit da Lumi */
+      #gitReview { border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+      #gitReviewHead { display: flex; align-items: center; gap: 6px; padding: 6px 10px 0; font-size: 11px; color: var(--accent); font-weight: 600; }
+      #gitReviewBody {
+        padding: 6px 12px 10px; font-size: 12px; line-height: 1.55; color: var(--text);
+        white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto;
+      }
+      /* histórico de commits */
+      .gcommits > summary { padding: 8px 8px 4px; font-size: 10.5px; color: #9aa; text-transform: uppercase; letter-spacing: 0.4px; cursor: pointer; list-style: none; }
+      .gcommits > summary::before { content: '▸ '; }
+      .gcommits[open] > summary::before { content: '▾ '; }
+      .gci { padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .gci:hover { background: var(--surface); }
+      .gci .h { color: var(--accent); font-family: Consolas, monospace; font-size: 11px; }
+      .gci .w { color: #667; font-size: 10.5px; }
+      .cdiff {
+        margin: 4px 8px 8px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+        font: 11px/1.5 Consolas, monospace; max-height: 260px; overflow: auto; white-space: pre; color: #aab;
+      }
+      .cdiff .cl-add { color: #7ee0a0; }
+      .cdiff .cl-del { color: #ff9b9b; }
+      .cdiff .cl-hunk { color: var(--accent); }
       .gsec-head .ga:disabled, #gitBranchRow .ga:disabled { opacity: 0.5; cursor: default; }
       /* menu de troca de branch */
       .brmenu {
@@ -523,9 +545,14 @@
             </div>
             <textarea id="gitMsg" placeholder="Mensagem do commit (Ctrl+Enter commita)" spellcheck="false"></textarea>
             <div id="gitBtnRow">
+              <button id="gitReviewBtn" title="A Lumi revisa o diff antes de você commitar">🔍 Revisar</button>
               <button id="gitAiBtn" title="A Lumi escreve a mensagem olhando o diff">✦ Lumi</button>
               <button id="gitCommitBtn" title="Commita o que está preparado (staged)">✓ Commitar</button>
             </div>
+          </div>
+          <div id="gitReview" hidden>
+            <div id="gitReviewHead"><span>✦ revisão da Lumi</span><span style="flex: 1"></span><button class="ga" id="gitReviewClose" title="Fechar">✕</button></div>
+            <div id="gitReviewBody"></div>
           </div>
           <div id="gitLists"></div>
         </div>
@@ -564,6 +591,7 @@
             <span class="pgrow"></span>
             <select id="termSel" title="Terminais abertos"></select>
             <button class="pbtn" id="termNew" title="Novo terminal">＋</button>
+            <button class="pbtn" id="termFix" title="Mandar a saída deste terminal pra Lumi corrigir">✦</button>
             <button class="pbtn" id="termKillBtn" title="Matar o terminal atual">🗑</button>
             <button class="pbtn" id="panelClose" title="Fechar painel (Ctrl+`)">✕</button>
           </div>
@@ -1540,6 +1568,7 @@
           if (st.staged.length) gitListsEl.appendChild(gitSection('Preparadas (staged)', st.staged, true));
           if (st.unstaged.length) gitListsEl.appendChild(gitSection('Alterações', st.unstaged, false));
         }
+        renderCommits(); // histórico no rodapé do painel
         loadGit(); // statusbar/explorer acompanham
         updateGitGutter(); // commits/descartes mudam as barrinhas do editor
       }
@@ -1675,6 +1704,68 @@
       window.addEventListener('focus', () => {
         if (sideMode === 'git') loadGitPanel(); // voltou pra janela → status fresco
       });
+
+      // ---- 🔍 revisão pré-commit: a Lumi lê o diff e aponta o que importa ----
+      const gitReviewEl = document.getElementById('gitReview');
+      const gitReviewBody = document.getElementById('gitReviewBody');
+      const gitReviewBtn = document.getElementById('gitReviewBtn');
+      gitReviewBtn.onclick = async () => {
+        gitReviewBtn.disabled = true;
+        const old = gitReviewBtn.textContent;
+        gitReviewBtn.textContent = '🔍 revisando…';
+        const r = await window.api.gitAiReview();
+        gitReviewBtn.disabled = false;
+        gitReviewBtn.textContent = old;
+        if (r && r.error) return toast('⚠ ' + String(r.error).slice(0, 160), false);
+        gitReviewBody.textContent = r.review + (r.truncated ? '\n\n(diff grande — revisei a primeira parte)' : '');
+        gitReviewEl.hidden = false;
+      };
+      document.getElementById('gitReviewClose').onclick = () => (gitReviewEl.hidden = true);
+
+      // ---- histórico de commits (clique → diff expandível) ----
+      let gitLogOpen = false; // lembra se a seção estava aberta entre refreshes
+      async function renderCommits() {
+        const log = await window.api.gitLog();
+        if (!log.length || gitListsEl.querySelector('.gcommits')) return; // refresh em paralelo não duplica
+        const det = document.createElement('details');
+        det.className = 'gcommits';
+        det.open = gitLogOpen;
+        det.addEventListener('toggle', () => (gitLogOpen = det.open));
+        const sum = document.createElement('summary');
+        sum.textContent = 'Commits recentes (' + log.length + ')';
+        det.appendChild(sum);
+        log.forEach((c) => {
+          const d = document.createElement('div');
+          d.className = 'gci';
+          d.title = c.subject + ' — ' + c.author;
+          d.innerHTML = '<span class="h">' + esc(c.hash) + '</span> ' + esc(c.subject) + ' <span class="w">· ' + esc(c.when) + '</span>';
+          let pre = null;
+          d.addEventListener('click', async () => {
+            if (pre) {
+              pre.remove();
+              pre = null;
+              return;
+            }
+            const r = await window.api.gitShowCommit(c.hash);
+            if (r && r.error) return toast('⚠ ' + r.error, false);
+            pre = document.createElement('div');
+            pre.className = 'cdiff';
+            const lines = (r.text || '').split('\n').slice(0, 600);
+            pre.innerHTML = lines
+              .map((l) => {
+                const e = esc(l);
+                if (l.startsWith('+') && !l.startsWith('+++')) return '<span class="cl-add">' + e + '</span>';
+                if (l.startsWith('-') && !l.startsWith('---')) return '<span class="cl-del">' + e + '</span>';
+                if (l.startsWith('@@')) return '<span class="cl-hunk">' + e + '</span>';
+                return e;
+              })
+              .join('\n');
+            d.after(pre);
+          });
+          det.appendChild(d);
+        });
+        gitListsEl.appendChild(det);
+      }
 
       // ---- push / pull (cabeçalho do painel git) ----
       const gitPullBtn = document.getElementById('gitPull');
@@ -1868,6 +1959,23 @@
       qopen.addEventListener('mousedown', (e) => {
         if (e.target === qopen) qClose(); // clicou fora da caixa
       });
+
+      // ---- ✦ corrigir: manda a saída do terminal ativo pro chat da Lumi ----
+      document.getElementById('termFix').onclick = () => {
+        const u = activeTerm != null && termsUi.get(activeTerm);
+        if (!u) return toast('⚠ nenhum terminal ativo', false);
+        const b = u.term.buffer.active;
+        const lines = [];
+        for (let i = Math.max(0, b.length - 80); i < b.length; i++) {
+          const ln = b.getLine(i);
+          if (ln) lines.push(ln.translateToString(true));
+        }
+        const text = lines.join('\n').trim().slice(-6000); // últimas linhas (cap)
+        if (!text) return toast('⚠ o terminal está vazio', false);
+        const msg = 'Deu isso no terminal — analisa e corrige pra mim:\n```\n' + text + '\n```';
+        if (chatpane.classList.contains('hidden')) document.getElementById('toggleChat').click();
+        document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: false }, '*');
+      };
 
       // ---- seleção → Lumi: manda o trecho pro chat lateral (com arquivo e linhas) ----
       function sendSelectionToLumi(instruction, autoSend) {

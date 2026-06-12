@@ -1512,6 +1512,32 @@ const TOOLS = {
     schema: { name: 'get_datetime', description: 'Retorna a data e a hora atuais do PC.', parameters: { type: 'object', properties: {} } },
     run: async () => ({ datetime: new Date().toLocaleString('pt-BR') }),
   },
+  read_clipboard: {
+    category: 'screen', // mesma permissão de "ver" (conteúdo do usuário)
+    schema: {
+      name: 'read_clipboard',
+      description: 'Lê o texto atual da área de transferência (o que o usuário copiou com Ctrl+C).',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      const text = clipboard.readText() || '';
+      if (!text.trim()) return { empty: true, note: 'área de transferência vazia (ou sem texto)' };
+      return { text: text.slice(0, 20000), truncated: text.length > 20000 };
+    },
+  },
+  write_clipboard: {
+    category: 'control', // escreve no ambiente do usuário
+    schema: {
+      name: 'write_clipboard',
+      description: 'Coloca um texto na área de transferência do usuário — pronto pro Ctrl+V.',
+      parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    },
+    run: async ({ text }) => {
+      const t = String(text == null ? '' : text);
+      clipboard.writeText(t);
+      return { ok: true, chars: t.length };
+    },
+  },
   play_animation: {
     category: null,
     schema: {
@@ -3959,6 +3985,8 @@ function createTray() {
       },
       { label: 'Forkar conversa (novo chat + resumo)', click: () => forkConversation() },
       { type: 'separator' },
+      { label: 'Backup dos dados', submenu: [{ label: 'Exportar…', click: () => exportData() }, { label: 'Importar…', click: () => importData() }] },
+      { label: 'Relatar um problema', click: () => shell.openExternal(reportIssueUrl()) },
       { label: 'Verificar atualizações', click: () => checkUpdatesManual() },
       { label: 'Sair', click: () => app.quit() },
     ])
@@ -4113,11 +4141,90 @@ function showContextMenu() {
       },
     },
     { label: 'Abrir pasta de dados (memória)', click: () => shell.openPath(app.getPath('userData')) },
+    { label: 'Backup dos dados', submenu: [{ label: 'Exportar…', click: () => exportData() }, { label: 'Importar…', click: () => importData() }] },
+    { label: 'Relatar um problema', click: () => shell.openExternal(reportIssueUrl()) },
     { label: 'Sobre', click: () => openPage('about', 'about.html', 'Sobre', 400, 480) },
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
   ];
   Menu.buildFromTemplate(template).popup({ window: win });
+}
+
+// "Relatar um problema": abre uma issue do GitHub pré-preenchida com versão/SO
+function reportIssueUrl() {
+  const body =
+    '**Descreva o problema**\n\n(o que aconteceu? o que você esperava?)\n\n**Passos pra reproduzir**\n\n1. \n\n---\n' +
+    'Lumi v' + app.getVersion() + ' · ' + process.platform + ' ' + require('os').release() + ' · Electron ' + process.versions.electron;
+  return 'https://github.com/thomasnrs/Lumi_Agent/issues/new?title=' + encodeURIComponent('[bug] ') + '&body=' + encodeURIComponent(body);
+}
+
+// ---- backup: exportar/importar TUDO (config, memória, conversas, lembretes...) ----
+const BACKUP_FILES = ['config.json', 'facts.json', 'presets.json', 'reminders.json', 'usage.json', 'summary.txt', 'history.json'];
+async function exportData() {
+  const r = await dialog.showSaveDialog({
+    title: 'Exportar dados da Lumi',
+    defaultPath: 'lumi-backup-' + new Date().toISOString().slice(0, 10) + '.json',
+    filters: [{ name: 'Backup da Lumi', extensions: ['json'] }],
+  });
+  if (r.canceled || !r.filePath) return;
+  try {
+    const ud = app.getPath('userData');
+    const out = { __lumi: 1, at: new Date().toISOString(), files: {}, chats: {} };
+    for (const f of BACKUP_FILES) {
+      try {
+        out.files[f] = fs.readFileSync(path.join(ud, f), 'utf8');
+      } catch (e) {
+        /* arquivo ainda não existe — ok */
+      }
+    }
+    try {
+      for (const f of fs.readdirSync(path.join(ud, 'chats'))) {
+        if (f.endsWith('.json')) out.chats[f] = fs.readFileSync(path.join(ud, 'chats', f), 'utf8');
+      }
+    } catch (e) {
+      /* sem conversas ainda */
+    }
+    fs.writeFileSync(r.filePath, JSON.stringify(out));
+    dialog.showMessageBox({ title: 'Lumi', message: 'Backup exportado! ✓', detail: Object.keys(out.files).length + ' arquivos + ' + Object.keys(out.chats).length + ' conversas em:\n' + r.filePath });
+  } catch (e) {
+    dialog.showMessageBox({ title: 'Lumi', message: 'Falhou ao exportar: ' + String((e && e.message) || e) });
+  }
+}
+async function importData() {
+  const r = await dialog.showOpenDialog({
+    title: 'Importar backup da Lumi',
+    filters: [{ name: 'Backup da Lumi', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
+    if (!data || data.__lumi !== 1) throw new Error('este arquivo não parece um backup da Lumi');
+    const n = Object.keys(data.files || {}).length;
+    const nc = Object.keys(data.chats || {}).length;
+    const ok = await dialog.showMessageBox({
+      title: 'Lumi',
+      type: 'warning',
+      buttons: ['Importar e reiniciar', 'Cancelar'],
+      cancelId: 1,
+      message: 'Importar o backup de ' + String(data.at || '?').slice(0, 10) + '?',
+      detail: n + ' arquivos + ' + nc + ' conversas vão SUBSTITUIR os dados atuais. A Lumi reinicia em seguida.',
+    });
+    if (ok.response !== 0) return;
+    const ud = app.getPath('userData');
+    for (const [f, content] of Object.entries(data.files || {})) {
+      if (BACKUP_FILES.includes(f) && typeof content === 'string') fs.writeFileSync(path.join(ud, f), content);
+    }
+    fs.mkdirSync(path.join(ud, 'chats'), { recursive: true });
+    for (const [f, content] of Object.entries(data.chats || {})) {
+      if (/^[\w.-]+\.json$/.test(f) && typeof content === 'string') fs.writeFileSync(path.join(ud, 'chats', f), content);
+    }
+    cfgCache = null; // o config importado vale a partir do reinício
+    app.relaunch();
+    app.exit(0);
+  } catch (e) {
+    dialog.showMessageBox({ title: 'Lumi', message: 'Falhou ao importar: ' + String((e && e.message) || e) });
+  }
 }
 
 // ============================================================
@@ -4740,6 +4847,59 @@ ipcMain.handle('git:ai-message', async () => {
     return { message: clean };
   } catch (e) {
     return { error: String((e && e.message) || e) };
+  }
+});
+
+// ✦ a Lumi REVISA o diff antes do commit (bugs reais, riscos, casos não tratados)
+ipcMain.handle('git:ai-review', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace definido' };
+  try {
+    const { stdout: stagedNames } = await gitRun(cfg, ['diff', '--cached', '--name-only']);
+    const useStaged = !!stagedNames.trim();
+    const { stdout: diff } = await gitRun(cfg, useStaged ? ['diff', '--cached'] : ['diff']);
+    const ctx = diff.slice(0, 16000);
+    if (!ctx.trim()) return { error: 'nenhuma alteração para revisar' };
+    const review = await llmComplete(cfg, [
+      {
+        role: 'system',
+        content:
+          'Você é uma revisora de código direta e útil. Analise o diff e aponte SÓ o que importa: bugs reais, riscos, casos não tratados e melhorias rápidas — em português, em itens curtos começando por "- " (no máximo 8). Se estiver tudo bem, diga em UMA linha que pode commitar. Sem elogios vazios, sem reescrever o código inteiro.',
+      },
+      { role: 'user', content: 'Revise estas alterações' + (useStaged ? ' (staged)' : '') + ':\n\n' + ctx },
+    ]);
+    if (!review || !review.trim()) return { error: 'a I.A. não retornou a revisão' };
+    return { review: review.trim(), staged: useStaged, truncated: diff.length > 16000 };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+});
+
+// histórico de commits (lista) + detalhe de um commit (stat + patch)
+ipcMain.handle('git:log', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  try {
+    const { stdout } = await gitRun(cfg, ['log', '--format=%h%x09%s%x09%cr%x09%an', '-n', '30']);
+    return stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        const [hash, subject, when, author] = l.split('\t');
+        return { hash, subject, when, author };
+      });
+  } catch (e) {
+    return [];
+  }
+});
+ipcMain.handle('git:show-commit', async (_e, hash) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !/^[0-9a-f]{4,40}$/i.test(String(hash || ''))) return { error: 'commit inválido' };
+  try {
+    const { stdout } = await gitRun(cfg, ['show', hash, '--stat', '--patch', '--no-color', '--format=%h %s%n%an · %ad%n']);
+    return { text: stdout.slice(0, 120000), truncated: stdout.length > 120000 };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e) };
   }
 });
 
@@ -5548,6 +5708,43 @@ let lastBreakNudge = Date.now();
 let lastSmallTalk = Date.now();
 let lastNightNudge = ''; // "vai dormir não?" — no máximo 1x por noite
 
+// ---- datas especiais: aniversário (se ela souber via fatos) + Natal + Ano Novo ----
+const MONTHS_PT = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+function findBirthday() {
+  try {
+    const txt = loadFacts().map((x) => x.fact).join('\n').toLowerCase();
+    const m = /(?:anivers[aá]rio|nasc(?:eu|imento))[^\n.]{0,40}?(\d{1,2})\s*(?:de\s+|\/|-)\s*(\d{1,2}|janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/i.exec(txt);
+    if (!m) return null;
+    const d = parseInt(m[1], 10);
+    const raw = m[2].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const mm = /^\d+$/.test(raw) ? parseInt(raw, 10) : MONTHS_PT[raw];
+    return d >= 1 && d <= 31 && mm >= 1 && mm <= 12 ? { d, m: mm } : null;
+  } catch (e) {
+    return null;
+  }
+}
+async function checkSpecialDates(lvl) {
+  if (lvl < 1) return false;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  if ((loadConfig().lastDateWish || '') === todayKey) return false; // já desejou hoje
+  const dNow = new Date();
+  let wish = null;
+  const bd = findBirthday();
+  if (bd && dNow.getDate() === bd.d && dNow.getMonth() + 1 === bd.m) {
+    wish = ['Hoje é o ANIVERSÁRIO do usuário! Parabenize com muito carinho e alegria (curto, pode usar emoji).', 'FELIZ ANIVERSÁRIO!! 🎂💜 Que seu dia seja incrível!'];
+  } else if (dNow.getDate() === 25 && dNow.getMonth() === 11) {
+    wish = ['Hoje é Natal. Deseje um feliz Natal bem curtinho e carinhoso.', 'Feliz Natal! 🎄💚'];
+  } else if (dNow.getDate() === 1 && dNow.getMonth() === 0) {
+    wish = ['Hoje é 1º de janeiro. Deseje um feliz ano novo bem curtinho e esperançoso.', 'Feliz ano novo! ✨ Que venha um ano lindo!'];
+  }
+  if (!wish) return false;
+  const c = loadConfig();
+  c.lastDateWish = todayKey;
+  saveConfig(c); // marca ANTES de falar (mesmo se o LLM falhar, não spamma)
+  proactiveSay(await proactiveLLM(wish[0], wish[1]), 'happy');
+  return true;
+}
+
 // ---- app ativo (OPT-IN, Windows): ela percebe o programa em foco e comenta ----
 // privacidade: só o NOME do processo e o título da janela — nunca o conteúdo.
 let appWatch = null; // processo powershell de longa duração (1 spawn só)
@@ -5723,6 +5920,8 @@ setInterval(async () => {
     }
     return;
   }
+  // datas especiais (aniversário/Natal/ano novo) — uma vez por dia, antes de tudo
+  if (await checkSpecialDates(lvl)) return;
   // madrugada (00h–04h59): UMA cutucada carinhosa por noite pra ir dormir
   const hourNow = new Date().getHours();
   if (lvl >= 2 && hourNow < 5 && new Date().toDateString() !== lastNightNudge && now - lastProactiveAt > 20 * 60000) {
