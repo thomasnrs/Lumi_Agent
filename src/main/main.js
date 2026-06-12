@@ -16,6 +16,46 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile); // args como array — sem dor de cabeça com aspas no Windows
 
+// ---- LOG DE DEBUG do processo principal: userData/lumi.log (rotaciona em ~512KB) ----
+function logd(...parts) {
+  try {
+    const line =
+      new Date().toISOString() + ' ' + parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ') + '\n';
+    const fp = path.join(app.getPath('userData'), 'lumi.log');
+    try {
+      if (fs.statSync(fp).size > 512 * 1024) fs.renameSync(fp, fp + '.old'); // mantém no máx ~1MB (atual+old)
+    } catch (e) {
+      /* primeiro log */
+    }
+    fs.appendFileSync(fp, line);
+  } catch (e) {
+    /* logging nunca derruba nada */
+  }
+  if (!app.isPackaged) console.log('[lumi]', ...parts);
+}
+process.on('uncaughtException', (e) => logd('UNCAUGHT', String((e && e.stack) || e)));
+process.on('unhandledRejection', (e) => logd('UNHANDLED-REJECTION', String((e && e.stack) || e)));
+
+// Windows: o PTY (conpty/winpty) precisa do CAMINHO RESOLVIDO do executável —
+// "ssh"/"docker" sem .exe dão "file not found". Resolve via `where` (com cache).
+const exeCache = new Map();
+function resolveExe(cmd) {
+  if (process.platform !== 'win32') return cmd;
+  if (/[\\/]/.test(cmd) || /\.(exe|bat|cmd)$/i.test(cmd)) return cmd; // já tem caminho/extensão
+  if (exeCache.has(cmd)) return exeCache.get(cmd);
+  let out = cmd + '.exe';
+  try {
+    const lines = require('child_process').execSync('where ' + cmd, { windowsHide: true, timeout: 4000 }).toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    // prefere um executável de verdade (.exe/.cmd/.bat) — o where pode listar shims sem extensão primeiro
+    const r = lines.find((l) => /\.(exe|cmd|bat)$/i.test(l)) || lines[0];
+    if (r) out = r;
+  } catch (e) {
+    logd('resolveExe: não achei', cmd);
+  }
+  exeCache.set(cmd, out);
+  return out;
+}
+
 // ---- LINUX: flags necessárias pra janela transparente do avatar (não afetam Windows) ----
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('enable-transparent-visuals'); // transparência no X11
@@ -1349,12 +1389,13 @@ let termSeq = 0;
 // funciona em qualquer máquina (sem toolchain), só perde interatividade/cores ricas.
 function createTerminal(opts) {
   const o = opts || {};
-  // perfil customizado (WSL, CMD, Git Bash, docker logs/exec...) ou o shell padrão
-  const shell = o.shell || (process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash');
+  // perfil customizado (WSL, CMD, Git Bash, SSH, docker logs/exec...) ou o shell padrão
+  const shell = resolveExe(o.shell || (process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash'));
   const profArgs = o.shell ? (Array.isArray(o.args) ? o.args : []) : null; // null = padrões de sempre
   const cwd = o.cwd || loadConfig().workspace || require('os').homedir();
   const id = 't' + ++termSeq;
   const title = o.title || path.basename(shell, '.exe');
+  logd('term:create', { shell, args: profArgs, cwd, pty: !!nodePty });
   const rec = { p: null, pty: false, title, buf: '', ai: !!o.ai }; // ai = aberto pela Lumi (política de limpeza)
   const push = (d) => {
     rec.buf = (rec.buf + d).slice(-200000); // final do scrollback (replay da UI + leitura da IA)
@@ -1380,7 +1421,8 @@ function createTerminal(opts) {
       rec.p.on('error', (e) => push('\r\n[erro: ' + e.message + ']\r\n'));
     }
   } catch (e) {
-    return { error: 'não consegui abrir o terminal: ' + e.message };
+    logd('term:create FALHOU', shell, String((e && e.message) || e));
+    return { error: 'não consegui abrir o terminal (' + path.basename(shell) + '): ' + e.message };
   }
   terminals.set(id, rec);
   broadcast('term:opened', { id, title, pty: rec.pty }); // a UI do workspace cria a aba
