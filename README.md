@@ -21,7 +21,7 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 
 **Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com ~40 ferramentas, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server e terminal embutidos, voz, visão e memória que você enxerga e controla.
 
-Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. Você traz seu próprio avatar (`.vrm`) e suas próprias chaves (**BYOK** — *bring your own key*; proxies locais sem chave também funcionam).
+Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. Já vem **montadinha**: a avatar **Cerberia** e as animações estão no repositório (troque por qualquer `.vrm` quando quiser). As chaves de I.A. são suas (**BYOK** — *bring your own key*; provedores grátis e proxies locais sem chave também funcionam).
 
 > **Stack:** Electron · Three.js · [@pixiv/three-vrm](https://github.com/pixiv/three-vrm) · xterm.js · Monaco
 
@@ -129,11 +129,11 @@ npm start          # builda o renderer e abre o Electron
 
 Na **primeira execução**, o assistente de boas-vindas configura tudo em ~2 minutos: provedor de I.A. (com os 🆓 grátis em destaque e teste de conexão), avatar `.vrm` e voz — e dá pra reabri-lo quando quiser no menu → *Assistente de configuração*. Se preferir na mão:
 
-1. Coloque um avatar `.vrm` em `assets/` (grátis no [VRoid Hub](https://hub.vroid.com)).
-2. As animações `.vrma` **já vêm no repositório** — pra trocar, é só substituir os arquivos em `animations/`.
+1. A avatar **Cerberia já vem no repositório** — pra trocar, coloque outro `.vrm` em `assets/` (grátis no [VRoid Hub](https://hub.vroid.com)) e escolha no menu → *Personagem*.
+2. As animações `.vrma` **também já vêm** — pra trocar, é só substituir os arquivos em `animations/`.
 3. Configurações completas na engrenagem ⚙ (avatar ou bandeja): provedor, modelo, chave, voz, mic, permissões, tema.
 
-> O avatar `.vrm` **não é versionado** (licença de terceiros) — cada um traz o seu. As animações `.vrma` **já vêm no repositório** (packs gratuitos: motions oficiais do VRoid + gestos do [vrm-viewer](https://github.com/tk256ailab/vrm-viewer)).
+> A avatar padrão (**Cerberia**, liberada pra distribuição) e as animações `.vrma` (packs gratuitos: motions oficiais do VRoid + gestos do [vrm-viewer](https://github.com/tk256ailab/vrm-viewer)) **já vêm no repositório**. Outros `.vrm` ficam de fora por licença — cada um traz o seu.
 
 ### Produção
 

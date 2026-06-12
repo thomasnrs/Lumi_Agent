@@ -7,9 +7,10 @@ src/renderer/renderer.bundle.js
 *.log
 *.bak
 
-# modelos de terceiros (licença! cada um baixa o seu — o app "nasce vazio")
-# as animações .vrma são versionadas (packs gratuitos); arquivos comprados/compactados não
+# modelos de terceiros (licença!) — EXCETO a Cerberia, que é liberada pra
+# distribuição e vem de fábrica; as animações .vrma também são versionadas
 assets/*.vrm
+!assets/cerberia.vrm
 assets/desativado/
 animations/*.rar
 animations/*.zip
