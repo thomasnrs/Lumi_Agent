@@ -1697,17 +1697,37 @@ function sshConfigHosts() {
 }
 ipcMain.handle('ssh:hosts', () => sshConfigHosts());
 
-let sshfsOk; // só cacheia o TRUE (depois de instalar, a re-checagem precisa funcionar)
-ipcMain.handle('ssh:available', async () => {
-  if (sshfsOk === true) return true;
-  try {
-    await execAsync('sshfs --version', { timeout: 6000, windowsHide: true });
-    sshfsOk = true;
-  } catch (e) {
-    sshfsOk = false;
+// acha o binário do sshfs SEM depender do PATH do processo (que fica velho após
+// uma instalação — o usuário instalava e a Lumi "não via" até reiniciar)
+function findSshfs() {
+  const cands =
+    process.platform === 'win32'
+      ? [
+          path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'SSHFS-Win', 'bin', 'sshfs.exe'),
+          path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'SSHFS-Win', 'bin', 'sshfs.exe'),
+        ]
+      : ['/usr/bin/sshfs', '/usr/local/bin/sshfs', '/bin/sshfs'];
+  for (const c of cands) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch (e) {
+      /* ok */
+    }
   }
-  return sshfsOk;
-});
+  try {
+    // PATH como fallback (sem usar o cache do resolveExe — pode ter gravado "não achei" antes da instalação)
+    const finder = process.platform === 'win32' ? 'where sshfs' : 'command -v sshfs';
+    const opts = { windowsHide: true, timeout: 4000 };
+    if (process.platform !== 'win32') opts.shell = '/bin/sh';
+    const lines = require('child_process').execSync(finder, opts).toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const r = process.platform === 'win32' ? lines.find((l) => /\.exe$/i.test(l)) || lines[0] : lines[0];
+    if (r && fs.existsSync(r)) return r;
+  } catch (e) {
+    /* não está em lugar nenhum */
+  }
+  return null;
+}
+ipcMain.handle('ssh:available', () => !!findSshfs());
 
 // comando de instalação do sshfs pro sistema da pessoa (instalação assistida)
 ipcMain.handle('ssh:install-cmd', async () => {
@@ -1746,11 +1766,8 @@ async function unmountRemote() {
 }
 ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   if (!host) return { error: 'host vazio' };
-  try {
-    await execAsync('sshfs --version', { timeout: 6000, windowsHide: true });
-  } catch (e) {
-    return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
-  }
+  const sshfsBin = findSshfs();
+  if (!sshfsBin) return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
   if (remoteMount) await unmountRemote().catch(() => {});
   const safe = String(host).replace(/[^\w.-]/g, '_');
   const mp = path.join(app.getPath('userData'), 'remotes', safe);
@@ -1761,9 +1778,9 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   }
   const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
   const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,idmap=user'];
-  logd('ssh:mount', spec, '→', mp);
+  logd('ssh:mount', sshfsBin, spec, '→', mp);
   try {
-    await execFileAsync('sshfs', args, { timeout: 30000, windowsHide: true });
+    await execFileAsync(sshfsBin, args, { timeout: 30000, windowsHide: true });
     fs.readdirSync(mp); // confirma que montou (consegue listar)
   } catch (e) {
     logd('ssh:mount FALHOU', String((e && e.stderr) || (e && e.message) || e));
