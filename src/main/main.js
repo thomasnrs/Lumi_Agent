@@ -1884,6 +1884,7 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
       remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
       // remoteWs marca que o workspace é um mount de sessão — o boot seguinte restaura o prev
       saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true, remoteWs: { host, prev } });
+      startWorkspaceWatcher(); // re-observa o novo workspace (modo rede: poll leve)
       broadcast('workspace:switched', wsPath);
       broadcast('config:changed');
       logd('ssh:mount OK', wsPath);
@@ -1899,6 +1900,7 @@ ipcMain.handle('ssh:unmount', async () => {
   const prev = (remoteMount && remoteMount.prevWorkspace) || (loadConfig().remoteWs && loadConfig().remoteWs.prev) || '';
   await unmountRemote();
   saveConfig({ ...loadConfig(), workspace: prev, remoteWs: undefined });
+  startWorkspaceWatcher(); // volta a observar o workspace local
   broadcast('workspace:switched', prev);
   broadcast('config:changed');
   return { ok: true };
@@ -5189,24 +5191,20 @@ ipcMain.handle('pick-folder', async () => {
 });
 // arvore de arquivos do workspace (para o editor)
 const WS_IGNORE = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.cache']);
-function walkWorkspace(dir, base, out, depth) {
-  if (depth > 8 || out.length > 3000) return;
-  let names = [];
+function walkWorkspace(dir, base, out, depth, deadline) {
+  if (!deadline) deadline = Date.now() + 5000; // FS remoto não pode segurar o main
+  if (depth > 8 || out.length > 3000 || Date.now() > deadline) return;
+  let entries = [];
   try {
-    names = fs.readdirSync(dir);
+    entries = fs.readdirSync(dir, { withFileTypes: true }); // sem stat por arquivo
   } catch (e) {
     return;
   }
-  for (const name of names) {
-    if (WS_IGNORE.has(name)) continue;
-    const full = path.join(dir, name);
-    let st;
-    try {
-      st = fs.statSync(full);
-    } catch (e) {
-      continue;
-    }
-    if (st.isDirectory()) walkWorkspace(full, base, out, depth + 1);
+  for (const ent of entries) {
+    if (out.length > 3000 || Date.now() > deadline) return;
+    if (WS_IGNORE.has(ent.name)) continue;
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) walkWorkspace(full, base, out, depth + 1, deadline);
     else out.push(path.relative(base, full).replace(/\\/g, '/'));
   }
 }
@@ -5267,28 +5265,30 @@ ipcMain.handle('workspace:write', (_e, { rel, content }) => {
 });
 
 // árvore COMPLETA (pastas + arquivos, aninhada) para o editor estilo VS Code
-function buildWsTree(absDir, base, depth) {
-  let names = [];
+function buildWsTree(absDir, base, depth, budget) {
+  // ORÇAMENTO: workspace remoto (SSHFS) com home gigante TRAVAVA o main por minutos
+  // (caso real). withFileTypes = 1 chamada por pasta (sem stat por arquivo) e a
+  // varredura para em ~6s/2500 entradas — a árvore vem parcial em vez de congelar.
+  if (!budget) budget = { until: Date.now() + 6000, left: 2500 };
+  if (Date.now() > budget.until || budget.left <= 0) return [];
+  let entries = [];
   try {
-    names = fs.readdirSync(absDir);
+    entries = fs.readdirSync(absDir, { withFileTypes: true });
   } catch (e) {
     return [];
   }
   const dirs = [];
   const files = [];
-  for (const name of names) {
+  for (const ent of entries) {
+    if (Date.now() > budget.until || budget.left <= 0) break;
+    const name = ent.name;
     // esconde internos .lumi-* MAS mostra a memória do projeto (o usuário quer vê-la/editá-la)
     if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
+    budget.left--;
     const full = path.join(absDir, name);
-    let st;
-    try {
-      st = fs.statSync(full);
-    } catch (e) {
-      continue;
-    }
     const rel = path.relative(base, full).replace(/\\/g, '/');
-    if (st.isDirectory()) {
-      dirs.push({ name, path: rel, dir: true, children: depth < 12 ? buildWsTree(full, base, depth + 1) : [] });
+    if (ent.isDirectory()) {
+      dirs.push({ name, path: rel, dir: true, children: depth < 12 ? buildWsTree(full, base, depth + 1, budget) : [] });
     } else {
       files.push({ name, path: rel, dir: false });
     }
@@ -5312,26 +5312,28 @@ ipcMain.handle('workspace:search', (_e, query) => {
   let files = 0;
   let truncated = false;
   const MAXR = 400;
+  const deadline = Date.now() + 8000; // FS remoto: melhor busca parcial que main travado
   const walk = (dir, depth) => {
-    if (results.length >= MAXR || depth > 12 || files > 4000) return;
-    let names = [];
+    if (results.length >= MAXR || depth > 12 || files > 4000 || Date.now() > deadline) return;
+    let entries = [];
     try {
-      names = fs.readdirSync(dir);
+      entries = fs.readdirSync(dir, { withFileTypes: true }); // sem stat por arquivo
     } catch (e) {
       return;
     }
-    for (const name of names) {
-      if (results.length >= MAXR) return;
+    for (const ent of entries) {
+      if (results.length >= MAXR || Date.now() > deadline) return;
+      const name = ent.name;
       if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
       const full = path.join(dir, name);
+      if (ent.isDirectory()) {
+        walk(full, depth + 1);
+        continue;
+      }
       let st;
       try {
         st = fs.statSync(full);
       } catch (e) {
-        continue;
-      }
-      if (st.isDirectory()) {
-        walk(full, depth + 1);
         continue;
       }
       if (st.size > 1000000) continue; // pula arquivos gigantes/binários óbvios
@@ -5968,13 +5970,15 @@ function startWorkspaceWatcher() {
     // fs.watch recursive indisponível (Linux antigo / FS de rede) -> polling leve como fallback
     wsWatcher = { close: () => clearInterval(wsPollTimer) };
     let lastSig = '';
+    const remote = !!remoteMount; // workspace via SSHFS: poll mais espaçado e SEM stat (rede)
     const wsPollTimer = setInterval(() => {
       try {
-        // assinatura barata: nomes + mtime do 1º nível (suficiente pra disparar o refresh da árvore)
+        // assinatura barata: nomes (+ mtime só no local) do 1º nível
         const sig = fs
           .readdirSync(ws)
           .filter((n) => !['node_modules', '.git', 'dist'].includes(n))
           .map((n) => {
+            if (remote) return n; // sem statSync por entrada em FS de rede
             try {
               return n + fs.statSync(path.join(ws, n)).mtimeMs;
             } catch (_) {
@@ -5987,7 +5991,7 @@ function startWorkspaceWatcher() {
       } catch (_) {
         /* workspace pode ter sumido */
       }
-    }, 3000);
+    }, remote ? 10000 : 3000);
   }
 }
 
