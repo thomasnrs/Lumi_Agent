@@ -1697,9 +1697,9 @@ function sshConfigHosts() {
 }
 ipcMain.handle('ssh:hosts', () => sshConfigHosts());
 
-let sshfsOk; // undefined=não checado, true/false
+let sshfsOk; // só cacheia o TRUE (depois de instalar, a re-checagem precisa funcionar)
 ipcMain.handle('ssh:available', async () => {
-  if (sshfsOk !== undefined) return sshfsOk;
+  if (sshfsOk === true) return true;
   try {
     await execAsync('sshfs --version', { timeout: 6000, windowsHide: true });
     sshfsOk = true;
@@ -1707,6 +1707,25 @@ ipcMain.handle('ssh:available', async () => {
     sshfsOk = false;
   }
   return sshfsOk;
+});
+
+// comando de instalação do sshfs pro sistema da pessoa (instalação assistida)
+ipcMain.handle('ssh:install-cmd', async () => {
+  if (process.platform === 'win32') return 'winget install -e --id WinFsp.WinFsp ; winget install -e --id SSHFS-Win.SSHFS-Win';
+  if (IS_LINUX) {
+    const has = (c) => {
+      try {
+        require('child_process').execSync('command -v ' + c, { shell: '/bin/sh', timeout: 3000 });
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+    if (has('apt')) return 'sudo apt install -y sshfs';
+    if (has('dnf')) return 'sudo dnf install -y fuse-sshfs';
+    if (has('pacman')) return 'sudo pacman -S --noconfirm sshfs';
+  }
+  return null; // sistema desconhecido → instrução manual
 });
 
 let remoteMount = null; // { host, mountPoint, prevWorkspace }

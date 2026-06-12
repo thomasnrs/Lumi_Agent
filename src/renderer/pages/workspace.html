@@ -2565,8 +2565,17 @@
       // ---- workspace remoto via SSH (SSHFS) ----
       let remoteActive = null; // host do remoto montado (pro item de menu e statusbar)
       async function openRemote() {
-        if (!(await window.api.sshAvailable()))
-          return toast('⚠ instale o sshfs (Linux: sudo apt install sshfs · Windows: SSHFS-Win + WinFsp) pra abrir pastas remotas', false);
+        if (!(await window.api.sshAvailable())) {
+          // instalação assistida: roda o comando certo no terminal integrado
+          const cmd = await window.api.sshInstallCmd();
+          if (!cmd) return toast('⚠ instale o sshfs manualmente (Linux: sudo apt install sshfs · Windows: SSHFS-Win + WinFsp)', false);
+          if (!confirm('Pra montar pastas remotas eu preciso do sshfs, que ainda não está instalado.\n\nInstalar agora? Vou rodar no terminal integrado:\n\n' + cmd)) return;
+          showPanel(true);
+          const r = await window.api.termCreate({ command: cmd, title: 'instalar sshfs' });
+          if (r && r.error) return toast(r.error, false);
+          toast('⏳ quando a instalação terminar, clique de novo em 📡 Abrir pasta remota');
+          return;
+        }
         const hosts = await window.api.sshHosts();
         if (!hosts.length) return toast('⚠ nenhum host no seu ~/.ssh/config', false);
         document.querySelectorAll('.brmenu').forEach((x) => x.remove());

@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('api', {
   ghPrCreate: () => ipcRenderer.invoke('gh:pr-create'),
   sshHosts: () => ipcRenderer.invoke('ssh:hosts'),
   sshAvailable: () => ipcRenderer.invoke('ssh:available'),
+  sshInstallCmd: () => ipcRenderer.invoke('ssh:install-cmd'),
   sshMount: (host, remotePath) => ipcRenderer.invoke('ssh:mount', { host, remotePath }),
   sshUnmount: () => ipcRenderer.invoke('ssh:unmount'),
   termBuffer: (id) => ipcRenderer.invoke('term:buffer', id),
