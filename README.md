@@ -131,7 +131,7 @@ npm start          # builda o renderer e abre o Electron
 2. (Opcional) Animações `.vrma` em `animations/` — idle, saudação, sentar, gestos (emoções em `animations/emotions/`).
 3. Abra as **Configurações** (engrenagem ⚙ no avatar ou bandeja) e configure provedor, modelo e chave.
 
-> Os modelos `.vrm`/`.vrma` **não são versionados** (licenças de terceiros) — cada um traz os seus.
+> O avatar `.vrm` **não é versionado** (licença de terceiros) — cada um traz o seu. As animações `.vrma` **já vêm no repositório** (packs gratuitos: motions oficiais do VRoid + gestos do [vrm-viewer](https://github.com/tk256ailab/vrm-viewer)).
 
 ### Produção
 
