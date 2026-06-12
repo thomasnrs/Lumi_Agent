@@ -1375,6 +1375,7 @@
       }
       function mdToHtml(src) {
         src = String(src).replace(/\[emo[cç][aã]o:[^\]]*\]/gi, ''); // tag de emoção é só pro avatar
+        src = src.replace(/\s*\[\s*[\p{L}]{2,20}\s*\]\s*$/u, ''); // forma curta no fim: [feliz], [brava]...
         const blocks = [];
         src = src.replace(/```(\w*)\n?([\s\S]*?)```/g, function (m, lang, code) {
           blocks.push({ lang: lang || '', code });

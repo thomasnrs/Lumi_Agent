@@ -1253,7 +1253,10 @@ function playAudio({ base64 }) {
 
 // Enfileira uma frase: ja dispara a sintese (paralela) e toca na ordem da corrente
 function enqueueSentence(raw) {
-  const text = raw.replace(/\[emo[cç][aã]o:[^\]]*\]/gi, '').trim(); // tag de emoção não é falada
+  const text = raw
+    .replace(/\[emo[cç][aã]o:[^\]]*\]/gi, '') // tag de emoção não é falada
+    .replace(/\s*\[\s*[\p{L}]{2,20}\s*\]\s*$/u, '') // forma curta no fim: [feliz], [brava]...
+    .trim();
   if (!text || !/[\p{L}\p{N}]/u.test(text)) return; // nada falavel (so pontuacao/espaco)
   const gen = ttsGen;
   const audioPromise = window.api.speak(text).catch((e) => {
@@ -1297,6 +1300,7 @@ async function speakOnce(text, override) {
 function stripMd(t) {
   return t
     .replace(/\[emo[cç][aã]o:[^\]]*\]/gi, '') // tag de emoção: invisível (só anima o avatar)
+    .replace(/\s*\[\s*[\p{L}]{2,20}\s*\]\s*$/u, '') // forma curta no fim: [feliz], [brava]...
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')

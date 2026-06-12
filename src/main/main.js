@@ -855,7 +855,7 @@ const COMPANION_BASE =
   '- Seja capaz e proativa: use suas ferramentas (arquivos, comandos, web, imagem, ver/controlar a tela) para realmente RESOLVER, não só descrever.\n' +
   '- No bate-papo, respostas curtas; no técnico, foco e precisão. NUNCA invente fatos/APIs — se não sabe, descubra (pesquise/leia).\n' +
   '- Tome iniciativa: se faltar um passo óbvio, faça; se algo der errado, conserte a causa em vez de só relatar.\n' +
-  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag [emoção:X] — X em português (feliz, triste, brava, surpresa, pensativa, vergonha... sinônimos valem). A tag é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).\n' +
+  '- AVATAR: você tem um corpo 3D na tela. Quando a resposta tiver emoção clara, termine com a tag curta [feliz] (ou [triste], [brava], [surpresa], [pensativa], [vergonha]... sinônimos em português valem). A tag é invisível pro usuário e faz seu avatar reagir. Use com moderação (só quando sentir de verdade).\n' +
   '- LEMBRETES: se o usuário pedir pra lembrar de algo ("me lembra em 20min de..."), use set_reminder — você avisa em voz alta na hora certa.';
 
 // Entende emoções em PT e EN (a I.A. costuma responder em português) → nome canônico do avatar.
@@ -5763,14 +5763,21 @@ async function runChatTurn(cfg, popUserOnError) {
   try {
     // loop do agente com ferramentas — runAgent escolhe o adaptador (OpenAI-compatível ou Anthropic)
     full = await runAgent(cfg);
-    // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] (invisível) → anima o avatar
-    // aceita qualquer palavra PT/EN (com ou sem acento) via normalizeEmotion
+    // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] OU a forma curta [feliz]
+    // (ela adora encurtar) → anima o avatar; aceita PT/EN com/sem acento via normalizeEmotion
+    let e2 = null;
     const em = /\[emo[cç][aã]o:\s*([^\]]+?)\s*\]/i.exec(full || '');
     if (em) {
-      const e2 = normalizeEmotion(em[1]);
-      if (e2) broadcast('tool:animation', e2); // mesmo canal do play_animation → avatar reage
+      e2 = normalizeEmotion(em[1]);
       full = full.replace(/\s*\[emo[cç][aã]o:[^\]]*\]\s*/gi, ' ').trim();
     }
+    // forma curta no FIM da mensagem: só remove se a palavra for emoção conhecida (preciso)
+    const tail = /\[\s*([\p{L} ]{2,24})\s*\]\s*$/u.exec((full || '').trim());
+    if (tail && normalizeEmotion(tail[1])) {
+      e2 = e2 || normalizeEmotion(tail[1]);
+      full = full.trim().slice(0, tail.index).trim();
+    }
+    if (e2) broadcast('tool:animation', e2); // mesmo canal do play_animation → avatar reage
     // turno só-ferramenta pode terminar sem texto — não salva balão vazio no histórico
     if (full && full.trim()) history.push({ role: 'assistant', content: full });
     await maybeSummarize(cfg); // gestao de contexto: resume o antigo se crescer demais
