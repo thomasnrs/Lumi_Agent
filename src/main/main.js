@@ -946,6 +946,18 @@ function buildSystemPrompt(cfg) {
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
+    try {
+      const pj = JSON.parse(fs.readFileSync(path.join(cfg.workspace, 'package.json'), 'utf8'));
+      const sc = Object.keys(pj.scripts || {});
+      if (sc.length) proj += `\nScripts npm do projeto: ${sc.slice(0, 20).join(', ')}.`;
+    } catch (e) {
+      /* sem package.json */
+    }
+    try {
+      if (fs.existsSync(path.join(cfg.workspace, '.venv'))) proj += '\nO projeto tem um venv Python em .venv (ative antes de rodar coisas Python).';
+    } catch (e) {
+      /* ok */
+    }
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     const rules = readRepoRules(cfg.workspace);
     if (rules) proj += `\n\n## Regras do repositório (escritas pelo dono do projeto — SIGA À RISCA, têm prioridade sobre o guia geral)\n${rules}`;
@@ -1433,6 +1445,29 @@ ipcMain.handle('term:profiles', async () => {
     profs.push({ label: 'bash', shell: 'bash' });
     profs.push({ label: 'sh', shell: 'sh' });
   }
+  // SSH: hosts do ~/.ssh/config (sem curingas) — seu VPS a um clique
+  try {
+    const sshCfg = fs.readFileSync(path.join(require('os').homedir(), '.ssh', 'config'), 'utf8');
+    [...sshCfg.matchAll(/^Host\s+([^\s*?#]+)\s*$/gim)]
+      .map((m) => m[1])
+      .slice(0, 12)
+      .forEach((h) => profs.push({ label: 'SSH: ' + h, shell: 'ssh', args: [h] }));
+  } catch (e) {
+    /* sem ~/.ssh/config */
+  }
+  // venv Python do workspace (já ativado)
+  try {
+    const ws = loadConfig().workspace;
+    if (ws) {
+      if (process.platform === 'win32' && fs.existsSync(path.join(ws, '.venv', 'Scripts', 'activate.bat'))) {
+        profs.push({ label: 'Python venv (.venv)', shell: 'cmd.exe', args: ['/k', path.join(ws, '.venv', 'Scripts', 'activate.bat')] });
+      } else if (process.platform !== 'win32' && fs.existsSync(path.join(ws, '.venv', 'bin', 'activate'))) {
+        profs.push({ label: 'Python venv (.venv)', shell: 'bash', args: ['-c', 'source .venv/bin/activate && exec bash'] });
+      }
+    }
+  } catch (e) {
+    /* ok */
+  }
   return profs;
 });
 
@@ -1461,6 +1496,146 @@ ipcMain.handle('docker:list', async () => {
     return { error: msg.slice(0, 200) };
   }
 });
+// docker-compose do workspace (alimenta a barrinha "compose" da aba DOCKER)
+ipcMain.handle('docker:compose-file', () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return null;
+  for (const f of ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']) {
+    try {
+      if (fs.existsSync(path.join(cfg.workspace, f))) return f;
+    } catch (e) {
+      /* ok */
+    }
+  }
+  return null;
+});
+
+// ---- TAREFAS do projeto: scripts do package.json + alvos do Makefile ----
+ipcMain.handle('tasks:list', () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  const out = [];
+  try {
+    const pj = JSON.parse(fs.readFileSync(path.join(cfg.workspace, 'package.json'), 'utf8'));
+    for (const name of Object.keys(pj.scripts || {})) out.push({ label: 'npm run ' + name, command: 'npm run ' + name });
+  } catch (e) {
+    /* sem package.json */
+  }
+  try {
+    const mk = fs.readFileSync(path.join(cfg.workspace, 'Makefile'), 'utf8');
+    mk.split('\n').forEach((l) => {
+      const m = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(l);
+      if (m && !m[1].startsWith('.')) out.push({ label: 'make ' + m[1], command: 'make ' + m[1] });
+    });
+  } catch (e) {
+    /* sem Makefile */
+  }
+  return out.slice(0, 40);
+});
+
+// ---- túnel público (cloudflared/ngrok) pra expor um localhost ----
+let tunnelTool;
+ipcMain.handle('tunnel:check', async () => {
+  if (tunnelTool !== undefined) return tunnelTool;
+  try {
+    await execAsync('cloudflared --version', { timeout: 5000, windowsHide: true });
+    tunnelTool = 'cloudflared';
+    return tunnelTool;
+  } catch (e) {
+    /* sem cloudflared */
+  }
+  try {
+    await execAsync('ngrok version', { timeout: 5000, windowsHide: true });
+    tunnelTool = 'ngrok';
+    return tunnelTool;
+  } catch (e) {
+    tunnelTool = null;
+    return null;
+  }
+});
+
+// ---- GitHub via gh CLI (PRs, status do CI e criar PR com a Lumi) ----
+let ghOk = null;
+ipcMain.handle('gh:check', async () => {
+  if (ghOk !== null) return ghOk;
+  try {
+    await execAsync('gh auth status', { timeout: 8000, windowsHide: true });
+    ghOk = true;
+  } catch (e) {
+    ghOk = false;
+  }
+  return ghOk;
+});
+ipcMain.handle('gh:prs', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  try {
+    const { stdout } = await execAsync('gh pr list --limit 15 --json number,title,headRefName,url,isDraft', {
+      cwd: cfg.workspace,
+      timeout: 15000,
+      windowsHide: true,
+    });
+    return JSON.parse(stdout);
+  } catch (e) {
+    return [];
+  }
+});
+ipcMain.handle('gh:ci', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return null;
+  try {
+    const { stdout: br } = await gitRun(cfg, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const { stdout } = await execAsync('gh run list -b "' + br.trim() + '" -L 1 --json status,conclusion,displayTitle,url', {
+      cwd: cfg.workspace,
+      timeout: 15000,
+      windowsHide: true,
+    });
+    return JSON.parse(stdout)[0] || null;
+  } catch (e) {
+    return null;
+  }
+});
+ipcMain.handle('gh:pr-create', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace definido' };
+  try {
+    const { stdout: br } = await gitRun(cfg, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = br.trim();
+    if (/^(main|master)$/.test(branch)) return { error: 'você está na ' + branch + ' — crie uma branch primeiro (clique no nome da branch)' };
+    let base = 'main';
+    try {
+      await gitRun(cfg, ['rev-parse', '--verify', 'origin/main']);
+    } catch (e) {
+      base = 'master';
+    }
+    const { stdout: logs } = await gitRun(cfg, ['log', 'origin/' + base + '..HEAD', '--format=- %s']);
+    const { stdout: stat } = await gitRun(cfg, ['diff', 'origin/' + base + '...HEAD', '--stat']);
+    if (!logs.trim()) return { error: 'nenhum commit novo em relação à ' + base };
+    const gen = await llmComplete(cfg, [
+      {
+        role: 'system',
+        content:
+          'Você escreve título e descrição de Pull Request em português. Responda EXATAMENTE neste formato:\nTITULO: <até 70 caracteres, imperativo>\n---\n<descrição em markdown: resumo curto, mudanças em bullets e como testar>',
+      },
+      { role: 'user', content: 'Commits da branch:\n' + logs.slice(0, 4000) + '\n\nArquivos alterados:\n' + stat.slice(0, 2000) },
+    ]);
+    const m = /TITULO:\s*(.+)\n+---\n+([\s\S]+)/.exec(gen || '');
+    const title = ((m && m[1]) || branch).trim().slice(0, 100);
+    const body = ((m && m[2]) || gen || 'PR da branch ' + branch).trim();
+    const tmp = path.join(app.getPath('temp'), 'lumi-pr-body.md');
+    fs.writeFileSync(tmp, body); // corpo via arquivo = sem briga de aspas no Windows
+    const { stdout } = await execFileAsync('gh', ['pr', 'create', '--title', title, '--body-file', tmp, '--base', base], {
+      cwd: cfg.workspace,
+      timeout: 30000,
+      windowsHide: true,
+    });
+    const url = stdout.trim().split('\n').pop();
+    return { ok: true, url, title };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) };
+  }
+});
+
 ipcMain.handle('docker:action', async (_e, { id, action }) => {
   if (!/^[0-9a-f]{4,64}$/i.test(String(id || ''))) return { error: 'id inválido' };
   const map = { start: ['start'], stop: ['stop'], restart: ['restart'], rm: ['rm', '-f'] };

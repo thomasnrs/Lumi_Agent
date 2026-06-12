@@ -495,6 +495,17 @@
       #dockerBody .pact button.danger:hover { background: #e0556e; color: #fff; }
       .dkdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #667; }
       .dkdot.up { background: #7ee0a0; box-shadow: 0 0 6px #7ee0a066; }
+      /* barrinha do docker-compose */
+      #composeBar { display: flex; gap: 6px; align-items: center; padding: 4px 8px 8px; }
+      #composeBar .cf { color: #9aa; font-size: 11px; margin-right: 4px; }
+      #composeBar button { border: none; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
+      #composeBar button:hover { background: var(--accent); color: var(--accent-text); }
+      /* CI + botão de PR no painel git */
+      #ghCi { font-size: 11px; cursor: pointer; }
+      #gitBranchRow .ga.wide { width: auto; padding: 0 7px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.2px; }
+      /* badge de erros do console no navegador embutido */
+      #webTools #wbErr { color: #ffb4b4; border-color: #6a3040; }
+      #webTools #wbErr:hover { background: #3a2030; }
       /* menu de perfis de terminal (reusa o visual do menu de branches) */
       @keyframes pnewFlash {
         from { background: color-mix(in srgb, #7ee0a0 28%, transparent); }
@@ -550,7 +561,9 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
               <b id="gitBranchName">—</b>
               <span id="gitSync"></span>
+              <span id="ghCi" hidden></span>
               <span style="flex: 1"></span>
+              <button class="ga wide" id="ghPrBtn" hidden title="Criar Pull Request com título e descrição escritos pela Lumi">✦PR</button>
               <button class="ga" id="gitPull" title="Pull (puxar do remoto)">↓</button>
               <button class="ga" id="gitPush" title="Push (enviar pro remoto)">↑</button>
               <button class="ga" id="gitRefresh" title="Atualizar">⟳</button>
@@ -589,6 +602,7 @@
             <button id="wbFwd" title="Avançar">→</button>
             <button id="wbReload" title="Recarregar">⟳</button>
             <input id="wbUrl" type="text" placeholder="localhost:3000 — Enter pra navegar" spellcheck="false" />
+            <button id="wbErr" hidden title="Erros no console da página — clique pra mandar pra Lumi corrigir">⚠ 0</button>
             <button id="wbPick" title="Apontar um elemento da página e mandar pro chat da Lumi">🎯</button>
             <button id="wbExt" title="Abrir no navegador do sistema">↗</button>
           </div>
@@ -617,6 +631,7 @@
             </table>
           </div>
           <div id="dockerBody" hidden>
+            <div id="composeBar" hidden></div>
             <table>
               <thead><tr><th></th><th>Container</th><th>Imagem</th><th>Status</th><th>Portas</th><th>Ações</th></tr></thead>
               <tbody id="dockerRows"></tbody>
@@ -1245,9 +1260,48 @@
         if (t === 'term') setTimeout(fitActive, 30);
       }
 
+      // túnel público disponível? (cloudflared/ngrok — checado 1x)
+      let tunnelTool = null;
+      window.api.tunnelCheck().then((t) => (tunnelTool = t));
+
+      // ---- barrinha do docker-compose (up/down/restart/logs do compose do workspace) ----
+      let composeFileName; // undefined = ainda não checado neste workspace
+      async function refreshComposeBar() {
+        if (composeFileName === undefined) composeFileName = await window.api.dockerComposeFile();
+        const bar = document.getElementById('composeBar');
+        if (!composeFileName) {
+          bar.hidden = true;
+          return;
+        }
+        if (bar.dataset.f !== composeFileName) {
+          bar.dataset.f = composeFileName;
+          bar.innerHTML = '';
+          const lbl = document.createElement('span');
+          lbl.className = 'cf';
+          lbl.textContent = '🐙 ' + composeFileName;
+          bar.appendChild(lbl);
+          const mk = (label, args, title) => {
+            const b = document.createElement('button');
+            b.textContent = label;
+            b.title = title;
+            b.onclick = async () => {
+              const r = await window.api.termCreate({ shell: 'docker', args: ['compose', '-f', composeFileName, ...args], title: 'compose' });
+              if (r && r.error) toast(r.error, false);
+            };
+            bar.appendChild(b);
+          };
+          mk('▲ up', ['up', '-d'], 'docker compose up -d');
+          mk('▼ down', ['down'], 'docker compose down');
+          mk('🔄 restart', ['restart'], 'docker compose restart');
+          mk('📜 logs', ['logs', '-f', '--tail', '100'], 'docker compose logs -f');
+        }
+        bar.hidden = false;
+      }
+
       // ---- aba DOCKER: containers ao vivo + ações ----
       let lastDockerSig = '';
       async function loadDocker(force) {
+        refreshComposeBar();
         const r = await window.api.dockerList();
         const tabEl = document.querySelector('.ptab[data-tab="docker"]');
         const running = r.ok ? r.containers.filter((c) => c.state === 'running').length : 0;
@@ -1520,6 +1574,18 @@
           inApp.title = 'Abrir no navegador embutido';
           inApp.onclick = () => openBrowserTab('http://localhost:' + p.port);
           td.appendChild(inApp);
+          if (tunnelTool) {
+            // túnel público em 1 clique — a URL aparece no terminal (e é clicável)
+            const tun = document.createElement('button');
+            tun.textContent = '🌍 expor';
+            tun.title = 'Túnel público via ' + tunnelTool + ' — a URL aparece no terminal';
+            tun.onclick = async () => {
+              const args = tunnelTool === 'cloudflared' ? ['tunnel', '--url', 'http://localhost:' + p.port] : ['http', String(p.port)];
+              const r = await window.api.termCreate({ shell: tunnelTool, args, title: '🌍 :' + p.port });
+              if (r && r.error) toast(r.error, false);
+            };
+            td.appendChild(tun);
+          }
           const open = document.createElement('button');
           open.textContent = '↗ abrir';
           open.title = 'Abrir no navegador do sistema';
@@ -1683,9 +1749,64 @@
           if (st.unstaged.length) gitListsEl.appendChild(gitSection('Alterações', st.unstaged, false));
         }
         renderCommits(); // histórico no rodapé do painel
+        refreshGh(); // GitHub (gh CLI): status do CI, botão de PR e lista de PRs
         loadGit(); // statusbar/explorer acompanham
         updateGitGutter(); // commits/descartes mudam as barrinhas do editor
       }
+
+      // ---- GitHub via gh CLI (dormente se o gh não estiver instalado/autenticado) ----
+      let ghAvail = null;
+      async function refreshGh() {
+        if (ghAvail === null) ghAvail = await window.api.ghCheck();
+        const prBtn = document.getElementById('ghPrBtn');
+        const ciEl = document.getElementById('ghCi');
+        prBtn.hidden = !ghAvail;
+        if (!ghAvail) {
+          ciEl.hidden = true;
+          return;
+        }
+        window.api.ghCi().then((r) => {
+          if (!r) {
+            ciEl.hidden = true;
+            return;
+          }
+          const icon = r.status !== 'completed' ? '⏳' : r.conclusion === 'success' ? '✅' : r.conclusion === 'cancelled' ? '⚪' : '❌';
+          ciEl.textContent = icon;
+          ciEl.title = 'CI: ' + (r.displayTitle || '') + ' — ' + (r.conclusion || r.status) + ' (clique pra abrir)';
+          ciEl.hidden = false;
+          ciEl.onclick = () => r.url && window.api.openExternal(r.url);
+        });
+        window.api.ghPrs().then((prs) => {
+          if (!prs.length || gitListsEl.querySelector('.gprs')) return;
+          const det = document.createElement('details');
+          det.className = 'gcommits gprs';
+          const sum = document.createElement('summary');
+          sum.textContent = 'Pull Requests (' + prs.length + ')';
+          det.appendChild(sum);
+          prs.forEach((p) => {
+            const d = document.createElement('div');
+            d.className = 'gci';
+            d.title = p.title;
+            d.innerHTML = '<span class="h">#' + p.number + '</span> ' + esc(p.title) + ' <span class="w">· ' + esc(p.headRefName) + (p.isDraft ? ' · draft' : '') + '</span>';
+            d.onclick = () => window.api.openExternal(p.url);
+            det.appendChild(d);
+          });
+          gitListsEl.appendChild(det);
+        });
+      }
+      document.getElementById('ghPrBtn').onclick = async () => {
+        const btn = document.getElementById('ghPrBtn');
+        btn.disabled = true;
+        const old = btn.textContent;
+        btn.textContent = '…';
+        const r = await window.api.ghPrCreate();
+        btn.disabled = false;
+        btn.textContent = old;
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        toast('✓ PR criado: ' + (r.title || ''));
+        if (r.url) window.api.openExternal(r.url);
+        loadGitPanel();
+      };
 
       async function gitAct(promise) {
         const r = await promise;
@@ -2243,8 +2364,26 @@
         const u = (wb.getURL && wb.getURL()) || wbUrl.value;
         if (u && u !== 'about:blank') window.api.openExternal(u);
       };
+      // erros do console da página → badge ⚠ → manda pra Lumi corrigir
+      const wbErrBtn = document.getElementById('wbErr');
+      let wbErrors = [];
+      function wbErrUpdate() {
+        wbErrBtn.hidden = !wbErrors.length;
+        wbErrBtn.textContent = '⚠ ' + wbErrors.length;
+      }
+      wbErrBtn.onclick = () => {
+        const list = wbErrors
+          .slice(-8)
+          .map((x) => '- ' + x.msg + (x.src ? ' (' + x.src + ':' + x.line + ')' : ''))
+          .join('\n');
+        const msg = '🧯 Erros no console da página ' + (wbUrl.value || '') + ':\n' + list + '\n\nAnalisa e corrige no código do projeto, por favor.';
+        if (chatpane.classList.contains('hidden')) document.getElementById('toggleChat').click();
+        document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: msg, send: false }, '*');
+      };
       wb.addEventListener('did-navigate', (e) => {
         if (e.url && e.url !== 'about:blank') wbUrl.value = e.url;
+        wbErrors = []; // página nova → zera os erros
+        wbErrUpdate();
       });
       wb.addEventListener('did-navigate-in-page', (e) => {
         if (e.isMainFrame && e.url) wbUrl.value = e.url;
@@ -2282,6 +2421,11 @@
       };
       wb.addEventListener('console-message', (e) => {
         const m = e.message || '';
+        if (e.level === 3 && !m.startsWith('__LUMIPICK')) {
+          wbErrors.push({ msg: m.slice(0, 280), src: String(e.sourceId || '').split('/').pop(), line: e.line });
+          if (wbErrors.length > 50) wbErrors.shift();
+          wbErrUpdate();
+        }
         if (m === '__LUMIPICK_OFF__') {
           wbPickBtn.classList.remove('on');
           return;
@@ -2422,6 +2566,10 @@
         if (searchMode) toggleSearch(false);
         wsSearch.value = '';
         loadTree();
+        composeFileName = undefined; // novo workspace → re-checa o docker-compose
+        const cb = document.getElementById('composeBar');
+        cb.hidden = true;
+        cb.dataset.f = '';
         if (sideMode === 'git') setSideMode('git'); // re-renderiza o painel git pro novo repo
         else updateRoot();
       }
@@ -2565,6 +2713,22 @@
             { label: 'Buscar no projeto…', icon: MI.search, hint: 'Ctrl+Shift+F', fn: () => toggleSearch(true) },
             { label: 'Ir para a linha…', icon: MI.goto, hint: 'Ctrl+G', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.gotoLine')) },
           ],
+        },
+        {
+          label: 'Tarefas',
+          items: async () => {
+            const ts = await window.api.tasksList();
+            if (!ts.length) return [{ label: '(sem scripts no package.json/Makefile do workspace)', fn: () => {} }];
+            return ts.map((t) => ({
+              label: t.label,
+              icon: MI.term,
+              fn: async () => {
+                showPanel(true);
+                const r = await window.api.termCreate({ command: t.command, title: t.label });
+                if (r && r.error) toast(r.error, false);
+              },
+            }));
+          },
         },
         {
           label: 'Terminal',
