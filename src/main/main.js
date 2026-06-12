@@ -115,9 +115,7 @@ function logChatEvent(channel, payload) {
   }
 }
 
-function broadcast(channel, ...args) {
-  logChatEvent(channel, args[0]); // grava na linha do tempo do chat (quando for evento de chat)
-  if (channel === 'workspace:changed') liveNotifyReload(); // arquivos mudaram → live server recarrega as páginas
+function sendToAll(channel, ...args) {
   BrowserWindow.getAllWindows().forEach((w) => {
     if (w.isDestroyed()) return;
     try {
@@ -136,6 +134,56 @@ function broadcast(channel, ...args) {
       } catch (_) {}
     }
   });
+}
+
+// BATCHING dos tokens de stream: modelos cospem dezenas de eventos/s e cada um viraria
+// um IPC × janelas × iframes. Juntamos ~24ms de texto num envio só (imperceptível a olho)
+// e QUALQUER outro evento descarrega os tokens pendentes antes — a ordem nunca muda.
+const tokBatch = { token: '', thinking: '', agents: new Map() };
+let tokFlushTimer = null;
+function flushTokenBatch() {
+  if (tokFlushTimer) {
+    clearTimeout(tokFlushTimer);
+    tokFlushTimer = null;
+  }
+  if (tokBatch.thinking) {
+    sendToAll('chat:thinking', tokBatch.thinking);
+    tokBatch.thinking = '';
+  }
+  if (tokBatch.token) {
+    sendToAll('chat:token', tokBatch.token);
+    tokBatch.token = '';
+  }
+  if (tokBatch.agents.size) {
+    for (const [agent, t] of tokBatch.agents) sendToAll('chat:agent-token', { agent, t });
+    tokBatch.agents.clear();
+  }
+}
+function scheduleTokenFlush() {
+  if (!tokFlushTimer) tokFlushTimer = setTimeout(flushTokenBatch, 24);
+}
+
+function broadcast(channel, ...args) {
+  if (channel === 'chat:token') {
+    tokBatch.token += args[0] || '';
+    scheduleTokenFlush();
+    return;
+  }
+  if (channel === 'chat:thinking') {
+    tokBatch.thinking += args[0] || '';
+    scheduleTokenFlush();
+    return;
+  }
+  if (channel === 'chat:agent-token') {
+    const d = args[0] || {};
+    tokBatch.agents.set(d.agent, (tokBatch.agents.get(d.agent) || '') + (d.t || ''));
+    scheduleTokenFlush();
+    return;
+  }
+  flushTokenBatch(); // tokens pendentes saem ANTES de tool/done/erro etc. (ordem preservada)
+  logChatEvent(channel, args[0]); // grava na linha do tempo do chat (quando for evento de chat)
+  if (channel === 'workspace:changed') liveNotifyReload(); // arquivos mudaram → live server recarrega as páginas
+  sendToAll(channel, ...args);
 }
 
 // ============================================================
@@ -276,9 +324,18 @@ function configPath() {
   return path.join(app.getPath('userData'), 'config.json');
 }
 
+// CACHE do config: loadConfig é chamado ~70 lugares (loops, handlers, cada passo do agente).
+// Valida por mtime — statSync é ~20x mais barato que ler+parsear; edição manual do
+// config.json continua sendo detectada. Sempre devolve uma CÓPIA (semântica antiga:
+// quem mutar o objeto não envenena o cache).
+let cfgCache = null; // { mtimeMs, value }
 function loadConfig() {
   try {
-    return { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(configPath(), 'utf8')) };
+    const mt = fs.statSync(configPath()).mtimeMs;
+    if (!cfgCache || cfgCache.mtimeMs !== mt) {
+      cfgCache = { mtimeMs: mt, value: { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(configPath(), 'utf8')) } };
+    }
+    return { ...cfgCache.value };
   } catch (e) {
     return { ...DEFAULT_CONFIG };
   }
@@ -286,6 +343,11 @@ function loadConfig() {
 
 function saveConfig(cfg) {
   fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2));
+  try {
+    cfgCache = { mtimeMs: fs.statSync(configPath()).mtimeMs, value: { ...DEFAULT_CONFIG, ...cfg } };
+  } catch (e) {
+    cfgCache = null; // na dúvida, o próximo loadConfig relê do disco
+  }
 }
 
 // ============================================================

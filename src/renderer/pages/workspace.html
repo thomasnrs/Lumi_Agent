@@ -713,6 +713,7 @@
       async function loadTree() {
         const [td] = await Promise.all([window.api.getWorkspaceFullTree(), loadGit()]);
         treeData = td || [];
+        qFlat = null; // árvore mudou → o cache do Ctrl+P refaz na próxima busca
         drawTree();
       }
       function drawTree() {
@@ -1781,6 +1782,7 @@
       const qlist = document.getElementById('qlist');
       let qItems = [];
       let qSel = 0;
+      let qFlat = null; // cache da árvore achatada (zera quando a árvore recarrega)
       function flatFiles(nodes, out) {
         (nodes || []).forEach((n) => {
           if (n.dir) flatFiles(n.children, out);
@@ -1824,7 +1826,7 @@
       }
       function qFilter() {
         const q = qinput.value.trim().toLowerCase();
-        const all = flatFiles(treeData, []);
+        const all = qFlat || (qFlat = flatFiles(treeData, []));
         qItems = !q
           ? all.slice(0, 40)
           : all
