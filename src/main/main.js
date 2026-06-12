@@ -1769,27 +1769,33 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   const sshfsBin = findSshfs();
   if (!sshfsBin) return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
   if (remoteMount) await unmountRemote().catch(() => {});
-  const safe = String(host).replace(/[^\w.-]/g, '_');
-  const base = path.join(app.getPath('userData'), 'remotes');
-  try {
-    fs.mkdirSync(base, { recursive: true });
-  } catch (e) {
-    /* ok */
-  }
-  const mp = path.join(base, safe);
+  let mp; // ponto de montagem passado pro sshfs
+  let wsPath; // caminho que vira o workspace
   if (process.platform === 'win32') {
-    // WinFsp monta em diretório que NÃO existe (cria um reparse point) — limpa sobra de antes
-    try {
-      fs.rmdirSync(mp);
-    } catch (e) {
-      /* não existia (ótimo) ou tem coisa (o sshfs vai reclamar VISÍVEL no terminal) */
+    // SSHFS-Win/WinFsp: letra de unidade é o formato robusto ("invalid mount point" com diretório)
+    for (const L of 'ZYXWVUTSRQPONML') {
+      if (!fs.existsSync(L + ':\\')) {
+        mp = L + ':';
+        break;
+      }
     }
+    if (!mp) return { error: 'nenhuma letra de unidade livre (Z–L ocupadas?)' };
+    wsPath = mp + '\\';
   } else {
+    const safe = String(host).replace(/[^\w.-]/g, '_');
+    const base = path.join(app.getPath('userData'), 'remotes');
+    try {
+      fs.mkdirSync(base, { recursive: true });
+    } catch (e) {
+      /* ok */
+    }
+    mp = path.join(base, safe);
     try {
       fs.mkdirSync(mp, { recursive: true }); // no Linux o mountpoint precisa existir
     } catch (e) {
       /* ok */
     }
+    wsPath = mp;
   }
   const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
   const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3' + (process.platform === 'win32' ? '' : ',idmap=user')];
@@ -1802,18 +1808,18 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   while (Date.now() - t0 < 90000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
-      fs.readdirSync(mp); // win: só existe/lista depois de montado
+      fs.readdirSync(wsPath); // win: a unidade só existe depois de montada
       if (process.platform !== 'win32') {
         // linux: o dir existe antes — confirma que virou mountpoint de verdade
         require('child_process').execSync('mountpoint -q "' + mp + '"', { timeout: 3000 });
       }
       const prev = loadConfig().workspace || '';
       remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
-      saveConfig({ ...loadConfig(), workspace: mp, architectMode: true });
-      broadcast('workspace:switched', mp);
+      saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true });
+      broadcast('workspace:switched', wsPath);
       broadcast('config:changed');
-      logd('ssh:mount OK', mp);
-      return { ok: true, mountPoint: mp, host };
+      logd('ssh:mount OK', wsPath);
+      return { ok: true, mountPoint: wsPath, host };
     } catch (e) {
       /* ainda não montou — continua vigiando */
     }
