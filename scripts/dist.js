@@ -122,12 +122,15 @@ const LINUX_TARGET = process.argv.includes('--linux');
       console.log('    ok ' + path.basename(f) + ' (' + originals[i].length + ' -> ' + obf.length + ' bytes)');
     });
 
-    console.log('==> Empacotando (electron-builder, ' + (LINUX_TARGET ? 'AppImage+deb Linux' : 'instalador NSIS') + ')...');
+    // no CI (tag + GH_TOKEN) publica direto nos GitHub Releases — alimenta o auto-update
+    const PUBLISH = process.env.GH_TOKEN || process.env.GITHUB_TOKEN ? 'always' : 'never';
+    console.log('==> Empacotando (electron-builder, ' + (LINUX_TARGET ? 'AppImage+deb Linux' : 'instalador NSIS') + ', publish: ' + PUBLISH + ')...');
     await builder.build({
       targets: LINUX_TARGET
         ? builder.Platform.LINUX.createTarget(['AppImage', 'deb'], builder.Arch.x64)
         : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64),
       projectDir: ROOT,
+      publish: PUBLISH,
     });
 
     console.log('\n✅ Pronto! Pacote em: release/');

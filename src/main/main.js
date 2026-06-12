@@ -3959,6 +3959,7 @@ function createTray() {
       },
       { label: 'Forkar conversa (novo chat + resumo)', click: () => forkConversation() },
       { type: 'separator' },
+      { label: 'Verificar atualizações', click: () => checkUpdatesManual() },
       { label: 'Sair', click: () => app.quit() },
     ])
   );
@@ -4119,6 +4120,48 @@ function showContextMenu() {
   Menu.buildFromTemplate(template).popup({ window: win });
 }
 
+// ============================================================
+//  AUTO-UPDATE (GitHub Releases via electron-updater)
+//  Baixa em segundo plano e instala quando o app fecha — zero fricção.
+// ============================================================
+// checagem manual (bandeja → Verificar atualizações) com resposta visível
+async function checkUpdatesManual() {
+  if (!app.isPackaged) {
+    dialog.showMessageBox({ title: 'Lumi', message: 'Rodando do código-fonte (npm start) — atualize com git pull. 😉' });
+    return;
+  }
+  try {
+    const { autoUpdater } = require('electron-updater');
+    const r = await autoUpdater.checkForUpdates();
+    const v = r && r.updateInfo && r.updateInfo.version;
+    if (v && v !== app.getVersion()) {
+      dialog.showMessageBox({ title: 'Lumi', message: 'Atualização ' + v + ' encontrada! Baixando em segundo plano — instala quando o app fechar.' });
+    } else {
+      dialog.showMessageBox({ title: 'Lumi', message: 'Você já está na versão mais nova (' + app.getVersion() + ') ✨' });
+    }
+  } catch (e) {
+    dialog.showMessageBox({ title: 'Lumi', message: 'Não consegui checar agora: ' + String((e && e.message) || e).slice(0, 200) });
+  }
+}
+
+function setupAutoUpdate() {
+  if (!app.isPackaged) return; // em dev (npm start) não há o que atualizar
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('update-downloaded', (info) => {
+      broadcast('chat:note', { text: '⬇️ Atualização ' + info.version + ' baixada — instala sozinha quando o app fechar.' });
+      proactiveSay('Baixei minha atualização (' + info.version + ')! Quando você me abrir de novo, estarei novinha ✨', 'happy');
+    });
+    autoUpdater.on('error', (e) => console.error('updater:', (e && e.message) || e));
+    autoUpdater.checkForUpdates().catch(() => {});
+    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 3600 * 1000); // re-checa a cada 4h
+  } catch (e) {
+    console.error('auto-update indisponível:', (e && e.message) || e);
+  }
+}
+
 app.whenReady().then(() => {
   initChats(); // multi-chat: retoma o chat atual (ou migra/cria)
   loadReminders(); // lembretes persistidos (os vencidos disparam no 1º ciclo)
@@ -4149,6 +4192,7 @@ app.whenReady().then(() => {
     applyIgnore(); // estado inicial do click-through
   }
   createTray();
+  setupAutoUpdate(); // app instalado: busca atualizações nos GitHub Releases
 
   // PRIMEIRO USO: assistente de boas-vindas (provedor → avatar → voz)
   if (!loadConfig().wizardDone) {

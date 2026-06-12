@@ -19,6 +19,11 @@
     "appId": "com.lumi.desktop",
     "productName": "Lumi",
     "copyright": "Copyright © 2026",
+    "publish": {
+      "provider": "github",
+      "owner": "thomasnrs",
+      "repo": "Lumi_Agent"
+    },
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -98,6 +103,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
     "three": "^0.169.0",
     "uiohook-napi": "^1.5.5",

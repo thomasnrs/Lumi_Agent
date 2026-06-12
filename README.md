@@ -143,6 +143,15 @@ npm run dist -- --linux # AppImage + deb (rode no WSL2/Linux)
 npm run pack            # build rápido sem instalador, pra teste
 ```
 
+### 📦 Releases & auto-update
+
+Empurrar uma tag `v*` dispara o CI (GitHub Actions), que builda **instalador Windows + AppImage/deb** e publica nos [Releases](https://github.com/thomasnrs/Lumi_Agent/releases). O app instalado **se atualiza sozinho** (electron-updater): baixa em segundo plano e instala ao fechar — também dá pra checar na bandeja → *Verificar atualizações*.
+
+```bash
+npm version patch   # 1.0.0 → 1.0.1 (cria a tag)
+git push --follow-tags
+```
+
 ### Linux 🐧
 Suporte **X11** (Wayland roda via XWayland, forçado automaticamente). Detalhes, dependências e o plano completo em [`port.md`](port.md).
 

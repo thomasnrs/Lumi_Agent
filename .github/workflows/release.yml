@@ -1,0 +1,41 @@
+# Release da Lumi: empurrou uma tag v* → builda instalador Windows + AppImage/deb
+# e publica nos GitHub Releases (que alimentam o auto-update do electron-updater).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # subir os artefatos no Release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build + publicar (NSIS)
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # libs de build dos módulos nativos (uiohook usa X11/XTest)
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libxkbfile-dev libpng-dev
+      - run: npm ci
+      - name: Build + publicar (AppImage + deb)
+        run: npm run dist -- --linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
