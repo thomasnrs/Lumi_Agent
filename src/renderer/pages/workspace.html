@@ -2594,8 +2594,9 @@
           it.textContent = h;
           it.onclick = async () => {
             menu.remove();
-            const remotePath = await askName('Caminho no servidor "' + h + '" (vazio = home)', '');
-            if (remotePath === null) return; // cancelou
+            // o askName trata vazio como cancelar — então o "home" entra como "." já preenchido
+            const remotePath = await askName('Caminho no servidor "' + h + '" (. = home)', '.');
+            if (remotePath === null) return; // cancelou (Esc/Cancelar/apagou tudo)
             showPanel(true); // o sshfs roda num terminal — senha/host key aparecem LÁ
             toast('📡 conectando em ' + h + ' — se pedir senha ou yes/no, responde no terminal "sshfs: ' + h + '"');
             const r = await window.api.sshMount(h, remotePath);
