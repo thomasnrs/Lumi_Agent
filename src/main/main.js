@@ -1798,7 +1798,8 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     wsPath = mp;
   }
   const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
-  const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3' + (process.platform === 'win32' ? '' : ',idmap=user')];
+  // accept-new: aceita host key na 1ª conexão sem o prompt yes/no (frágil sob ConPTY)
+  const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,StrictHostKeyChecking=accept-new' + (process.platform === 'win32' ? '' : ',idmap=user')];
   // roda NO TERMINAL INTEGRADO (PTY): senha e confirmação de host key aparecem e funcionam
   const t = createTerminal({ shell: sshfsBin, args, title: 'sshfs: ' + host });
   if (t && t.error) return { error: t.error };
