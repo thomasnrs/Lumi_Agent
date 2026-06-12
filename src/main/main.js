@@ -40,14 +40,17 @@ process.on('unhandledRejection', (e) => logd('UNHANDLED-REJECTION', String((e &&
 // "ssh"/"docker" sem .exe dão "file not found". Resolve via `where` (com cache).
 const exeCache = new Map();
 function resolveExe(cmd) {
-  if (process.platform !== 'win32') return cmd;
-  if (/[\\/]/.test(cmd) || /\.(exe|bat|cmd)$/i.test(cmd)) return cmd; // já tem caminho/extensão
+  if (/[\\/]/.test(cmd)) return cmd; // já é um caminho
+  if (process.platform === 'win32' && /\.(exe|bat|cmd)$/i.test(cmd)) return cmd;
   if (exeCache.has(cmd)) return exeCache.get(cmd);
-  let out = cmd + '.exe';
+  let out = process.platform === 'win32' ? cmd + '.exe' : cmd; // Linux: execvp resolve via PATH se tudo falhar
   try {
-    const lines = require('child_process').execSync('where ' + cmd, { windowsHide: true, timeout: 4000 }).toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    // prefere um executável de verdade (.exe/.cmd/.bat) — o where pode listar shims sem extensão primeiro
-    const r = lines.find((l) => /\.(exe|cmd|bat)$/i.test(l)) || lines[0];
+    const finder = process.platform === 'win32' ? 'where ' + cmd : 'command -v ' + cmd;
+    const opts = { windowsHide: true, timeout: 4000 };
+    if (process.platform !== 'win32') opts.shell = '/bin/sh'; // `command` é builtin do shell
+    const lines = require('child_process').execSync(finder, opts).toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    // Windows: prefere um executável de verdade (o `where` lista shims sem extensão primeiro, ex.: docker)
+    const r = process.platform === 'win32' ? lines.find((l) => /\.(exe|cmd|bat)$/i.test(l)) || lines[0] : lines[0];
     if (r) out = r;
   } catch (e) {
     logd('resolveExe: não achei', cmd);
@@ -1676,6 +1679,93 @@ ipcMain.handle('gh:pr-create', async () => {
   } catch (e) {
     return { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) };
   }
+});
+
+// ============================================================
+//  WORKSPACE REMOTO via SSH (SSHFS) — estilo Remote-SSH do VS Code
+//  Monta a pasta do host remoto localmente e aponta o workspace pra ela:
+//  editor, git, busca, terminal — tudo funciona como se fosse local.
+//  Requer sshfs (Linux: pacote sshfs/fuse; Windows: SSHFS-Win + WinFsp).
+// ============================================================
+function sshConfigHosts() {
+  try {
+    const cfg = fs.readFileSync(path.join(require('os').homedir(), '.ssh', 'config'), 'utf8');
+    return [...cfg.matchAll(/^Host\s+([^\s*?#]+)\s*$/gim)].map((m) => m[1]).slice(0, 30);
+  } catch (e) {
+    return [];
+  }
+}
+ipcMain.handle('ssh:hosts', () => sshConfigHosts());
+
+let sshfsOk; // undefined=não checado, true/false
+ipcMain.handle('ssh:available', async () => {
+  if (sshfsOk !== undefined) return sshfsOk;
+  try {
+    await execAsync('sshfs --version', { timeout: 6000, windowsHide: true });
+    sshfsOk = true;
+  } catch (e) {
+    sshfsOk = false;
+  }
+  return sshfsOk;
+});
+
+let remoteMount = null; // { host, mountPoint, prevWorkspace }
+async function unmountRemote() {
+  if (!remoteMount) return;
+  const mp = remoteMount.mountPoint;
+  logd('ssh:unmount', mp);
+  try {
+    if (process.platform === 'win32') {
+      await execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {}); // SSHFS-Win: o processo segura o mount
+    } else {
+      await execAsync('fusermount -u "' + mp + '"', { timeout: 8000 }).catch(() => execAsync('umount "' + mp + '"', { timeout: 8000 }).catch(() => {}));
+    }
+  } catch (e) {
+    /* best-effort */
+  }
+  remoteMount = null;
+}
+ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
+  if (!host) return { error: 'host vazio' };
+  try {
+    await execAsync('sshfs --version', { timeout: 6000, windowsHide: true });
+  } catch (e) {
+    return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
+  }
+  if (remoteMount) await unmountRemote().catch(() => {});
+  const safe = String(host).replace(/[^\w.-]/g, '_');
+  const mp = path.join(app.getPath('userData'), 'remotes', safe);
+  try {
+    fs.mkdirSync(mp, { recursive: true });
+  } catch (e) {
+    /* ok */
+  }
+  const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
+  const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,idmap=user'];
+  logd('ssh:mount', spec, '→', mp);
+  try {
+    await execFileAsync('sshfs', args, { timeout: 30000, windowsHide: true });
+    fs.readdirSync(mp); // confirma que montou (consegue listar)
+  } catch (e) {
+    logd('ssh:mount FALHOU', String((e && e.stderr) || (e && e.message) || e));
+    return { error: 'não consegui montar (' + spec + '): ' + String((e && e.stderr) || (e && e.message) || e).slice(0, 200) };
+  }
+  const prev = loadConfig().workspace || '';
+  remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
+  saveConfig({ ...loadConfig(), workspace: mp, architectMode: true });
+  broadcast('workspace:switched', mp);
+  broadcast('config:changed');
+  return { ok: true, mountPoint: mp, host };
+});
+ipcMain.handle('ssh:unmount', async () => {
+  const prev = remoteMount && remoteMount.prevWorkspace;
+  await unmountRemote();
+  if (prev) {
+    saveConfig({ ...loadConfig(), workspace: prev });
+    broadcast('workspace:switched', prev);
+    broadcast('config:changed');
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('docker:action', async (_e, { id, action }) => {
@@ -6496,6 +6586,7 @@ app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopAppWatcher(); // encerra o powershell do app ativo
+  if (remoteMount) unmountRemote().catch(() => {}); // best-effort: solta o SSHFS
   if (cursorTimer) clearInterval(cursorTimer);
   if (hookOk) {
     try {

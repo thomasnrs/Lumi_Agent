@@ -902,7 +902,8 @@
       function updateStatus() {
         const t = active && findTab(active);
         const git = gitBranch ? '⎇ ' + gitBranch + (gitChanges ? ' • ' + gitChanges + '±' : '') + '   ' : '';
-        sbLeft.textContent = git + (active || 'Lumi Workspace');
+        const remote = remoteActive ? '📡 ' + remoteActive + '   ' : '';
+        sbLeft.textContent = remote + git + (active || 'Lumi Workspace');
         if (!t) sbRight.textContent = '';
         else if (t.image) sbRight.textContent = 'imagem · ' + fmtBytes(t.bytes || 0);
         else if (t.diff) sbRight.textContent = 'git diff · ' + langOf(t.rel);
@@ -2560,6 +2561,49 @@
         await window.api.setConfig({ workspace: dir, architectMode: true });
         // o main faz broadcast 'workspace:switched' → resetWorkspaceUI roda aqui e o chat ganha a nota
       }
+
+      // ---- workspace remoto via SSH (SSHFS) ----
+      let remoteActive = null; // host do remoto montado (pro item de menu e statusbar)
+      async function openRemote() {
+        if (!(await window.api.sshAvailable()))
+          return toast('⚠ instale o sshfs (Linux: sudo apt install sshfs · Windows: SSHFS-Win + WinFsp) pra abrir pastas remotas', false);
+        const hosts = await window.api.sshHosts();
+        if (!hosts.length) return toast('⚠ nenhum host no seu ~/.ssh/config', false);
+        document.querySelectorAll('.brmenu').forEach((x) => x.remove());
+        const menu = document.createElement('div');
+        menu.className = 'brmenu';
+        menu.style.left = '12px';
+        menu.style.top = '40px';
+        const head = document.createElement('div');
+        head.className = 'bri';
+        head.style.cssText = 'color:#9aa;cursor:default;font-size:11px';
+        head.textContent = '📡 montar pasta remota de:';
+        menu.appendChild(head);
+        hosts.forEach((h) => {
+          const it = document.createElement('div');
+          it.className = 'bri';
+          it.textContent = h;
+          it.onclick = async () => {
+            menu.remove();
+            const remotePath = await askName('Caminho no servidor "' + h + '" (vazio = home)', '');
+            if (remotePath === null) return; // cancelou
+            toast('📡 conectando em ' + h + '…');
+            const r = await window.api.sshMount(h, remotePath);
+            if (r && r.error) return toast('⚠ ' + r.error, false);
+            remoteActive = h;
+            toast('📡 montado: ' + h);
+            window.api.termCreate({ shell: 'ssh', args: [h], title: 'SSH: ' + h }); // shell no servidor de brinde
+          };
+          menu.appendChild(it);
+        });
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+      }
+      async function closeRemote() {
+        await window.api.sshUnmount();
+        remoteActive = null;
+        toast('⏏ pasta remota desmontada');
+      }
       function resetWorkspaceUI() {
         [...openTabs].forEach((t) => closeTab(t.path, true));
         expanded.clear();
@@ -2649,6 +2693,8 @@
             const rec = (c.recentWorkspaces || []).filter((w) => w !== c.workspace);
             return [
               { label: 'Abrir pasta (workspace)…', icon: MI.folderOpen, fn: openFolder },
+              { label: '📡 Abrir pasta remota (SSH)…', icon: MI.plug, fn: openRemote },
+              ...(remoteActive ? [{ label: '⏏ Fechar pasta remota (' + remoteActive + ')', icon: MI.reveal, fn: closeRemote }] : []),
               ...(rec.length ? [{ head: 'Workspaces recentes' }] : []),
               ...rec.map((w) => ({ label: w.replace(/\\/g, '/').split('/').pop(), icon: MI.folder, title: w, fn: () => switchWorkspace(w) })),
               '-',
