@@ -19,7 +19,7 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 
 ---
 
-**Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com ~40 ferramentas, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server e terminal embutidos, voz, visão e memória que você enxerga e controla.
+**Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com ~40 ferramentas, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até **pastas remotas via SSH**), voz, visão e memória que você enxerga e controla.
 
 Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. Já vem **montadinha**: a avatar **Cerberia** e as animações estão no repositório (troque por qualquer `.vrm` quando quiser). As chaves de I.A. são suas (**BYOK** — *bring your own key*; provedores grátis e proxies locais sem chave também funcionam).
 
@@ -33,13 +33,13 @@ Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. J
 |---|---|
 | 🧍 **Avatar vivo** | Janela transparente sempre no topo, click-through inteligente (clica através dela fora do corpo), olhos seguem o cursor, animações `.vrma`, emoções faciais reais (entende português: "empolgada", "melancólica"…), senta na barra de tarefas |
 | 🧠 **I.A. multi-provedor** | **19 provedores pré-cadastrados** (OpenAI, Anthropic, Gemini, Grok, Groq, DeepSeek, Mistral, OpenRouter, Blackbox, Kimi, GLM, Cerebras, Ollama/LM Studio local…) — e o Claude roda o **loop completo de agente**, não só chat. Streaming, thinking, visão, fallback automático de modelo |
-| 🛠️ **Agente de verdade** | ~40 ferramentas nativas com sistema de permissões, turnos longos configuráveis (até 200 passos) com compactação automática de contexto, checkpoints com **desfazer** |
+| 🛠️ **Agente de verdade** | ~40 ferramentas nativas com sistema de permissões (aprovação em **cards bonitos no chat**: permitir/sempre/recusar), turnos longos configuráveis (até 200 passos) com compactação automática de contexto, checkpoints com **desfazer** |
 | 🤖 **Multi-agentes** | Orquestradora delega a uma equipe (Programador, Designer, Testador…) que trabalha **em paralelo** — e você acompanha a narração de cada um **ao vivo** no chat |
-| 🖥️ **Workspace estilo VS Code** | Editor Monaco com abas, **controle de fontes git completo** (diff, stage, commit, push/pull, branches), **Live Server** com recarga automática, terminal integrado (PTY) com tracker de portas ao vivo, Ctrl+P, busca global, menubar, chat lateral embutido |
+| 🖥️ **Workspace estilo VS Code** | Editor Monaco com abas, **git completo** (diff, stage, commit, push/pull, branches, revisão pré-commit pela I.A.), **Live Server** e **navegador embutidos**, aba **Docker** (+compose), terminal **PTY real** com perfis (CMD, Git Bash, **WSL**, **SSH**, venv), menu de **Tarefas**, túnel público em 1 clique, **pastas remotas via SSH** (estilo Remote-SSH), Ctrl+P, busca global, chat lateral |
 | 🗣️ **Voz completa** | TTS grátis (Edge), Gemini (vozes expressivas), XTTS no seu servidor, ElevenLabs — com **lip-sync real**. STT Whisper-compatível pelo microfone |
-| 💚 **Companheira proativa** | Lembretes falados ("me lembra em 20min…"), saudações, boas-vindas na volta, cuidado com pausas, **noção de hora** (madrugada manhosa, "vai dormir não? 👀"), reação opcional ao app em foco — com a personalidade dela |
+| 💚 **Companheira proativa** | Lembretes falados ("me lembra em 20min…"), saudações, boas-vindas na volta, cuidado com pausas, **noção de hora** (madrugada manhosa, "vai dormir não? 👀"), reação opcional ao app em foco (Windows e Linux), **datas especiais** (te dá parabéns 🎂) — com a personalidade dela |
 | 🔍 **Transparência total** | Página de **memória** mostra tudo que ela sabe de você (edite/apague fato por fato) e o **gastômetro** acumula o custo estimado do dia no rodapé do chat |
-| 🎨 **Design refinado** | 9 temas prontos (incl. claros, AMOLED e Sakura 🌸) + editor de tema completo, vidro acrílico nativo (Win11), barras de título customizadas, menus com blur, fonte própria |
+| 🎨 **Design refinado** | 9 temas prontos (incl. claros, AMOLED e Sakura 🌸) + editor de tema completo, vidro acrílico nativo (Win11) — até o **menu de contexto dela é de vidro** —, barras de título customizadas, menus com blur, fonte própria |
 
 ---
 
@@ -88,6 +88,7 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 |---|---|
 | `ask_user` | **Pausa e pergunta pra você** com opções clicáveis antes de decisões importantes |
 | `update_plan` | Checklist vivo no chat (`📋 Plano — 2/5`) que ela atualiza conforme trabalha |
+| `read_clipboard` / `write_clipboard` | Lê o que você copiou · deixa um texto pronto no seu Ctrl+V |
 | `set_reminder` / `list_reminders` / `cancel_reminder` | Lembretes falados na hora marcada (persistem ao reiniciar) |
 | `remember_fact` / `recall_facts` | Memória de longo prazo sobre você |
 | `delegate_to_agent` | Delega subtarefas à equipe de agentes (execução **paralela**) |
@@ -111,11 +112,17 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 
 ## 🖥️ O workspace (um mini VS Code com a Lumi dentro)
 
-- **Controle de fontes completo** (`Ctrl+Shift+G`): alterações staged/não-staged com ações por arquivo, **diff em abas** no Monaco (HEAD ⇆ atual), barrinhas de linhas alteradas na margem do editor, push/pull, troca/criação de branch — e o pulo do gato: **✦ a Lumi escreve a mensagem do commit olhando o diff**.
+- **Controle de fontes completo** (`Ctrl+Shift+G`): alterações staged/não-staged com ações por arquivo, **diff em abas** no Monaco (HEAD ⇆ atual), barrinhas de linhas alteradas na margem, push/pull, troca/criação de branch, **histórico de commits** com diff inline — e os pulos do gato: **✦ a Lumi escreve a mensagem do commit** e **🔍 revisa o diff antes** de você commitar.
 - **⚡ Live Server**: preview ao vivo do site dentro do editor com **recarga automática ao salvar** (inclusive quando *ela* edita). E o **🎯 apontar**: clique num elemento da página e ele vira contexto pronto no chat — "deixa esse título maior" e ela sabe exatamente qual é.
+- **🌐 Navegador embutido**: acesse o `localhost` dos seus dev servers (Vite, Node…) numa aba — com 🎯 apontar e um badge de **erros do console** que manda tudo pra Lumi corrigir.
+- **🐳 Docker integrado**: aba com containers ao vivo (iniciar/parar/logs/shell direto no terminal), barra **docker-compose** (up/down/logs) — e ela *sabe* se Docker/WSL estão disponíveis na máquina.
+- **Perfis de terminal** (▾): PowerShell, CMD, Git Bash, distros **WSL**, venv Python do projeto e seus hosts **SSH** do `~/.ssh/config`. E o **✦ corrigir**: manda a saída do terminal pro chat com um clique.
+- **📡 Pasta remota (SSH)**: monte um diretório do seu servidor via SSHFS e o workspace inteiro — editor, git, busca, **e a própria Lumi** — trabalha nele como se fosse local (estilo Remote-SSH).
+- **🧰 Tarefas**: os scripts do `package.json`/`Makefile` viram menu de 1 clique; **🌍 expor porta** cria um túnel público (cloudflared/ngrok) com URL na hora.
+- **🐙 GitHub** (com o `gh` CLI): status do CI da branch, PRs abertos e **✦PR** — ela escreve título e descrição olhando seus commits e cria o Pull Request.
 - **Seleção → Lumi**: clique direito em qualquer trecho de código — *enviar*, *explicar* ou *refatorar* com ela, direto no chat lateral.
 - **Editor profissional**: `Ctrl+P` (abrir arquivo com busca fuzzy), sticky scroll, formatar documento, símbolos do arquivo, zoom com Ctrl+scroll, quebra de linha/minimapa configuráveis, ícones por tecnologia, indent guides.
-- **Terminal & portas**: múltiplos terminais (PTY real), URLs clicáveis, tracker de portas ao vivo com kill em um clique.
+- **Terminal & portas**: múltiplos terminais (**PTY real**), URLs clicáveis, tracker de portas ao vivo com kill em um clique.
 - Painéis **redimensionáveis** (explorador, chat, terminal) com larguras que persistem.
 
 ---
@@ -193,20 +200,21 @@ src/
 ```
 
 ### 💾 Dados (em `%APPDATA%/ai-desktop-mate/`)
-`config.json` (configurações) · `facts.json` (memória de longo prazo — **visível e editável** na página Memória) · `chats/*.json` (conversas com linha do tempo completa) · `presets.json` (perfis) · `reminders.json` (lembretes) · `usage.json` (gastômetro do dia). Imagens geradas: `Imagens/Lumi/`. Memória por projeto: `<workspace>/.lumi-memory.md`. Tudo fica **na sua máquina** — as únicas saídas são as chamadas aos provedores que **você** configurou.
+`config.json` (configurações) · `facts.json` (memória de longo prazo — **visível e editável** na página Memória) · `chats/*.json` (conversas com linha do tempo completa) · `presets.json` (perfis) · `reminders.json` (lembretes) · `usage.json` (gastômetro do dia) · `lumi.log` (debug do app). **Backup/restauração de tudo** pelo menu → *Backup dos dados*; problemas viram issue pré-preenchida em *Relatar um problema*. Imagens geradas: `Imagens/Lumi/`. Memória por projeto: `<workspace>/.lumi-memory.md`. Tudo fica **na sua máquina** — as únicas saídas são as chamadas aos provedores que **você** configurou.
 
 ---
 
 ## ⚠️ Notas
 
 - "Ver" (imagens, tela, páginas) exige **modelo multimodal** (gpt-4o, Claude, Gemini, Qwen-VL…).
-- O terminal integrado usa **PTY real** quando o `node-pty` compila (`npm run rebuild:pty`); senão cai automaticamente num modo compatível.
+- O terminal integrado usa **PTY real** — os instaladores dos Releases já vêm com ele compilado. Rodando do código-fonte, rode `npm run rebuild:pty` uma vez (o script resolve sozinho as pegadinhas de build: libs Spectre do MSVC, etc.); sem ele há um modo compatível automático.
+- A pasta remota (📡 SSH) requer `sshfs` (Linux: `sudo apt install sshfs` · Windows: SSHFS-Win + WinFsp).
 - Monaco e MCP baixam dependências na primeira execução (internet necessária uma vez).
 - Consumo de ~600–900 MB de RAM é majoritariamente overhead do Chromium — é o preço do Electron.
 
 ## 🗺️ Roadmap
 
-✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, terminal) · ✅ Proatividade com contexto (hora, app ativo) · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · 🔜 Auto-update + CI · 🔜 i18n (EN) · 🎯 **Steam**
+✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH) · ✅ Proatividade com contexto (hora, app ativo, datas) · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · 🔜 i18n (EN) · 🎯 **Steam**
 
 ---
 
