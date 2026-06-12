@@ -2596,11 +2596,13 @@
             menu.remove();
             const remotePath = await askName('Caminho no servidor "' + h + '" (vazio = home)', '');
             if (remotePath === null) return; // cancelou
-            toast('📡 conectando em ' + h + '…');
+            showPanel(true); // o sshfs roda num terminal — senha/host key aparecem LÁ
+            toast('📡 conectando em ' + h + ' — se pedir senha ou yes/no, responde no terminal "sshfs: ' + h + '"');
             const r = await window.api.sshMount(h, remotePath);
             if (r && r.error) return toast('⚠ ' + r.error, false);
             remoteActive = h;
-            toast('📡 montado: ' + h);
+            updateStatus();
+            toast('📡 montado: ' + h + ' — workspace remoto ativo!');
             window.api.termCreate({ shell: 'ssh', args: [h], title: 'SSH: ' + h }); // shell no servidor de brinde
           };
           menu.appendChild(it);

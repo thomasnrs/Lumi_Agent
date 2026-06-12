@@ -1770,28 +1770,56 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   if (!sshfsBin) return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
   if (remoteMount) await unmountRemote().catch(() => {});
   const safe = String(host).replace(/[^\w.-]/g, '_');
-  const mp = path.join(app.getPath('userData'), 'remotes', safe);
+  const base = path.join(app.getPath('userData'), 'remotes');
   try {
-    fs.mkdirSync(mp, { recursive: true });
+    fs.mkdirSync(base, { recursive: true });
   } catch (e) {
     /* ok */
   }
-  const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
-  const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,idmap=user'];
-  logd('ssh:mount', sshfsBin, spec, '→', mp);
-  try {
-    await execFileAsync(sshfsBin, args, { timeout: 30000, windowsHide: true });
-    fs.readdirSync(mp); // confirma que montou (consegue listar)
-  } catch (e) {
-    logd('ssh:mount FALHOU', String((e && e.stderr) || (e && e.message) || e));
-    return { error: 'não consegui montar (' + spec + '): ' + String((e && e.stderr) || (e && e.message) || e).slice(0, 200) };
+  const mp = path.join(base, safe);
+  if (process.platform === 'win32') {
+    // WinFsp monta em diretório que NÃO existe (cria um reparse point) — limpa sobra de antes
+    try {
+      fs.rmdirSync(mp);
+    } catch (e) {
+      /* não existia (ótimo) ou tem coisa (o sshfs vai reclamar VISÍVEL no terminal) */
+    }
+  } else {
+    try {
+      fs.mkdirSync(mp, { recursive: true }); // no Linux o mountpoint precisa existir
+    } catch (e) {
+      /* ok */
+    }
   }
-  const prev = loadConfig().workspace || '';
-  remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
-  saveConfig({ ...loadConfig(), workspace: mp, architectMode: true });
-  broadcast('workspace:switched', mp);
-  broadcast('config:changed');
-  return { ok: true, mountPoint: mp, host };
+  const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
+  const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3' + (process.platform === 'win32' ? '' : ',idmap=user')];
+  // roda NO TERMINAL INTEGRADO (PTY): senha e confirmação de host key aparecem e funcionam
+  const t = createTerminal({ shell: sshfsBin, args, title: 'sshfs: ' + host });
+  if (t && t.error) return { error: t.error };
+  logd('ssh:mount via terminal', sshfsBin, spec, '→', mp);
+  // vigia o ponto de montagem por até 90s (tempo de digitar senha etc.)
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90000) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      fs.readdirSync(mp); // win: só existe/lista depois de montado
+      if (process.platform !== 'win32') {
+        // linux: o dir existe antes — confirma que virou mountpoint de verdade
+        require('child_process').execSync('mountpoint -q "' + mp + '"', { timeout: 3000 });
+      }
+      const prev = loadConfig().workspace || '';
+      remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
+      saveConfig({ ...loadConfig(), workspace: mp, architectMode: true });
+      broadcast('workspace:switched', mp);
+      broadcast('config:changed');
+      logd('ssh:mount OK', mp);
+      return { ok: true, mountPoint: mp, host };
+    } catch (e) {
+      /* ainda não montou — continua vigiando */
+    }
+  }
+  logd('ssh:mount TIMEOUT', spec);
+  return { error: 'não montou em 90s — olha o terminal "sshfs: ' + host + '": ele deve estar pedindo senha, confirmação de host key (yes) ou reclamando do caminho' };
 });
 ipcMain.handle('ssh:unmount', async () => {
   const prev = remoteMount && remoteMount.prevWorkspace;
