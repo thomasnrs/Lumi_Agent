@@ -1804,6 +1804,22 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   let mp; // ponto de montagem passado pro sshfs
   let wsPath; // caminho que vira o workspace
   if (process.platform === 'win32') {
+    // limpa unidades de rede MORTAS de tentativas anteriores (existem mas não listam)
+    for (const L of 'ZYXWVUTSRQPONML') {
+      const root = L + ':\\';
+      try {
+        if (fs.existsSync(root)) {
+          try {
+            fs.readdirSync(root);
+          } catch (dead) {
+            logd('ssh:mount limpando unidade morta', L + ':');
+            await execAsync('net use ' + L + ': /delete /y', { windowsHide: true, timeout: 8000 }).catch(() => {});
+          }
+        }
+      } catch (e) {
+        /* segue */
+      }
+    }
     // SSHFS-Win/WinFsp: letra de unidade é o formato robusto ("invalid mount point" com diretório)
     for (const L of 'ZYXWVUTSRQPONML') {
       if (!fs.existsSync(L + ':\\')) {
