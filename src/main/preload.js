@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('api', {
   sshHosts: () => ipcRenderer.invoke('ssh:hosts'),
   sshAvailable: () => ipcRenderer.invoke('ssh:available'),
   sshInstallCmd: () => ipcRenderer.invoke('ssh:install-cmd'),
+  sshEnsureKey: (host) => ipcRenderer.invoke('ssh:ensure-key', host),
   sshMount: (host, remotePath) => ipcRenderer.invoke('ssh:mount', { host, remotePath }),
   sshUnmount: () => ipcRenderer.invoke('ssh:unmount'),
   termBuffer: (id) => ipcRenderer.invoke('term:buffer', id),

@@ -2597,8 +2597,14 @@
             // o askName trata vazio como cancelar — então o "home" entra como "." já preenchido
             const remotePath = await askName('Caminho no servidor "' + h + '" (. = home)', '.');
             if (remotePath === null) return; // cancelou (Esc/Cancelar/apagou tudo)
-            showPanel(true); // o sshfs roda num terminal — senha/host key aparecem LÁ
-            toast('📡 conectando em ' + h + ' — se pedir senha ou yes/no, responde no terminal "sshfs: ' + h + '"');
+            showPanel(true);
+            // ACESSO POR CHAVE AUTOMÁTICO: 1ª vez neste servidor? a Lumi gera/instala a
+            // chave — você só digita a senha do SSH UMA vez no terminal "chave: host"
+            toast('🔑 verificando acesso em ' + h + ' — se pedir senha, digita no terminal "chave: ' + h + '" (só desta vez)');
+            const k = await window.api.sshEnsureKey(h);
+            if (k && k.error) return toast('⚠ ' + k.error, false);
+            if (k && k.installed) toast('🔑 chave instalada no servidor — nunca mais pede senha!');
+            toast('📡 montando ' + h + '…');
             const r = await window.api.sshMount(h, remotePath);
             if (r && r.error) return toast('⚠ ' + r.error, false);
             remoteActive = h;

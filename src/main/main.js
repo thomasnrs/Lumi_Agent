@@ -1777,6 +1777,60 @@ ipcMain.handle('ssh:install-cmd', async () => {
   return null; // sistema desconhecido → instrução manual
 });
 
+// ---- acesso por chave AUTOMÁTICO: gera id_rsa (sem passphrase), instala no servidor
+// (o usuário digita a senha do SSH UMA vez no terminal) e valida — depois disso o
+// mount e os terminais SSH nunca mais perguntam nada ----
+ipcMain.handle('ssh:ensure-key', async (_e, host) => {
+  const sshDir = path.join(require('os').homedir(), '.ssh');
+  const keyPath = path.join(sshDir, 'id_rsa');
+  try {
+    fs.mkdirSync(sshDir, { recursive: true });
+  } catch (e) {
+    /* ok */
+  }
+  if (!fs.existsSync(keyPath)) {
+    logd('ssh:ensure-key gerando id_rsa (sem passphrase)');
+    try {
+      await execFileAsync(resolveExe('ssh-keygen'), ['-q', '-t', 'rsa', '-b', '4096', '-N', '', '-f', keyPath], { timeout: 30000, windowsHide: true });
+    } catch (e) {
+      return { error: 'não consegui gerar a chave: ' + String((e && e.stderr) || (e && e.message) || e).slice(0, 200) };
+    }
+  }
+  const test = async () => {
+    try {
+      const { stdout } = await execFileAsync(
+        resolveExe('ssh'),
+        ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', host, 'echo __lumi_ok'],
+        { timeout: 20000, windowsHide: true }
+      );
+      return /__lumi_ok/.test(String(stdout));
+    } catch (e) {
+      return false;
+    }
+  };
+  if (await test()) return { ready: true }; // chave já funciona — nada a fazer
+  // instala a .pub no servidor: roda no TERMINAL (PTY) — a senha é digitada UMA vez lá
+  const pub = keyPath + '.pub';
+  const remoteCmd = 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys && echo CHAVE-INSTALADA';
+  const command =
+    process.platform === 'win32'
+      ? 'Get-Content "' + pub + '" | ssh -o StrictHostKeyChecking=accept-new ' + host + ' "' + remoteCmd + '"'
+      : 'cat "' + pub + '" | ssh -o StrictHostKeyChecking=accept-new ' + host + " '" + remoteCmd + "'";
+  const t = createTerminal({ command, title: 'chave: ' + host });
+  if (t && t.error) return { error: t.error };
+  logd('ssh:ensure-key instalando no servidor', host);
+  // espera a senha ser digitada e a chave pegar (testa de 4 em 4s, até 3min)
+  const t0 = Date.now();
+  while (Date.now() - t0 < 180000) {
+    await new Promise((r) => setTimeout(r, 4000));
+    if (await test()) {
+      logd('ssh:ensure-key OK', host);
+      return { ready: true, installed: true };
+    }
+  }
+  return { error: 'a chave não ficou pronta em 3min — digitou a senha no terminal "chave: ' + host + '"? (deve aparecer CHAVE-INSTALADA)' };
+});
+
 let remoteMount = null; // { host, mountPoint, prevWorkspace }
 async function unmountRemote() {
   if (!remoteMount) return;
