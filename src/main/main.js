@@ -1804,6 +1804,22 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   let mp; // ponto de montagem passado pro sshfs
   let wsPath; // caminho que vira o workspace
   if (process.platform === 'win32') {
+    // derruba QUALQUER conexão sshfs anterior na TABELA do net use — zumbis "Indisponível"
+    // nem aparecem como unidade (existsSync falso) mas bloqueiam a reconexão (erro 64/1219)
+    try {
+      const { stdout } = await execAsync('net use', { windowsHide: true, timeout: 8000 });
+      for (const line of stdout.split(/\r?\n/)) {
+        if (!/\\\\sshfs/i.test(line)) continue;
+        const letter = /\s([A-Z]):(\s|$)/.exec(line);
+        const remote = /(\\\\sshfs\S*)/i.exec(line);
+        const target = letter ? letter[1] + ':' : remote && remote[1];
+        if (!target) continue;
+        logd('ssh:mount derrubando conexão sshfs anterior', target);
+        await execAsync('net use ' + target + ' /delete /y', { windowsHide: true, timeout: 8000 }).catch(() => {});
+      }
+    } catch (e) {
+      /* sem conexões listáveis — segue */
+    }
     // limpa unidades de rede MORTAS de tentativas anteriores (existem mas não listam)
     for (const L of 'ZYXWVUTSRQPONML') {
       const root = L + ':\\';
