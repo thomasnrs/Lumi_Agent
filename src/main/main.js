@@ -4148,9 +4148,11 @@ function openPage(id, file, title, w, h) {
 
 // ============================================================
 //  Menu de contexto (clique direito no boneco)
+//  Renderizado numa janelinha própria com VIDRO (acrílico no Win11);
+//  o menu nativo do Electron fica só de fallback (não aceita CSS).
 // ============================================================
-function showContextMenu() {
-  const template = [
+function ctxTemplate() {
+  return [
     { label: 'Abrir chat', click: () => openPage('chat', 'chat.html', 'Chat', 380, 560) },
     { label: 'Gerar imagem', click: () => openPage('imagegen', 'imagegen.html', 'Gerar imagem', 520, 640) },
     { label: 'Modo arquiteto', click: () => openPage('architect', 'architect.html', 'Modo arquiteto', 540, 620) },
@@ -4185,8 +4187,101 @@ function showContextMenu() {
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
   ];
-  Menu.buildFromTemplate(template).popup({ window: win });
 }
+
+let ctxWin = null;
+let ctxActions = new Map(); // id → click() do item (reconstruído a cada abertura)
+let ctxAnchor = null; // posição do cursor no momento do clique direito
+
+// template do Electron → modelo serializável pro renderer (cliques viram ids)
+function serializeCtx(template) {
+  ctxActions = new Map();
+  let seq = 0;
+  const walk = (items) =>
+    (items || []).map((it) => {
+      if (it.type === 'separator') return { type: 'sep' };
+      const m = { id: 'c' + ++seq, label: it.label || '', type: it.type || 'item', checked: !!it.checked, enabled: it.enabled !== false };
+      if (it.submenu) m.submenu = walk(it.submenu);
+      else ctxActions.set(m.id, it.click || (() => {}));
+      return m;
+    });
+  return walk(template);
+}
+
+function ensureCtxWin() {
+  if (ctxWin && !ctxWin.isDestroyed()) return ctxWin;
+  ctxWin = new BrowserWindow({
+    width: 248,
+    height: 200,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    hasShadow: true,
+    // Win11: vidro acrílico DE VERDADE (desfoca o desktop atrás); senão, translúcido via CSS
+    ...(acrylicAvailable() && loadConfig().acrylic !== false
+      ? { backgroundColor: '#00000000', backgroundMaterial: 'acrylic', roundedCorners: true }
+      : { transparent: true }),
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  ctxWin.setAlwaysOnTop(true, 'screen-saver'); // acima até do avatar
+  ctxWin.setMenuBarVisibility(false);
+  ctxWin.loadFile(path.join(__dirname, '..', 'renderer', 'pages', 'ctxmenu.html'));
+  ctxWin.on('blur', () => {
+    try {
+      ctxWin.hide(); // clicou fora → fecha (comportamento de menu)
+    } catch (e) {}
+  });
+  return ctxWin;
+}
+
+function showContextMenu() {
+  try {
+    // posição do cursor AGORA (no Linux/XWayland o getCursorScreenPoint pode estar morto → fonte do uiohook)
+    ctxAnchor = IS_LINUX && typeof linuxCursor !== 'undefined' && linuxCursor ? { x: linuxCursor.x, y: linuxCursor.y } : screen.getCursorScreenPoint();
+    const w = ensureCtxWin();
+    const model = serializeCtx(ctxTemplate());
+    const send = () => w.webContents.send('ctx:model', model);
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send);
+    else send();
+  } catch (e) {
+    // qualquer problema → menu nativo de sempre
+    Menu.buildFromTemplate(ctxTemplate()).popup({ window: win });
+  }
+}
+
+// o renderer mediu o conteúdo → posiciona colado no cursor (sem sair da tela) e mostra
+ipcMain.on('ctx:size', (_e, { w, h }) => {
+  if (!ctxWin || ctxWin.isDestroyed()) return;
+  const pt = ctxAnchor || screen.getCursorScreenPoint();
+  const wa = screen.getDisplayNearestPoint(pt).workArea;
+  const W = Math.max(180, Math.min(Math.round(w || 248), 320));
+  const H = Math.max(40, Math.min(Math.round(h || 200), wa.height - 16));
+  const x = Math.min(Math.max(pt.x, wa.x), wa.x + wa.width - W - 4);
+  const y = Math.min(Math.max(pt.y, wa.y), wa.y + wa.height - H - 4);
+  ctxWin.setBounds({ x, y, width: W, height: H });
+  if (!ctxWin.isVisible()) ctxWin.show();
+});
+ipcMain.on('ctx:click', (_e, { id, checked }) => {
+  const fn = ctxActions.get(id);
+  if (ctxWin && !ctxWin.isDestroyed()) ctxWin.hide();
+  if (fn)
+    setTimeout(() => {
+      try {
+        fn({ checked: !!checked }); // checkbox manda o estado novo (igual o menu nativo)
+      } catch (e) {
+        console.error('ctx item:', (e && e.message) || e);
+      }
+    }, 0);
+});
+ipcMain.on('ctx:close', () => {
+  if (ctxWin && !ctxWin.isDestroyed()) ctxWin.hide();
+});
 
 // "Relatar um problema": abre uma issue do GitHub pré-preenchida com versão/SO
 function reportIssueUrl() {

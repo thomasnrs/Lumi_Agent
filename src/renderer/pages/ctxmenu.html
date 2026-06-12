@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Menu</title>
+    <style>
+      :root {
+        --bg: #16161e; --surface: #24242f; --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+      * { box-sizing: border-box; user-select: none; }
+      html, body { margin: 0; background: transparent; overflow: hidden; font-family: "Segoe UI", sans-serif; }
+      /* painel de vidro: no Win11 o acrílico da janela desfoca o desktop; o CSS deixa translúcido */
+      #wrap {
+        background: color-mix(in srgb, var(--bg) 62%, transparent);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 12px;
+        padding: 5px;
+        backdrop-filter: blur(16px) saturate(1.25);
+        box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45);
+        max-height: calc(100vh - 2px);
+        overflow-y: auto;
+      }
+      .mi {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 10px; border-radius: 8px; font-size: 12.5px; color: var(--text);
+        cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .mi:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+      .mi.dis { opacity: 0.45; cursor: default; }
+      .mi.dis:hover { background: transparent; }
+      .mi .mk { width: 14px; flex: 0 0 auto; text-align: center; font-size: 11px; color: var(--accent); }
+      .mi .lb { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+      .mi .ar { flex: 0 0 auto; color: #889; font-size: 10px; transition: transform 0.15s; }
+      .mi.open .ar { transform: rotate(90deg); }
+      .sep { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 5px 8px; }
+      .sub { display: none; padding-left: 14px; }
+      .sub.on { display: block; }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="wrap"></div>
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script>
+      const wrap = document.getElementById('wrap');
+
+      function sendSize() {
+        // largura fixa agradável; altura = conteúdo (o main limita à área útil da tela)
+        window.api.ctxSize(248, Math.ceil(wrap.scrollHeight) + 2);
+      }
+
+      function renderItem(it, container) {
+        if (it.type === 'sep') {
+          const s = document.createElement('div');
+          s.className = 'sep';
+          container.appendChild(s);
+          return;
+        }
+        const d = document.createElement('div');
+        d.className = 'mi' + (it.enabled === false ? ' dis' : '');
+        const mk = document.createElement('span');
+        mk.className = 'mk';
+        if (it.type === 'checkbox') mk.textContent = it.checked ? '✓' : '';
+        else if (it.type === 'radio') mk.textContent = it.checked ? '●' : '○';
+        else mk.textContent = '';
+        const lb = document.createElement('span');
+        lb.className = 'lb';
+        lb.textContent = it.label;
+        d.appendChild(mk);
+        d.appendChild(lb);
+        container.appendChild(d);
+        if (it.submenu) {
+          const ar = document.createElement('span');
+          ar.className = 'ar';
+          ar.textContent = '▸';
+          d.appendChild(ar);
+          const sub = document.createElement('div');
+          sub.className = 'sub';
+          it.submenu.forEach((s) => renderItem(s, sub));
+          container.appendChild(sub);
+          d.addEventListener('click', () => {
+            d.classList.toggle('open');
+            sub.classList.toggle('on');
+            sendSize(); // a janela cresce/encolhe junto
+          });
+          return;
+        }
+        if (it.enabled === false) return;
+        d.addEventListener('click', () => {
+          // checkbox manda o estado NOVO (o main repassa pro handler como no menu nativo)
+          window.api.ctxClick(it.id, it.type === 'checkbox' ? !it.checked : it.checked);
+        });
+      }
+
+      window.api.onCtxModel((model) => {
+        wrap.innerHTML = '';
+        (model || []).forEach((it) => renderItem(it, wrap));
+        sendSize();
+      });
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') window.api.ctxClose();
+      });
+    </script>
+  </body>
+</html>

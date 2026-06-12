@@ -105,6 +105,11 @@ contextBridge.exposeInMainWorld('api', {
 
   // menu de contexto (clique direito no boneco)
   showContextMenu: () => ipcRenderer.send('show-context-menu'),
+  // menu de contexto com vidro (janelinha própria)
+  onCtxModel: (cb) => ipcRenderer.on('ctx:model', (_e, m) => cb(m)),
+  ctxSize: (w, h) => ipcRenderer.send('ctx:size', { w, h }),
+  ctxClick: (id, checked) => ipcRenderer.send('ctx:click', { id, checked }),
+  ctxClose: () => ipcRenderer.send('ctx:close'),
   onOpenSettings: (cb) => ipcRenderer.on('open-settings', () => cb()),
   onChatReset: (cb) => ipcRenderer.on('chat-reset-ui', () => cb()),
 
