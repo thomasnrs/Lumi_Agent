@@ -484,6 +484,18 @@
       #portsBody .pact button:hover { background: var(--accent); color: var(--accent-text); }
       #portsBody .pact button.danger:hover { background: #e0556e; color: #fff; }
       #portsBody tr.pnew { animation: pnewFlash 1.8s ease; }
+      /* aba DOCKER (mesmo visual da tabela de portas) */
+      #dockerBody { flex: 1; overflow: auto; padding: 6px 10px; }
+      #dockerBody table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      #dockerBody th { text-align: left; color: #9aa; font-size: 10px; text-transform: uppercase; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+      #dockerBody td { padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+      #dockerBody .pact { display: flex; gap: 4px; }
+      #dockerBody .pact button { border: none; border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
+      #dockerBody .pact button:hover { background: var(--accent); color: var(--accent-text); }
+      #dockerBody .pact button.danger:hover { background: #e0556e; color: #fff; }
+      .dkdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #667; }
+      .dkdot.up { background: #7ee0a0; box-shadow: 0 0 6px #7ee0a066; }
+      /* menu de perfis de terminal (reusa o visual do menu de branches) */
       @keyframes pnewFlash {
         from { background: color-mix(in srgb, #7ee0a0 28%, transparent); }
         to { background: transparent; }
@@ -588,9 +600,11 @@
           <div id="panelHead">
             <span class="ptab active" data-tab="term">TERMINAL</span>
             <span class="ptab" data-tab="ports">PORTAS</span>
+            <span class="ptab" data-tab="docker">DOCKER</span>
             <span class="pgrow"></span>
             <select id="termSel" title="Terminais abertos"></select>
-            <button class="pbtn" id="termNew" title="Novo terminal">＋</button>
+            <button class="pbtn" id="termNew" title="Novo terminal (PowerShell)">＋</button>
+            <button class="pbtn" id="termProfilesBtn" title="Novo terminal com perfil (CMD, Git Bash, WSL...)">▾</button>
             <button class="pbtn" id="termFix" title="Mandar a saída deste terminal pra Lumi corrigir">✦</button>
             <button class="pbtn" id="termKillBtn" title="Matar o terminal atual">🗑</button>
             <button class="pbtn" id="panelClose" title="Fechar painel (Ctrl+`)">✕</button>
@@ -600,6 +614,12 @@
             <table>
               <thead><tr><th>Porta</th><th>Processo</th><th>PID</th><th>Ações</th></tr></thead>
               <tbody id="portsRows"></tbody>
+            </table>
+          </div>
+          <div id="dockerBody" hidden>
+            <table>
+              <thead><tr><th></th><th>Container</th><th>Imagem</th><th>Status</th><th>Portas</th><th>Ações</th></tr></thead>
+              <tbody id="dockerRows"></tbody>
             </table>
           </div>
         </div>
@@ -1219,9 +1239,78 @@
         document.querySelectorAll('.ptab').forEach((x) => x.classList.toggle('active', x.dataset.tab === t));
         termBody.style.display = t === 'term' ? '' : 'none';
         portsBodyEl.hidden = t !== 'ports';
+        document.getElementById('dockerBody').hidden = t !== 'docker';
         if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
+        if (t === 'docker') loadDocker(true);
         if (t === 'term') setTimeout(fitActive, 30);
       }
+
+      // ---- aba DOCKER: containers ao vivo + ações ----
+      let lastDockerSig = '';
+      async function loadDocker(force) {
+        const r = await window.api.dockerList();
+        const tabEl = document.querySelector('.ptab[data-tab="docker"]');
+        const running = r.ok ? r.containers.filter((c) => c.state === 'running').length : 0;
+        if (tabEl) tabEl.textContent = 'DOCKER' + (r.ok && r.containers.length ? ' (' + running + '↑)' : '');
+        if (panelTab !== 'docker') return;
+        const sig = JSON.stringify(r);
+        if (!force && sig === lastDockerSig) return; // nada mudou → não pisca
+        lastDockerSig = sig;
+        const tb = document.getElementById('dockerRows');
+        tb.innerHTML = '';
+        if (r.error) {
+          tb.innerHTML = '<tr><td colspan="6" style="color:#9aa;padding:14px;text-align:center">🐳 ' + esc(r.error) + '</td></tr>';
+          return;
+        }
+        if (!r.containers.length) {
+          tb.innerHTML = '<tr><td colspan="6" style="color:#667;padding:14px;text-align:center">Nenhum container. (docker run/compose cria por aqui mesmo 😉)</td></tr>';
+          return;
+        }
+        r.containers.forEach((c) => {
+          const up = c.state === 'running';
+          const tr = document.createElement('tr');
+          tr.innerHTML =
+            '<td><span class="dkdot' + (up ? ' up' : '') + '" title="' + esc(c.state) + '"></span></td>' +
+            '<td><b>' + esc(c.name) + '</b></td><td title="' + esc(c.image) + '">' + esc(c.image) + '</td>' +
+            '<td title="' + esc(c.status) + '">' + esc(c.status) + '</td><td title="' + esc(c.ports) + '">' + esc(c.ports || '—') + '</td>';
+          const td = document.createElement('td');
+          td.className = 'pact';
+          const act = (label, title, fn, danger) => {
+            const b = document.createElement('button');
+            b.textContent = label;
+            b.title = title;
+            if (danger) b.className = 'danger';
+            b.onclick = fn;
+            td.appendChild(b);
+          };
+          const doAct = (action) => async () => {
+            const res = await window.api.dockerAction(c.id, action);
+            if (res && res.error) toast('⚠ ' + res.error, false);
+            loadDocker(true);
+          };
+          if (up) act('⏹', 'Parar', doAct('stop'));
+          else act('▶', 'Iniciar', doAct('start'));
+          act('🔄', 'Reiniciar', doAct('restart'));
+          act('📜', 'Logs ao vivo (terminal)', async () => {
+            const t = await window.api.termCreate({ shell: 'docker', args: ['logs', '-f', '--tail', '200', c.id], title: 'logs:' + c.name });
+            if (t && t.error) toast(t.error, false);
+          });
+          if (up)
+            act('🐚', 'Shell dentro do container', async () => {
+              const t = await window.api.termCreate({ shell: 'docker', args: ['exec', '-it', c.id, 'sh'], title: 'sh:' + c.name });
+              if (t && t.error) toast(t.error, false);
+            });
+          act('✕', 'Remover container', async () => {
+            if (!confirm('Remover o container "' + c.name + '"? (docker rm -f)')) return;
+            doAct('rm')();
+          }, true);
+          tr.appendChild(td);
+          tb.appendChild(tr);
+        });
+      }
+      setInterval(() => {
+        if (!panel.hidden && panelTab === 'docker') loadDocker(); // ao vivo só com a aba aberta
+      }, 5000);
       function fitActive() {
         const u = activeTerm && termsUi.get(activeTerm);
         if (u) {
@@ -1320,6 +1409,31 @@
         if (u) u.term.write('\r\n\x1b[90m[processo encerrado' + (d.exitCode != null ? ' · código ' + d.exitCode : '') + ']\x1b[0m\r\n');
       });
       document.getElementById('termNew').onclick = newTerminal;
+      // ▾ perfis de terminal: PowerShell/CMD/Git Bash/WSL (detectados no main)
+      document.getElementById('termProfilesBtn').onclick = async (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.brmenu').forEach((x) => x.remove());
+        const profs = await window.api.termProfiles();
+        if (!profs || !profs.length) return;
+        const menu = document.createElement('div');
+        menu.className = 'brmenu'; // mesmo visual do menu de branches
+        const rect = e.target.getBoundingClientRect();
+        menu.style.left = Math.max(8, rect.right - 190) + 'px';
+        menu.style.top = rect.top - 6 - profs.length * 31 + 'px'; // abre PRA CIMA (botão fica no rodapé)
+        profs.forEach((p) => {
+          const it = document.createElement('div');
+          it.className = 'bri';
+          it.textContent = p.label;
+          it.onclick = async () => {
+            menu.remove();
+            const r = await window.api.termCreate({ shell: p.shell, args: p.args || [], title: p.label });
+            if (r && r.error) toast(r.error, false);
+          };
+          menu.appendChild(it);
+        });
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+      };
       document.getElementById('termKillBtn').onclick = () => {
         if (!activeTerm) return;
         window.api.termKill(activeTerm);

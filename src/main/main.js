@@ -887,6 +887,34 @@ const OS_NOTE =
       ? 'Sistema operacional: Linux (terminal = bash; use ls/grep/apt, NUNCA comandos de Windows).'
       : 'Sistema operacional: macOS (terminal = zsh/bash).';
 
+// capacidades do ambiente (Docker/WSL) — detectadas 1x no boot e injetadas no prompt
+// (evita a I.A. tatear "será que tem docker?" antes de usar)
+let envCaps = [];
+async function detectEnvCaps() {
+  const caps = [];
+  try {
+    await execAsync('docker info --format "{{.ServerVersion}}"', { timeout: 6000, windowsHide: true });
+    caps.push('Docker disponível (daemon ativo).');
+  } catch (e) {
+    try {
+      await execAsync('docker --version', { timeout: 4000, windowsHide: true });
+      caps.push('Docker instalado, mas o daemon parece parado.');
+    } catch (e2) {
+      /* sem docker */
+    }
+  }
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await execAsync('wsl -l -q', { timeout: 5000, windowsHide: true });
+      const distros = String(stdout).replace(/\u0000/g, '').split('\n').map((s) => s.trim()).filter((d) => d && !/^docker-desktop/.test(d));
+      if (distros.length) caps.push('WSL disponível (' + distros.join(', ') + ') — use `wsl -d <distro> -e <cmd>` quando fizer sentido.');
+    } catch (e) {
+      /* sem WSL */
+    }
+  }
+  envCaps = caps;
+}
+
 // "agora" humanizado pro prompt: dia da semana, hora e período (madrugada/manhã/tarde/noite)
 function timeNote() {
   const d = new Date();
@@ -896,7 +924,7 @@ function timeNote() {
 }
 
 function buildSystemPrompt(cfg) {
-  let sp = (cfg.systemPrompt || '') + '\n\n' + COMPANION_BASE + '\n' + OS_NOTE + '\n' + timeNote();
+  let sp = (cfg.systemPrompt || '') + '\n\n' + COMPANION_BASE + '\n' + OS_NOTE + '\n' + timeNote() + (envCaps.length ? '\n' + envCaps.join(' ') : '');
   if (cfg.memoryEnabled !== false) {
     const facts = loadFacts().map((x) => x.fact).slice(-50);
     if (facts.length) {
@@ -1309,7 +1337,9 @@ let termSeq = 0;
 // funciona em qualquer máquina (sem toolchain), só perde interatividade/cores ricas.
 function createTerminal(opts) {
   const o = opts || {};
-  const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash';
+  // perfil customizado (WSL, CMD, Git Bash, docker logs/exec...) ou o shell padrão
+  const shell = o.shell || (process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash');
+  const profArgs = o.shell ? (Array.isArray(o.args) ? o.args : []) : null; // null = padrões de sempre
   const cwd = o.cwd || loadConfig().workspace || require('os').homedir();
   const id = 't' + ++termSeq;
   const title = o.title || path.basename(shell, '.exe');
@@ -1325,12 +1355,12 @@ function createTerminal(opts) {
   try {
     if (nodePty) {
       rec.pty = true;
-      rec.p = nodePty.spawn(shell, [], { name: 'xterm-256color', cols: o.cols || 100, rows: o.rows || 28, cwd, env: process.env });
+      rec.p = nodePty.spawn(shell, profArgs || [], { name: 'xterm-256color', cols: o.cols || 100, rows: o.rows || 28, cwd, env: process.env });
       rec.p.onData(push);
       rec.p.onExit(({ exitCode }) => onExit(exitCode));
     } else {
       // modo PIPE: powershell/bash lendo comandos do stdin (a UI faz o eco local)
-      rec.p = spawn(shell, process.platform === 'win32' ? ['-NoLogo'] : [], { cwd, env: process.env, windowsHide: true });
+      rec.p = spawn(shell, profArgs || (process.platform === 'win32' ? ['-NoLogo'] : []), { cwd, env: process.env, windowsHide: true });
       const conv = (d) => push(String(d).replace(/\r?\n/g, '\r\n')); // xterm precisa de \r\n
       rec.p.stdout.on('data', conv);
       rec.p.stderr.on('data', conv);
@@ -1371,6 +1401,78 @@ function stripAnsi(s) {
 }
 
 ipcMain.handle('term:create', (_e, opts) => createTerminal(opts));
+
+// perfis de terminal (▾ ao lado do ＋): PowerShell/CMD/Git Bash/WSL no Windows, bash no Linux
+ipcMain.handle('term:profiles', async () => {
+  const profs = [];
+  if (process.platform === 'win32') {
+    profs.push({ label: 'PowerShell', shell: 'powershell.exe' });
+    profs.push({ label: 'CMD', shell: 'cmd.exe' });
+    const gitBash = ['C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files (x86)\\Git\\bin\\bash.exe'].find((p) => {
+      try {
+        return fs.existsSync(p);
+      } catch (e) {
+        return false;
+      }
+    });
+    if (gitBash) profs.push({ label: 'Git Bash', shell: gitBash });
+    try {
+      // saída do wsl -l -q vem em UTF-16 → tira os NUL antes de separar
+      const { stdout } = await execAsync('wsl -l -q', { timeout: 5000, windowsHide: true });
+      String(stdout)
+        .replace(/\u0000/g, '')
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .filter((d) => !/^docker-desktop/.test(d)) // distros internas do Docker não são shell de gente
+        .forEach((d) => profs.push({ label: 'WSL: ' + d, shell: 'wsl.exe', args: ['-d', d] }));
+    } catch (e) {
+      /* sem WSL — segue o baile */
+    }
+  } else {
+    profs.push({ label: 'bash', shell: 'bash' });
+    profs.push({ label: 'sh', shell: 'sh' });
+  }
+  return profs;
+});
+
+// ---- DOCKER (aba do painel): lista + ações nos containers ----
+ipcMain.handle('docker:list', async () => {
+  try {
+    const { stdout } = await execAsync('docker ps -a --no-trunc --format "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}\t{{.Ports}}"', {
+      timeout: 8000,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return {
+      ok: true,
+      containers: stdout
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const [id, name, image, state, status, ports] = l.split('\t');
+          return { id: (id || '').slice(0, 12), name: name || '?', image: image || '', state: state || '', status: status || '', ports: ports || '' };
+        }),
+    };
+  } catch (e) {
+    const msg = String((e && e.stderr) || (e && e.message) || e);
+    if (/not recognized|não é reconhecid|command not found|not found|ENOENT/i.test(msg)) return { error: 'Docker não está instalado (ou fora do PATH).' };
+    if (/pipe|daemon|connect|Cannot connect/i.test(msg)) return { error: 'Docker instalado, mas o daemon não está rodando — abra o Docker Desktop.' };
+    return { error: msg.slice(0, 200) };
+  }
+});
+ipcMain.handle('docker:action', async (_e, { id, action }) => {
+  if (!/^[0-9a-f]{4,64}$/i.test(String(id || ''))) return { error: 'id inválido' };
+  const map = { start: ['start'], stop: ['stop'], restart: ['restart'], rm: ['rm', '-f'] };
+  const args = map[action];
+  if (!args) return { error: 'ação inválida' };
+  try {
+    await execFileAsync('docker', [...args, id], { timeout: 60000, windowsHide: true });
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) };
+  }
+});
 ipcMain.on('term:input', (_e, { id, data }) => {
   const t = terminals.get(id);
   if (t) termWrite(t, data);
@@ -4432,6 +4534,7 @@ app.whenReady().then(() => {
     );
   }, 12000);
   connectMcpServers().catch((e) => console.error('MCP:', e)); // conecta ferramentas externas
+  detectEnvCaps().catch(() => {}); // Docker/WSL no prompt (1x por boot, não bloqueia nada)
 
   // libera o uso do microfone (STT)
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));
