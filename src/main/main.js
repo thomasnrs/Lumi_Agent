@@ -224,7 +224,7 @@ const DEFAULT_CONFIG = {
   searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
-  reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows
+  reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   includeActiveTab: true, // anexa o arquivo ativo do editor a cada mensagem do chat (chip liga/desliga)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
@@ -5908,10 +5908,13 @@ let activeApp = { proc: '', title: '', since: 0 };
 let lastAppComment = 0;
 let lastAppCommented = '';
 let appLongNoticed = '';
-const APP_IGNORE = /^(|explorer|searchhost|applicationframehost|electron|ai-desktop-mate|lumi|textinputhost|shellexperiencehost|startmenuexperiencehost|lockapp|dwm|taskmgr)$/;
+const APP_IGNORE =
+  /^(|explorer|searchhost|applicationframehost|electron|ai-desktop-mate|lumi|textinputhost|shellexperiencehost|startmenuexperiencehost|lockapp|dwm|taskmgr|plasmashell|gnome-shell|cinnamon|xfdesktop|xfce4-panel|mate-panel|lxpanel|polybar|plank|dock)$/;
 
 function startAppWatcher() {
-  if (appWatch || process.platform !== 'win32') return;
+  if (appWatch) return;
+  if (IS_LINUX) return startAppWatcherLinux(); // X11: via xprop
+  if (process.platform !== 'win32') return;
   const ps =
     'Add-Type @"\n' +
     'using System; using System.Runtime.InteropServices; using System.Text;\n' +
@@ -5959,6 +5962,44 @@ function startAppWatcher() {
     appWatch = null;
   }
 }
+// Linux (X11): xprop lê a janela ativa (classe = nome do app + título) — mesmo formato proc|title
+function startAppWatcherLinux() {
+  const sh =
+    'while true; do\n' +
+    '  ID=$(xprop -root _NET_ACTIVE_WINDOW 2>/dev/null | grep -o "0x[0-9a-f]*" | head -1)\n' +
+    '  if [ -n "$ID" ] && [ "$ID" != "0x0" ]; then\n' +
+    '    CLASS=$(xprop -id "$ID" WM_CLASS 2>/dev/null | sed \'s/.*"\\(.*\\)".*/\\1/\')\n' +
+    '    NAME=$(xprop -id "$ID" _NET_WM_NAME 2>/dev/null | sed -n \'s/.*= "\\(.*\\)"$/\\1/p\')\n' +
+    '    [ -z "$NAME" ] && NAME=$(xprop -id "$ID" WM_NAME 2>/dev/null | sed -n \'s/.*= "\\(.*\\)"$/\\1/p\')\n' +
+    '    echo "$CLASS|$NAME"\n' +
+    '  fi\n' +
+    '  sleep 20\n' +
+    'done';
+  try {
+    appWatch = spawn('bash', ['-c', sh], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let buf = '';
+    appWatch.stdout.on('data', (d) => {
+      buf += d.toString();
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        const sep = line.indexOf('|');
+        if (sep < 0) continue;
+        const proc = line.slice(0, sep).toLowerCase().trim();
+        const title = line.slice(sep + 1).trim();
+        if (proc !== activeApp.proc) activeApp = { proc, title, since: Date.now() };
+        else activeApp.title = title;
+      }
+    });
+    appWatch.on('exit', () => {
+      appWatch = null; // xprop ausente? morre quieto e a feature fica inerte
+    });
+  } catch (e) {
+    appWatch = null;
+  }
+}
+
 function stopAppWatcher() {
   if (appWatch) {
     try {
@@ -6056,9 +6097,9 @@ setInterval(async () => {
     stopAppWatcher();
     return;
   }
-  // watcher do app ativo liga/desliga conforme a config (opt-in, Windows)
+  // watcher do app ativo liga/desliga conforme a config (opt-in; Windows e Linux/X11)
   const cfgNow = loadConfig();
-  if (cfgNow.reactApps && lvl >= 2 && process.platform === 'win32') startAppWatcher();
+  if (cfgNow.reactApps && lvl >= 2 && (process.platform === 'win32' || IS_LINUX)) startAppWatcher();
   else stopAppWatcher();
   const now = Date.now();
   const idleMin = (now - lastUserActivity) / 60000;
