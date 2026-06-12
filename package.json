@@ -11,7 +11,7 @@
     "icon": "node scripts/make-icon.js",
     "pack": "npm run build && electron-builder --dir",
     "dist": "node scripts/dist.js",
-    "rebuild:pty": "electron-rebuild -f -w node-pty"
+    "rebuild:pty": "node scripts/rebuild-pty.js"
   },
   "author": "thomasnrs <thomasnrs@hotmail.com>",
   "license": "MIT",
