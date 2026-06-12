@@ -1854,12 +1854,14 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     // o alias do config vira user@hostname!porta (o serviço do WinFsp não lê o seu ~/.ssh/config)
     const r = sshResolveAlias(host);
     const userHost = (r.user ? r.user + '@' : '') + (r.hostname || host) + (r.port && r.port !== '22' ? '!' + r.port : '');
-    const unc =
-      p && p.startsWith('/')
-        ? '\\\\sshfs.r\\' + userHost + p.replace(/\//g, '\\') // caminho absoluto no servidor
-        : '\\\\sshfs\\' + userHost + (p && p !== '.' ? '\\' + p.replace(/\//g, '\\') : ''); // relativo à home
+    // SSHFS-Win tem 4 variantes: sshfs (senha) / sshfs.k (CHAVE) / .r e .kr (caminho absoluto).
+    // Com id_rsa no perfil usa a de chave — monta sem NENHUM prompt (validado de ponta a ponta)
+    const hasKey = fs.existsSync(path.join(require('os').homedir(), '.ssh', 'id_rsa'));
+    const abs = p && p.startsWith('/');
+    const svc = '\\\\sshfs' + (hasKey ? '.k' : '') + (abs ? (hasKey ? 'r' : '.r') : '') + '\\';
+    const unc = svc + userHost + (abs ? p.replace(/\//g, '\\') : p && p !== '.' ? '\\' + p.replace(/\//g, '\\') : '');
     t = createTerminal({ shell: 'net', args: ['use', mp, unc, '/persistent:no'], title: 'sshfs: ' + host });
-    logd('ssh:mount via net use', mp, unc);
+    logd('ssh:mount via net use', mp, unc, hasKey ? '(chave)' : '(senha)');
   } else {
     const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
     const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,StrictHostKeyChecking=accept-new,idmap=user'];
