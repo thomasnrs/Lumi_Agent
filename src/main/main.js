@@ -1695,6 +1695,35 @@ function sshConfigHosts() {
     return [];
   }
 }
+// resolve um alias do ~/.ssh/config em {user, hostname, port} — o launcher do
+// SSHFS-Win roda como serviço (SYSTEM) e NÃO lê o config do usuário, então a
+// UNC do net use precisa do endereço real: \\sshfs\user@hostname!porta
+function sshResolveAlias(alias) {
+  const out = {};
+  try {
+    const lines = fs.readFileSync(path.join(require('os').homedir(), '.ssh', 'config'), 'utf8').split(/\r?\n/);
+    let inBlock = false;
+    for (const raw of lines) {
+      const l = raw.trim();
+      if (!l || l.startsWith('#')) continue;
+      const h = /^Host\s+(.+)$/i.exec(l);
+      if (h) {
+        inBlock = h[1].split(/\s+/).includes(alias);
+        continue;
+      }
+      if (!inBlock) continue;
+      const kv = /^(\w+)[\s=]+(.+)$/.exec(l);
+      if (!kv) continue;
+      const k = kv[1].toLowerCase();
+      if (k === 'hostname' && !out.hostname) out.hostname = kv[2].trim();
+      else if (k === 'user' && !out.user) out.user = kv[2].trim();
+      else if (k === 'port' && !out.port) out.port = kv[2].trim();
+    }
+  } catch (e) {
+    /* sem config */
+  }
+  return out;
+}
 ipcMain.handle('ssh:hosts', () => sshConfigHosts());
 
 // acha o binário do sshfs SEM depender do PATH do processo (que fica velho após
@@ -1806,11 +1835,14 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     // net.exe (NATIVO, funciona no nosso PTY; senha em programa cygwin sob ConPTY
     // chega corrompida — caso real) e o launcher do WinFsp roda o sshfs em 2º plano
     const p = (remotePath || '').trim();
+    // o alias do config vira user@hostname!porta (o serviço do WinFsp não lê o seu ~/.ssh/config)
+    const r = sshResolveAlias(host);
+    const userHost = (r.user ? r.user + '@' : '') + (r.hostname || host) + (r.port && r.port !== '22' ? '!' + r.port : '');
     const unc =
       p && p.startsWith('/')
-        ? '\\\\sshfs.r\\' + host + p.replace(/\//g, '\\') // caminho absoluto no servidor
-        : '\\\\sshfs\\' + host + (p && p !== '.' ? '\\' + p.replace(/\//g, '\\') : ''); // relativo à home
-    t = createTerminal({ shell: 'net', args: ['use', mp, unc], title: 'sshfs: ' + host });
+        ? '\\\\sshfs.r\\' + userHost + p.replace(/\//g, '\\') // caminho absoluto no servidor
+        : '\\\\sshfs\\' + userHost + (p && p !== '.' ? '\\' + p.replace(/\//g, '\\') : ''); // relativo à home
+    t = createTerminal({ shell: 'net', args: ['use', mp, unc, '/persistent:no'], title: 'sshfs: ' + host });
     logd('ssh:mount via net use', mp, unc);
   } else {
     const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
@@ -1841,7 +1873,7 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
       /* ainda não montou — continua vigiando */
     }
   }
-  logd('ssh:mount TIMEOUT', spec);
+  logd('ssh:mount TIMEOUT', host);
   return { error: 'não montou em 90s — olha o terminal "sshfs: ' + host + '": ele deve estar pedindo senha, confirmação de host key (yes) ou reclamando do caminho' };
 });
 ipcMain.handle('ssh:unmount', async () => {
