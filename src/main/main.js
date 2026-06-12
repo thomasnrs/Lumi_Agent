@@ -1864,7 +1864,8 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
       }
       const prev = loadConfig().workspace || '';
       remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
-      saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true });
+      // remoteWs marca que o workspace é um mount de sessão — o boot seguinte restaura o prev
+      saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true, remoteWs: { host, prev } });
       broadcast('workspace:switched', wsPath);
       broadcast('config:changed');
       logd('ssh:mount OK', wsPath);
@@ -1877,13 +1878,11 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   return { error: 'não montou em 90s — olha o terminal "sshfs: ' + host + '": ele deve estar pedindo senha, confirmação de host key (yes) ou reclamando do caminho' };
 });
 ipcMain.handle('ssh:unmount', async () => {
-  const prev = remoteMount && remoteMount.prevWorkspace;
+  const prev = (remoteMount && remoteMount.prevWorkspace) || (loadConfig().remoteWs && loadConfig().remoteWs.prev) || '';
   await unmountRemote();
-  if (prev) {
-    saveConfig({ ...loadConfig(), workspace: prev });
-    broadcast('workspace:switched', prev);
-    broadcast('config:changed');
-  }
+  saveConfig({ ...loadConfig(), workspace: prev, remoteWs: undefined });
+  broadcast('workspace:switched', prev);
+  broadcast('config:changed');
   return { ok: true };
 });
 
@@ -4946,6 +4945,21 @@ function setupAutoUpdate() {
 }
 
 app.whenReady().then(() => {
+  // SEGURANÇA: workspace remoto (SSHFS) é POR SESSÃO — se o app fechou/caiu montado,
+  // o config apontaria pra um drive fantasma (Z:\) e tudo que toca o workspace
+  // travaria/crasharia em loop a cada boot (caso real). Restaura o anterior.
+  try {
+    const c0 = loadConfig();
+    if (c0.remoteWs) {
+      saveConfig({ ...c0, workspace: c0.remoteWs.prev || '', remoteWs: undefined });
+      logd('boot: workspace remoto da sessão anterior descartado → ' + (c0.remoteWs.prev || '(vazio)'));
+    } else if (c0.workspace && !fs.existsSync(c0.workspace)) {
+      saveConfig({ ...c0, workspace: '' });
+      logd('boot: workspace inexistente limpo: ' + c0.workspace);
+    }
+  } catch (e) {
+    logd('boot ws-check', String((e && e.message) || e));
+  }
   initChats(); // multi-chat: retoma o chat atual (ou migra/cria)
   loadReminders(); // lembretes persistidos (os vencidos disparam no 1º ciclo)
   startWorkspaceWatcher(); // auto-refresh do editor quando arquivos mudam
@@ -5930,6 +5944,8 @@ function startWorkspaceWatcher() {
       clearTimeout(wsWatchTimer);
       wsWatchTimer = setTimeout(() => broadcast('workspace:changed'), 300);
     });
+    // FS de rede pode emitir 'error' depois (drive caiu) — sem listener isso DERRUBA o processo
+    wsWatcher.on('error', (e) => logd('wsWatcher error (drive caiu?)', String((e && e.message) || e)));
   } catch (e) {
     // fs.watch recursive indisponível (Linux antigo / FS de rede) -> polling leve como fallback
     wsWatcher = { close: () => clearInterval(wsPollTimer) };
