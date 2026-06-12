@@ -1091,7 +1091,6 @@ const sttModelEl = document.getElementById('sttModel');
 const audioInputEl = document.getElementById('audioInput');
 const audioOutputEl = document.getElementById('audioOutput');
 const fetchModelsBtn = document.getElementById('fetchModels');
-const modelsDatalist = document.getElementById('modelsDatalist');
 const modelsStatus = document.getElementById('modelsStatus');
 const ttsProviderEl = document.getElementById('ttsProvider');
 const ttsApiKeyEl = document.getElementById('ttsApiKey');
@@ -1593,8 +1592,19 @@ saveBtn.addEventListener('click', async () => {
   showBubble('Pronto! Pode falar comigo ✨', 4000);
 });
 
-// buscar a lista de modelos no endpoint
-fetchModelsBtn.addEventListener('click', async () => {
+// ---- dropdown de modelos: lista COMPLETA com scroll e filtro ao digitar ----
+// (o datalist nativo só mostrava sugestões do que você já tinha digitado)
+const modelPick = document.getElementById('modelPick');
+const mpkList = document.getElementById('mpkList');
+let mpkModels = []; // última lista buscada do provedor
+let mpkKey = ''; // assinatura provedor|url|chave da lista (trocou → rebusca)
+let mpkTarget = null; // qual campo está usando o dropdown (modelo ou reserva)
+let mpkIdx = -1; // item destacado pelas setinhas
+
+function mpkSrcKey() {
+  return providerSel.value + '|' + baseUrlEl.value.trim() + '|' + apiKeyEl.value.trim();
+}
+async function mpkFetch() {
   modelsStatus.textContent = 'Buscando modelos…';
   try {
     const ids = await window.api.listModels({
@@ -1602,16 +1612,108 @@ fetchModelsBtn.addEventListener('click', async () => {
       baseUrl: baseUrlEl.value.trim(),
       apiKey: apiKeyEl.value.trim(),
     });
-    modelsDatalist.innerHTML = '';
-    ids.forEach((id) => {
-      const opt = document.createElement('option');
-      opt.value = id;
-      modelsDatalist.appendChild(opt);
-    });
-    modelsStatus.textContent = `${ids.length} modelos encontrados — clique no campo acima para escolher.`;
+    mpkModels = ids || [];
+    mpkKey = mpkSrcKey();
+    modelsStatus.textContent = mpkModels.length + ' modelos — escolha na lista ou digite pra filtrar.';
+    return true;
   } catch (e) {
+    mpkModels = [];
+    mpkKey = '';
     modelsStatus.textContent = '⚠ ' + (e.message || e);
+    return false;
   }
+}
+function mpkRender() {
+  if (!mpkTarget) return;
+  const q = mpkTarget.value.trim().toLowerCase();
+  const list = q ? mpkModels.filter((m) => m.toLowerCase().includes(q)) : mpkModels;
+  mpkIdx = -1;
+  mpkList.innerHTML = '';
+  if (!mpkModels.length) {
+    mpkList.innerHTML = '<div class="mpkmsg">nenhum modelo carregado — confira a URL/chave e clique no 🔄</div>';
+    return;
+  }
+  if (!list.length) {
+    mpkList.innerHTML = '<div class="mpkmsg">nada bate com "' + q.replace(/[<>&]/g, '') + '" — apague pra ver todos</div>';
+    return;
+  }
+  list.slice(0, 500).forEach((m) => {
+    const d = document.createElement('div');
+    d.className = 'mpkrow' + (m === mpkTarget.value ? ' cur' : '');
+    d.textContent = m;
+    d.title = m;
+    // mousedown (não click): escolhe ANTES do blur do campo fechar o painel
+    d.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      mpkTarget.value = m;
+      mpkClose();
+    });
+    mpkList.appendChild(d);
+  });
+}
+function mpkOpen(target) {
+  mpkTarget = target;
+  const r = target.getBoundingClientRect();
+  modelPick.style.left = r.left + 'px';
+  modelPick.style.top = r.bottom + 4 + 'px';
+  modelPick.style.width = r.width + 'px';
+  modelPick.hidden = false;
+  if (!mpkModels.length || mpkKey !== mpkSrcKey()) {
+    // primeira abertura (ou trocou o provedor): busca sozinho — o usuário nem precisa saber do 🔄
+    mpkList.innerHTML = '<div class="mpkmsg">⏳ buscando os modelos do provedor…</div>';
+    mpkFetch().then(() => {
+      if (!modelPick.hidden && mpkTarget === target) mpkRender();
+    });
+  } else mpkRender();
+}
+function mpkClose() {
+  modelPick.hidden = true;
+  mpkTarget = null;
+}
+[modelEl, fallbackModelEl].forEach((el) => {
+  el.addEventListener('focus', () => mpkOpen(el));
+  el.addEventListener('click', () => {
+    if (modelPick.hidden) mpkOpen(el);
+  });
+  el.addEventListener('input', () => {
+    if (!modelPick.hidden && mpkTarget === el) mpkRender();
+    else mpkOpen(el);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (modelPick.hidden) return;
+    const rows = [...mpkList.querySelectorAll('.mpkrow')];
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!rows.length) return;
+      mpkIdx = e.key === 'ArrowDown' ? Math.min(mpkIdx + 1, rows.length - 1) : Math.max(mpkIdx - 1, 0);
+      rows.forEach((x, i) => x.classList.toggle('sel', i === mpkIdx));
+      rows[mpkIdx].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter' && mpkIdx >= 0 && rows[mpkIdx]) {
+      e.preventDefault();
+      el.value = rows[mpkIdx].textContent;
+      mpkClose();
+    } else if (e.key === 'Escape' || e.key === 'Tab') {
+      mpkClose();
+    }
+  });
+});
+document.addEventListener('mousedown', (e) => {
+  if (!modelPick.hidden && !modelPick.contains(e.target) && e.target !== mpkTarget) mpkClose();
+});
+// rolar a página de configurações fecha o painel (a lista interna pode rolar à vontade)
+document.addEventListener(
+  'scroll',
+  (e) => {
+    if (!modelPick.hidden && e.target !== mpkList && !mpkList.contains(e.target)) mpkClose();
+  },
+  true
+);
+// 🔄 = força rebuscar a lista e já abre no campo de modelo
+fetchModelsBtn.addEventListener('click', async () => {
+  mpkModels = [];
+  mpkKey = '';
+  const ok = await mpkFetch();
+  if (ok) mpkOpen(modelEl);
 });
 
 // testar a voz com os valores atuais do formulario (sem precisar salvar)

@@ -336,6 +336,21 @@
       #settings .panel.active {
         display: block;
       }
+      /* dropdown de modelos da I.A. (todos os modelos, com scroll e filtro) */
+      #modelPick {
+        position: fixed; z-index: 99; background: var(--surface-2, #0f0f16);
+        border: 1px solid var(--border, #2a2a38); border-radius: 10px;
+        box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5); overflow: hidden;
+      }
+      #mpkList { max-height: 280px; overflow-y: auto; padding: 4px; }
+      .mpkrow {
+        padding: 6px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        font-family: Consolas, monospace; color: var(--text, #eee);
+      }
+      .mpkrow:hover, .mpkrow.sel { background: color-mix(in srgb, var(--accent, #7aa2ff) 18%, transparent); }
+      .mpkrow.cur { color: var(--accent, #7aa2ff); font-weight: 600; }
+      .mpkmsg { padding: 12px 10px; font-size: 12px; color: #889; text-align: center; }
       #settings .hint {
         font-size: 11px;
         color: #777;
@@ -489,15 +504,14 @@
           <label>Chave de API (fica só na sua máquina)</label>
           <input id="apiKey" type="password" placeholder="sk-..." />
 
-          <label>Modelo (digite para buscar, ou 🔄 para listar)</label>
+          <label>Modelo (clique no campo e escolha da lista · digite para filtrar)</label>
           <div style="display: flex; gap: 6px">
-            <input id="model" type="text" list="modelsDatalist" placeholder="ex: gpt-4o-mini" style="flex: 1" />
-            <button id="fetchModels" type="button" title="Buscar modelos do endpoint"
+            <input id="model" type="text" placeholder="ex: gpt-4o-mini" style="flex: 1" autocomplete="off" />
+            <button id="fetchModels" type="button" title="Atualizar a lista de modelos do provedor"
               style="flex: 0 0 auto; width: 42px; border: none; border-radius: 8px; background: var(--border); color: #fff; cursor: pointer; font-size: 15px">🔄</button>
           </div>
-          <datalist id="modelsDatalist"></datalist>
           <label>Modelo reserva (fallback — usado se o principal falhar no meio do turno)</label>
-          <input id="fallbackModel" type="text" list="modelsDatalist" placeholder="opcional, ex.: gpt-4o-mini" />
+          <input id="fallbackModel" type="text" placeholder="opcional, ex.: gpt-4o-mini" autocomplete="off" />
 
           <label>Passos por turno (chamadas de ferramenta antes de parar)</label>
           <input id="maxSteps" type="number" min="4" max="200" step="1" placeholder="48" />
@@ -717,6 +731,8 @@
     <script>
       window.__lumiThemed = true;
     </script>
+    <!-- dropdown de modelos (lista completa com scroll — o datalist nativo escondia tudo) -->
+    <div id="modelPick" hidden><div id="mpkList"></div></div>
     <script src="./pages/theme.js"></script>
     <script src="./renderer.bundle.js"></script>
   </body>
