@@ -1755,7 +1755,10 @@ async function unmountRemote() {
   logd('ssh:unmount', mp);
   try {
     if (process.platform === 'win32') {
-      await execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {}); // SSHFS-Win: o processo segura o mount
+      // desconecta a unidade do net use; taskkill de fallback (mount antigo via sshfs.exe direto)
+      await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true, timeout: 10000 }).catch(() =>
+        execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {})
+      );
     } else {
       await execAsync('fusermount -u "' + mp + '"', { timeout: 8000 }).catch(() => execAsync('umount "' + mp + '"', { timeout: 8000 }).catch(() => {}));
     }
@@ -1797,13 +1800,26 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     }
     wsPath = mp;
   }
-  const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
-  // accept-new: aceita host key na 1ª conexão sem o prompt yes/no (frágil sob ConPTY)
-  const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,StrictHostKeyChecking=accept-new' + (process.platform === 'win32' ? '' : ',idmap=user')];
-  // roda NO TERMINAL INTEGRADO (PTY): senha e confirmação de host key aparecem e funcionam
-  const t = createTerminal({ shell: sshfsBin, args, title: 'sshfs: ' + host });
+  let t;
+  if (process.platform === 'win32') {
+    // jeito CANÔNICO do SSHFS-Win: net use + \\sshfs\host — a senha é pedida pelo
+    // net.exe (NATIVO, funciona no nosso PTY; senha em programa cygwin sob ConPTY
+    // chega corrompida — caso real) e o launcher do WinFsp roda o sshfs em 2º plano
+    const p = (remotePath || '').trim();
+    const unc =
+      p && p.startsWith('/')
+        ? '\\\\sshfs.r\\' + host + p.replace(/\//g, '\\') // caminho absoluto no servidor
+        : '\\\\sshfs\\' + host + (p && p !== '.' ? '\\' + p.replace(/\//g, '\\') : ''); // relativo à home
+    t = createTerminal({ shell: 'net', args: ['use', mp, unc], title: 'sshfs: ' + host });
+    logd('ssh:mount via net use', mp, unc);
+  } else {
+    const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
+    const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,StrictHostKeyChecking=accept-new,idmap=user'];
+    // roda NO TERMINAL INTEGRADO (PTY): senha e confirmação de host key aparecem e funcionam
+    t = createTerminal({ shell: sshfsBin, args, title: 'sshfs: ' + host });
+    logd('ssh:mount via terminal', sshfsBin, spec, '→', mp);
+  }
   if (t && t.error) return { error: t.error };
-  logd('ssh:mount via terminal', sshfsBin, spec, '→', mp);
   // vigia o ponto de montagem por até 90s (tempo de digitar senha etc.)
   const t0 = Date.now();
   while (Date.now() - t0 < 90000) {
