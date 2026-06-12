@@ -1032,13 +1032,51 @@ const PERM_LABELS = {
   control: 'controlar o PC (mouse e teclado)',
 };
 
+// ---- aprovação pelo CHAT: card acima do input (Permitir / Sempre / Recusar) ----
+let permSeq = 0;
+const pendingPerms = new Map(); // id -> finish(answer)
+function askPermissionInChat(category, summary) {
+  return new Promise((resolve) => {
+    const id = 'perm' + ++permSeq;
+    const timer = setTimeout(() => {
+      if (pendingPerms.has(id)) {
+        pendingPerms.delete(id);
+        broadcast('chat:perm-done', { id }); // expirou → o card some dos chats
+        resolve(null); // null = ninguém respondeu → cai no diálogo nativo
+      }
+    }, 120000);
+    pendingPerms.set(id, (answer) => {
+      clearTimeout(timer);
+      pendingPerms.delete(id);
+      broadcast('chat:perm-done', { id, allow: !!(answer && answer.allow) });
+      resolve(answer);
+    });
+    broadcast('chat:perm', { id, category, label: PERM_LABELS[category] || category, summary: summary || '' });
+  });
+}
+ipcMain.on('chat:perm-answer', (_e, { id, allow, always }) => {
+  const fin = pendingPerms.get(id);
+  if (fin) fin({ allow: !!allow, always: !!always }); // a primeira resposta vence (qualquer janela)
+});
+
 async function checkPermission(category, summary) {
   if (!category) return true; // ferramenta segura, sem necessidade de permissao
   const cfg = loadConfig();
   const mode = (cfg.perms && cfg.perms[category]) || 'ask';
   if (mode === 'allow') return true;
   if (mode === 'deny') return false;
-  // 'ask' -> dialogo nativo, com opcao de "sempre permitir" (bypass) por categoria
+  // 'ask' → card BONITO no chat (acima do input); se ninguém responder em 2min
+  // (chat fechado?), cai no diálogo nativo — a decisão nunca se perde
+  const viaChat = await askPermissionInChat(category, summary);
+  if (viaChat) {
+    if (viaChat.allow && viaChat.always) {
+      const c = loadConfig();
+      c.perms = c.perms || {};
+      c.perms[category] = 'allow';
+      saveConfig(c);
+    }
+    return viaChat.allow;
+  }
   const r = await dialog.showMessageBox(win, {
     type: 'warning',
     noLink: true,
@@ -5691,6 +5729,7 @@ ipcMain.on('chat:stop', () => {
     }
   }
   if (pendingAsk) pendingAsk.finish('(o usuário parou a tarefa)'); // destrava o loop pra ele poder abortar
+  for (const fin of [...pendingPerms.values()]) fin({ allow: false }); // permissões pendentes = negadas
   steerQueue = [];
   broadcast('chat:stopped');
 });

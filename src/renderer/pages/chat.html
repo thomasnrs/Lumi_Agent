@@ -1181,6 +1181,26 @@
         text-align: right;
         min-height: 14px;
       }
+      /* aprovação de ação (card acima do input — substitui o popup nativo) */
+      #permArea { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
+      #permArea:not(:empty) { padding-bottom: 6px; }
+      .permcard {
+        background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+        border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+        border-radius: 12px; padding: 9px 12px; animation: permin 0.18s ease;
+      }
+      @keyframes permin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+      .permcard .ptxt { font-size: 12.5px; line-height: 1.5; word-break: break-word; }
+      .permcard .pcat { font-size: 10.5px; color: var(--accent); margin-left: 6px; opacity: 0.85; }
+      .permcard .pbtns { display: flex; gap: 6px; margin-top: 7px; }
+      .permcard .pbtns button {
+        border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+        border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+      }
+      .permcard .pbtns .pok { background: var(--accent); border-color: var(--accent); color: var(--accent-text, #fff); }
+      .permcard .pbtns .palw:hover { border-color: var(--accent); color: var(--accent); }
+      .permcard .pbtns .pno { color: #ff9b9b; }
+      .permcard .pbtns .pno:hover { background: #3a2030; border-color: #3a2030; }
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -1236,6 +1256,7 @@
       <div id="planItems"></div>
     </details>
     <div id="msgs"><div id="empty">Comece a conversar 👇</div></div>
+    <div id="permArea"></div>
     <div id="stats"></div>
     <div id="modelPop" hidden>
       <div class="mphead">
@@ -2417,6 +2438,47 @@
       });
       window.api.onTool((info) => addTool(info));
       window.api.onToolResult((info) => addToolResult(info));
+
+      // ---------- aprovação de permissão (card acima do input — sem popup nativo) ----------
+      const permArea = document.getElementById('permArea');
+      window.api.onPerm((p) => {
+        if (!p || permArea.querySelector('[data-perm="' + p.id + '"]')) return; // não duplica
+        const d = document.createElement('div');
+        d.className = 'permcard';
+        d.dataset.perm = p.id;
+        const txt = document.createElement('div');
+        txt.className = 'ptxt';
+        const b = document.createElement('b');
+        b.textContent = p.summary || p.label;
+        txt.append('🔐 Ela quer ', b);
+        const cat = document.createElement('span');
+        cat.className = 'pcat';
+        cat.textContent = p.label;
+        txt.appendChild(cat);
+        const row = document.createElement('div');
+        row.className = 'pbtns';
+        const mk = (label, cls, title, allow, always) => {
+          const bt = document.createElement('button');
+          bt.className = cls;
+          bt.textContent = label;
+          bt.title = title;
+          // o card sai quando o main confirma (perm-done) — sincroniza todas as janelas
+          bt.onclick = () => window.api.answerPerm(p.id, allow, always);
+          row.appendChild(bt);
+        };
+        mk('✓ Permitir', 'pok', 'Permite só esta ação', true, false);
+        mk('✓ Sempre', 'palw', 'Permite e não pergunta mais sobre: ' + p.label, true, true);
+        mk('✕ Recusar', 'pno', 'Nega esta ação (a conversa continua)', false, false);
+        d.appendChild(txt);
+        d.appendChild(row);
+        permArea.appendChild(d);
+        hideTyping(); // ela está esperando a sua decisão
+      });
+      window.api.onPermDone((info) => {
+        const d = info && permArea.querySelector('[data-perm="' + info.id + '"]');
+        if (d) d.remove();
+        if (!permArea.children.length && !stopBtn.hidden) showTyping(); // decidiu → ela volta ao trabalho
+      });
 
       // ---------- plano de tarefas (checklist vivo da Lumi) ----------
       const planBox = document.getElementById('planBox');
