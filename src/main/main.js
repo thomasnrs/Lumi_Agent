@@ -5191,12 +5191,12 @@ ipcMain.handle('pick-folder', async () => {
 });
 // arvore de arquivos do workspace (para o editor)
 const WS_IGNORE = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.cache']);
-function walkWorkspace(dir, base, out, depth, deadline) {
+async function walkWorkspace(dir, base, out, depth, deadline) {
   if (!deadline) deadline = Date.now() + 5000; // FS remoto não pode segurar o main
   if (depth > 8 || out.length > 3000 || Date.now() > deadline) return;
   let entries = [];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true }); // sem stat por arquivo
+    entries = await fs.promises.readdir(dir, { withFileTypes: true }); // assíncrono, sem stat por arquivo
   } catch (e) {
     return;
   }
@@ -5204,7 +5204,7 @@ function walkWorkspace(dir, base, out, depth, deadline) {
     if (out.length > 3000 || Date.now() > deadline) return;
     if (WS_IGNORE.has(ent.name)) continue;
     const full = path.join(dir, ent.name);
-    if (ent.isDirectory()) walkWorkspace(full, base, out, depth + 1, deadline);
+    if (ent.isDirectory()) await walkWorkspace(full, base, out, depth + 1, deadline);
     else out.push(path.relative(base, full).replace(/\\/g, '/'));
   }
 }
@@ -5213,11 +5213,11 @@ function safeWsPath(cfg, rel) {
   const fp = path.resolve(cfg.workspace, rel || '');
   return fp.startsWith(path.resolve(cfg.workspace)) ? fp : null;
 }
-ipcMain.handle('workspace:tree', () => {
+ipcMain.handle('workspace:tree', async () => {
   const cfg = loadConfig();
   if (!cfg.workspace) return [];
   const out = [];
-  walkWorkspace(cfg.workspace, cfg.workspace, out, 0);
+  await walkWorkspace(cfg.workspace, cfg.workspace, out, 0);
   return out.sort();
 });
 ipcMain.handle('workspace:read', (_e, rel) => {
@@ -5265,7 +5265,7 @@ ipcMain.handle('workspace:write', (_e, { rel, content }) => {
 });
 
 // árvore COMPLETA (pastas + arquivos, aninhada) para o editor estilo VS Code
-function buildWsTree(absDir, base, depth, budget) {
+async function buildWsTree(absDir, base, depth, budget) {
   // ORÇAMENTO: workspace remoto (SSHFS) com home gigante TRAVAVA o main por minutos
   // (caso real). withFileTypes = 1 chamada por pasta (sem stat por arquivo) e a
   // varredura para em ~6s/2500 entradas — a árvore vem parcial em vez de congelar.
@@ -5273,7 +5273,8 @@ function buildWsTree(absDir, base, depth, budget) {
   if (Date.now() > budget.until || budget.left <= 0) return [];
   let entries = [];
   try {
-    entries = fs.readdirSync(absDir, { withFileTypes: true });
+    // ASSÍNCRONO: FS remoto lento/morto não congela o app — no pior caso a árvore só demora
+    entries = await fs.promises.readdir(absDir, { withFileTypes: true });
   } catch (e) {
     return [];
   }
@@ -5288,7 +5289,7 @@ function buildWsTree(absDir, base, depth, budget) {
     const full = path.join(absDir, name);
     const rel = path.relative(base, full).replace(/\\/g, '/');
     if (ent.isDirectory()) {
-      dirs.push({ name, path: rel, dir: true, children: depth < 12 ? buildWsTree(full, base, depth + 1, budget) : [] });
+      dirs.push({ name, path: rel, dir: true, children: depth < 12 ? await buildWsTree(full, base, depth + 1, budget) : [] });
     } else {
       files.push({ name, path: rel, dir: false });
     }
@@ -5297,14 +5298,14 @@ function buildWsTree(absDir, base, depth, budget) {
   files.sort((a, b) => a.name.localeCompare(b.name));
   return dirs.concat(files);
 }
-ipcMain.handle('workspace:fulltree', () => {
+ipcMain.handle('workspace:fulltree', async () => {
   const cfg = loadConfig();
   if (!cfg.workspace) return null;
-  return buildWsTree(cfg.workspace, cfg.workspace, 0);
+  return await buildWsTree(cfg.workspace, cfg.workspace, 0);
 });
 
 // busca global no projeto (Ctrl+Shift+F do editor): texto simples, case-insensitive
-ipcMain.handle('workspace:search', (_e, query) => {
+ipcMain.handle('workspace:search', async (_e, query) => {
   const cfg = loadConfig();
   const q = String(query || '').toLowerCase();
   if (!cfg.workspace || q.length < 2) return { results: [], truncated: false };
@@ -5313,11 +5314,11 @@ ipcMain.handle('workspace:search', (_e, query) => {
   let truncated = false;
   const MAXR = 400;
   const deadline = Date.now() + 8000; // FS remoto: melhor busca parcial que main travado
-  const walk = (dir, depth) => {
+  const walk = async (dir, depth) => {
     if (results.length >= MAXR || depth > 12 || files > 4000 || Date.now() > deadline) return;
     let entries = [];
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true }); // sem stat por arquivo
+      entries = await fs.promises.readdir(dir, { withFileTypes: true }); // assíncrono, sem stat por arquivo
     } catch (e) {
       return;
     }
@@ -5327,12 +5328,12 @@ ipcMain.handle('workspace:search', (_e, query) => {
       if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
       const full = path.join(dir, name);
       if (ent.isDirectory()) {
-        walk(full, depth + 1);
+        await walk(full, depth + 1);
         continue;
       }
       let st;
       try {
-        st = fs.statSync(full);
+        st = await fs.promises.stat(full);
       } catch (e) {
         continue;
       }
@@ -5340,7 +5341,7 @@ ipcMain.handle('workspace:search', (_e, query) => {
       files++;
       let content;
       try {
-        content = fs.readFileSync(full, 'utf8');
+        content = await fs.promises.readFile(full, 'utf8');
       } catch (e) {
         continue;
       }
@@ -5361,7 +5362,7 @@ ipcMain.handle('workspace:search', (_e, query) => {
       }
     }
   };
-  walk(cfg.workspace, 0);
+  await walk(cfg.workspace, 0);
   return { results, truncated };
 });
 
@@ -6261,12 +6262,12 @@ ipcMain.handle('chats:delete', (_e, id) => {
 
 // Expande @arquivo / @pasta do workspace, anexando o conteúdo ao prompt (estilo Claude Code)
 const FILES_SENTINEL = '\n\n===ARQUIVOS-MENCIONADOS===\n';
-function expandMentions(text) {
+async function expandMentions(text) {
   const cfg = loadConfig();
   if (!text || !cfg.workspace) return { text: text || '', files: [] };
   let tree = [];
   try {
-    walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
+    await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
   } catch (e) {
     tree = [];
   }
@@ -6315,7 +6316,7 @@ ipcMain.on('chat:send', async (_e, payload) => {
   if (cfg.includeActiveTab !== false && activeEditorFile && !raw.includes('@' + activeEditorFile)) {
     raw2 = raw + '\n@' + activeEditorFile;
   }
-  const text = expandMentions(raw2).text; // anexa @arquivos mencionados (workspace)
+  const text = (await expandMentions(raw2)).text; // anexa @arquivos mencionados (workspace)
   // chave de API e opcional (proxies locais podem nao exigir)
   // monta o conteudo do usuario (com imagens = visao, formato OpenAI)
   let content = text;
