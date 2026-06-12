@@ -127,9 +127,11 @@ npm install
 npm start          # builda o renderer e abre o Electron
 ```
 
-1. Coloque um avatar `.vrm` em `assets/` (grátis em [VRoid Hub](https://hub.vroid.com)).
-2. (Opcional) Animações `.vrma` em `animations/` — idle, saudação, sentar, gestos (emoções em `animations/emotions/`).
-3. Abra as **Configurações** (engrenagem ⚙ no avatar ou bandeja) e configure provedor, modelo e chave.
+Na **primeira execução**, o assistente de boas-vindas configura tudo em ~2 minutos: provedor de I.A. (com os 🆓 grátis em destaque e teste de conexão), avatar `.vrm` e voz — e dá pra reabri-lo quando quiser no menu → *Assistente de configuração*. Se preferir na mão:
+
+1. Coloque um avatar `.vrm` em `assets/` (grátis no [VRoid Hub](https://hub.vroid.com)).
+2. As animações `.vrma` **já vêm no repositório** — pra trocar, é só substituir os arquivos em `animations/`.
+3. Configurações completas na engrenagem ⚙ (avatar ou bandeja): provedor, modelo, chave, voz, mic, permissões, tema.
 
 > O avatar `.vrm` **não é versionado** (licença de terceiros) — cada um traz o seu. As animações `.vrma` **já vêm no repositório** (packs gratuitos: motions oficiais do VRoid + gestos do [vrm-viewer](https://github.com/tk256ailab/vrm-viewer)).
 
@@ -195,7 +197,7 @@ src/
 
 ## 🗺️ Roadmap
 
-✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, terminal) · ✅ Proatividade com contexto (hora, app ativo) · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · 🔜 Wizard de primeiro uso · 🔜 Auto-update + CI · 🔜 i18n (EN) · 🎯 **Steam**
+✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, terminal) · ✅ Proatividade com contexto (hora, app ativo) · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · 🔜 Auto-update + CI · 🔜 i18n (EN) · 🎯 **Steam**
 
 ---
 
