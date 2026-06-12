@@ -3887,6 +3887,7 @@ function createTray() {
       { label: 'Agentes (multi-agente)', click: () => openPage('agents', 'agents.html', 'Agentes', 620, 680) },
       { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
       { label: 'Memória da Lumi', click: () => openPage('memory', 'memory.html', 'Memória', 540, 640) },
+      { label: 'Assistente de configuração', click: () => openPage('wizard', 'wizard.html', 'Bem-vindo', 640, 700) },
       { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
       { label: 'Personagem', submenu: vrmMenuItems() },
       { label: 'Configurações…', click: () => openSettingsWindow() },
@@ -4029,6 +4030,7 @@ function showContextMenu() {
     { label: 'Agentes (multi-agente)', click: () => openPage('agents', 'agents.html', 'Agentes', 620, 680) },
     { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
     { label: 'Memória da Lumi', click: () => openPage('memory', 'memory.html', 'Memória', 540, 640) },
+    { label: 'Assistente de configuração', click: () => openPage('wizard', 'wizard.html', 'Bem-vindo', 640, 700) },
     { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
     { label: 'Personagem', submenu: vrmMenuItems() },
     { label: 'Configurações…', click: () => openSettingsWindow() },
@@ -4085,6 +4087,23 @@ app.whenReady().then(() => {
     applyIgnore(); // estado inicial do click-through
   }
   createTray();
+
+  // PRIMEIRO USO: assistente de boas-vindas (provedor → avatar → voz)
+  if (!loadConfig().wizardDone) {
+    setTimeout(() => {
+      openPage('wizard', 'wizard.html', 'Bem-vindo', 640, 700);
+      const w = openPages.get('wizard');
+      if (w)
+        w.once('closed', () => {
+          // fechou de qualquer jeito → não insiste no próximo boot (reabrível pelo menu)
+          const c = loadConfig();
+          if (!c.wizardDone) {
+            c.wizardDone = true;
+            saveConfig(c);
+          }
+        });
+    }, 800);
+  }
 
   // setupMouseHook(); // DESLIGADO: voltamos a capturar sobre o corpo (clique nao vaza).
   // O lag antigo era o raycast (resolvido com a capsula), nao a captura da janela.
@@ -5043,6 +5062,34 @@ ipcMain.handle('facts:delete', (_e, index) => {
   return f;
 });
 ipcMain.on('memory:open', () => openPage('memory', 'memory.html', 'Memória', 540, 640));
+
+// ---- assistente de primeiro uso (wizard) ----
+ipcMain.handle('wizard:vrms', () => {
+  const files = listVrms();
+  const sel = loadConfig().selectedVrm;
+  return { files, selected: sel && files.includes(sel) ? sel : files[0] || null };
+});
+ipcMain.handle('wizard:install-vrm', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Escolha o avatar (.vrm)',
+    filters: [{ name: 'Avatar VRM', extensions: ['vrm'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths[0]) return { canceled: true };
+  try {
+    const src = r.filePaths[0];
+    const dir = path.join(resBase(), 'assets');
+    fs.mkdirSync(dir, { recursive: true });
+    const name = path.basename(src);
+    const dest = path.join(dir, name);
+    if (path.resolve(src) !== path.resolve(dest)) fs.copyFileSync(src, dest); // copia pra assets/
+    selectVrm(name); // salva a escolha e recarrega o avatar na hora
+    return { ok: true, name };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+});
+ipcMain.on('chat:open-window', () => openPage('chat', 'chat.html', 'Chat', 380, 560));
 
 // le o texto de um .anim do Unity (para conversao experimental de idle)
 ipcMain.handle('get-unity-idle', () => {

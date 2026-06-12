@@ -77,6 +77,11 @@ contextBridge.exposeInMainWorld('api', {
   factsSet: (index, fact) => ipcRenderer.invoke('facts:set', { index, fact }),
   factsDelete: (index) => ipcRenderer.invoke('facts:delete', index),
   openMemoryPage: () => ipcRenderer.send('memory:open'),
+  openChatWindow: () => ipcRenderer.send('chat:open-window'),
+
+  // assistente de primeiro uso
+  wizardVrms: () => ipcRenderer.invoke('wizard:vrms'),
+  wizardInstallVrm: () => ipcRenderer.invoke('wizard:install-vrm'),
 
   // diagnostico de memoria
   onMemReport: (cb) => ipcRenderer.on('mem-report', () => cb()),

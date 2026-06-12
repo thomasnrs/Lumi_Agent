@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bem-vindo</title>
+    <style>
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; height: 100%; font-family: "Segoe UI", sans-serif;
+        background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+      }
+      #steps { flex: 1; overflow-y: auto; padding: 22px 26px 10px; }
+      .step { display: none; }
+      .step.on { display: block; animation: fadein 0.25s ease; }
+      @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+      h1 { font-size: 19px; margin: 0 0 6px; }
+      h2 { font-size: 15px; margin: 18px 0 6px; }
+      p { font-size: 13px; line-height: 1.6; color: #b8b8c4; margin: 6px 0; }
+      .hero { text-align: center; padding: 14px 0 4px; }
+      .hero svg { width: 86px; height: 86px; border-radius: 22px; box-shadow: 0 10px 36px rgba(122, 162, 255, 0.35); }
+      input[type="text"], input[type="password"] {
+        width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px;
+        background: var(--surface-2); color: var(--text); font-size: 13px; font-family: inherit; outline: none;
+      }
+      input:focus { border-color: var(--accent); }
+      label { display: block; font-size: 11px; color: #9aa; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.3px; }
+      .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+      .card {
+        background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 10px 12px;
+        cursor: pointer; transition: border-color 0.12s, transform 0.12s;
+      }
+      .card:hover { transform: translateY(-1px); }
+      .card.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+      .card b { font-size: 13.5px; display: block; }
+      .card .badge { font-size: 10.5px; color: var(--accent); }
+      .card small { font-size: 11px; color: #99a; line-height: 1.4; display: block; margin-top: 2px; }
+      a { color: var(--accent); cursor: pointer; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      button.big {
+        border: none; border-radius: 10px; padding: 10px 20px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+        background: var(--accent); color: var(--accent-text);
+      }
+      button.ghost {
+        border: 1px solid var(--border); background: transparent; color: var(--text);
+        border-radius: 10px; padding: 9px 16px; font-size: 13px; cursor: pointer;
+      }
+      button.ghost:hover { border-color: var(--accent); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #foot {
+        display: flex; align-items: center; gap: 10px; padding: 14px 26px; border-top: 1px solid var(--border);
+      }
+      #dots { flex: 1; display: flex; gap: 6px; }
+      #dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.2s; }
+      #dots span.on { background: var(--accent); }
+      #skip { font-size: 11.5px; color: #778; }
+      .ok { color: #7ee0a0; }
+      .err { color: #ff9b9b; }
+      #testMsg, #vrmMsg, #voiceMsg { font-size: 12.5px; min-height: 18px; margin-top: 8px; }
+      .tip { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; font-size: 12.5px; color: #b8b8c4; }
+      .tip b { color: var(--text); }
+      .rowbtns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-thumb { background: #33333f; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="steps">
+      <!-- 1 · boas-vindas -->
+      <div class="step on" data-step="0">
+        <div class="hero">
+          <svg viewBox="0 0 1024 1024"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6e8bff"/><stop offset="1" stop-color="#8a3ffc"/></linearGradient></defs><rect x="20" y="20" width="984" height="984" rx="220" fill="url(#lg)"/><path fill="#fff" d="M481 236 Q481 543 788 543 Q481 543 481 850 Q481 543 174 543 Q481 543 481 236 Z"/><path fill="#fff" fill-opacity="0.95" d="M758 148 Q758 266 876 266 Q758 266 758 384 Q758 266 640 266 Q758 266 758 148 Z"/></svg>
+          <h1 style="margin-top: 14px">Oi! Eu sou a Lumi ✦</h1>
+          <p>Sua companheira de I.A. na área de trabalho. Vou te ajudar a me configurar — leva <b>2 minutinhos</b> e você pode mudar tudo depois nas Configurações.</p>
+        </div>
+        <label>Como você quer que eu te chame? (opcional)</label>
+        <input id="userName" type="text" placeholder="seu nome ou apelido" spellcheck="false" />
+      </div>
+
+      <!-- 2 · provedor -->
+      <div class="step" data-step="1">
+        <h1>🧠 Quem vai ser meu cérebro?</h1>
+        <p>Escolha um provedor de I.A. — os <b>🆓 grátis</b> são ótimos pra começar (chave gratuita em 1 minuto).</p>
+        <div class="cards" id="provCards"></div>
+        <div id="provCfg" hidden>
+          <label id="keyLabel">Chave de API <a id="keyLink" target="_blank">(pegar a chave →)</a></label>
+          <input id="apiKey" type="password" placeholder="cole a chave aqui" spellcheck="false" />
+          <div class="rowbtns">
+            <button class="ghost" id="testBtn">🔌 Testar conexão</button>
+          </div>
+          <div id="testMsg"></div>
+        </div>
+      </div>
+
+      <!-- 3 · avatar -->
+      <div class="step" data-step="2">
+        <h1>🧍 Meu corpo (avatar .vrm)</h1>
+        <p>Eu nasço "vazia" de propósito: cada pessoa traz o avatar que quiser (questão de licenças). Baixe um <b>grátis</b> no <a id="vroidLink">VRoid Hub</a> — escolha um modelo com download liberado — e me aponte o arquivo <code>.vrm</code>.</p>
+        <div class="rowbtns">
+          <button class="big" id="pickVrm">📁 Escolher arquivo .vrm</button>
+          <button class="ghost" id="openVroid">🌐 Abrir o VRoid Hub</button>
+        </div>
+        <div id="vrmMsg"></div>
+        <p style="margin-top: 12px; font-size: 12px; color: #889">Animações (<code>.vrma</code>) são opcionais e vão na pasta <code>animations/</code> — tem links no README. Sem elas eu me viro com movimentos procedurais. 😊</p>
+      </div>
+
+      <!-- 4 · voz -->
+      <div class="step" data-step="3">
+        <h1>🗣️ Minha voz</h1>
+        <p>Posso falar em voz alta com lip-sync. A voz <b>Edge é grátis e sem chave</b> — recomendo começar com ela.</p>
+        <div class="cards">
+          <div class="card sel" id="voiceEdge"><b>🆓 Voz Edge</b><span class="badge">recomendada</span><small>natural, em português, sem configurar nada</small></div>
+          <div class="card" id="voiceOff"><b>🔇 Sem voz</b><small>só texto no chat (dá pra ligar depois)</small></div>
+        </div>
+        <div class="rowbtns">
+          <button class="ghost" id="testVoice">▶ Ouvir um oizinho</button>
+        </div>
+        <div id="voiceMsg"></div>
+        <p style="font-size: 12px; color: #889">Vozes premium (Gemini expressiva, ElevenLabs, XTTS) e microfone (falar comigo) ficam nas Configurações → Voz/Mic.</p>
+      </div>
+
+      <!-- 5 · pronto -->
+      <div class="step" data-step="4">
+        <h1>✨ Tudo pronto!</h1>
+        <div id="summary"></div>
+        <h2>Dicas rápidas</h2>
+        <div class="tip">🖱️ <span><b>Clique direito em mim</b> abre o menu com tudo: chat, workspace, configurações…</span></div>
+        <div class="tip">🪟 <span><b>Me arraste</b> pela tela; perto da barra de tarefas eu <b>sento</b> nela.</span></div>
+        <div class="tip">⌨️ <span><b>Ctrl+Shift+C</b> liga/desliga o atravessar cliques (pra eu não atrapalhar).</span></div>
+        <div class="tip">🛠️ <span>No chat eu uso <b>~40 ferramentas</b>: arquivos, terminal, web, sua tela… você aprova cada categoria na 1ª vez.</span></div>
+        <div class="rowbtns" style="margin-top: 16px">
+          <button class="big" id="openChat">💬 Abrir o chat e conversar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="foot">
+      <div id="dots"></div>
+      <a id="skip">pular o assistente</a>
+      <button class="ghost" id="back" hidden>← Voltar</button>
+      <button class="big" id="next">Começar →</button>
+    </div>
+
+    <script>
+      window.__lumiThemed = true;
+    </script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+    <script>
+      // provedores em destaque (espelho enxuto dos presets das Configurações)
+      const PROVS = {
+        groq: { name: 'Groq', badge: '🆓 grátis', desc: 'Llama rapidíssimo — ótimo pra começar', provider: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', key: true, keyUrl: 'https://console.groq.com/keys' },
+        gemini: { name: 'Google Gemini', badge: '🆓 grátis', desc: 'multimodal: me deixa ver imagens e sua tela', provider: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', key: true, keyUrl: 'https://aistudio.google.com/apikey' },
+        blackbox: { name: 'Blackbox', badge: '🆓 grátis', desc: 'modelos free com todas as ferramentas', provider: 'openai', baseUrl: 'https://api.blackbox.ai', model: 'blackboxai/x-ai/grok-code-fast-1:free', key: true, keyUrl: 'https://app.blackbox.ai/dashboard' },
+        ollama: { name: 'Ollama (local)', badge: '🏠 sem chave', desc: 'roda no seu PC — precisa do Ollama instalado', provider: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1', key: false },
+        openai: { name: 'OpenAI', badge: '💳 pago', desc: 'família GPT-5', provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini', key: true, keyUrl: 'https://platform.openai.com/api-keys' },
+        anthropic: { name: 'Anthropic (Claude)', badge: '💳 pago', desc: 'Claude com o agente completo', provider: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-opus-4-8', key: true, keyUrl: 'https://console.anthropic.com/' },
+      };
+      let step = 0;
+      let provSel = '';
+      let voice = 'edge';
+      let vrmOk = false;
+      let tested = false;
+      const TOTAL = 5;
+      const $ = (id) => document.getElementById(id);
+
+      // pontos de progresso
+      const dots = $('dots');
+      for (let i = 0; i < TOTAL; i++) {
+        const s = document.createElement('span');
+        if (i === 0) s.className = 'on';
+        dots.appendChild(s);
+      }
+      function show(n) {
+        step = Math.max(0, Math.min(TOTAL - 1, n));
+        document.querySelectorAll('.step').forEach((el) => el.classList.toggle('on', +el.dataset.step === step));
+        [...dots.children].forEach((d, i) => d.classList.toggle('on', i <= step));
+        $('back').hidden = step === 0;
+        $('next').textContent = step === 0 ? 'Começar →' : step === TOTAL - 1 ? '✓ Concluir' : 'Avançar →';
+        $('skip').style.display = step === TOTAL - 1 ? 'none' : '';
+        if (step === TOTAL - 1) buildSummary();
+      }
+
+      // ---- passo 2: provedor ----
+      const cardsEl = $('provCards');
+      Object.entries(PROVS).forEach(([id, p]) => {
+        const c = document.createElement('div');
+        c.className = 'card';
+        c.innerHTML = '<b>' + p.name + '</b><span class="badge">' + p.badge + '</span><small>' + p.desc + '</small>';
+        c.onclick = () => {
+          provSel = id;
+          tested = false;
+          $('testMsg').textContent = '';
+          [...cardsEl.children].forEach((x) => x.classList.remove('sel'));
+          c.classList.add('sel');
+          $('provCfg').hidden = false;
+          $('keyLabel').style.display = p.key ? '' : 'none';
+          $('apiKey').style.display = p.key ? '' : 'none';
+          if (p.keyUrl) $('keyLink').onclick = () => window.api.openExternal(p.keyUrl);
+        };
+        cardsEl.appendChild(c);
+      });
+      $('testBtn').onclick = async () => {
+        const p = PROVS[provSel];
+        if (!p) return;
+        $('testMsg').textContent = '⏳ testando…';
+        try {
+          const models = await window.api.listModels({ provider: p.provider, baseUrl: p.baseUrl, apiKey: $('apiKey').value.trim(), model: p.model });
+          tested = true;
+          $('testMsg').innerHTML = '<span class="ok">✓ Conectou! ' + (models && models.length ? models.length + ' modelos disponíveis.' : '') + '</span>';
+        } catch (e) {
+          $('testMsg').innerHTML = '<span class="err">✗ ' + String((e && e.message) || e).slice(0, 160) + '</span>' +
+            (p.key && !$('apiKey').value.trim() ? '<br><span style="color:#9aa">(faltou colar a chave?)</span>' : '');
+        }
+      };
+
+      // ---- passo 3: avatar ----
+      function refreshVrm() {
+        window.api.wizardVrms().then((r) => {
+          if (r && r.files && r.files.length) {
+            vrmOk = true;
+            $('vrmMsg').innerHTML = '<span class="ok">✓ Avatar pronto: <b>' + (r.selected || r.files[0]) + '</b>' + (r.files.length > 1 ? ' (+' + (r.files.length - 1) + ' na pasta)' : '') + '</span>';
+          } else {
+            vrmOk = false;
+            $('vrmMsg').innerHTML = '<span style="color:#9aa">Nenhum .vrm ainda — sem ele eu fico invisível 🫥</span>';
+          }
+        });
+      }
+      $('pickVrm').onclick = async () => {
+        const r = await window.api.wizardInstallVrm();
+        if (r && r.error) $('vrmMsg').innerHTML = '<span class="err">✗ ' + r.error + '</span>';
+        else if (r && r.ok) refreshVrm();
+      };
+      $('openVroid').onclick = () => window.api.openExternal('https://hub.vroid.com');
+      $('vroidLink').onclick = () => window.api.openExternal('https://hub.vroid.com');
+      refreshVrm();
+
+      // ---- passo 4: voz ----
+      $('voiceEdge').onclick = () => {
+        voice = 'edge';
+        $('voiceEdge').classList.add('sel');
+        $('voiceOff').classList.remove('sel');
+      };
+      $('voiceOff').onclick = () => {
+        voice = 'off';
+        $('voiceOff').classList.add('sel');
+        $('voiceEdge').classList.remove('sel');
+      };
+      $('testVoice').onclick = async () => {
+        $('voiceMsg').textContent = '⏳ gerando a voz…';
+        try {
+          const nm = $('userName').value.trim();
+          const a = await window.api.speak('Oi' + (nm ? ', ' + nm : '') + '! Eu sou a Lumi, prazer! 💚', { ttsProvider: 'edge' });
+          if (a && a.base64) {
+            new Audio('data:' + (a.mime || 'audio/mpeg') + ';base64,' + a.base64).play();
+            $('voiceMsg').innerHTML = '<span class="ok">✓ É assim que eu falo!</span>';
+          } else $('voiceMsg').innerHTML = '<span class="err">não veio áudio — testa de novo?</span>';
+        } catch (e) {
+          $('voiceMsg').innerHTML = '<span class="err">✗ ' + String((e && e.message) || e).slice(0, 120) + ' (precisa de internet)</span>';
+        }
+      };
+
+      // ---- passo 5: resumo + concluir ----
+      function buildSummary() {
+        const p = PROVS[provSel];
+        $('summary').innerHTML =
+          '<div class="tip">🧠 <span>' + (p ? '<b>' + p.name + '</b> · modelo <code>' + p.model + '</code>' + (tested ? ' <span class="ok">(testado ✓)</span>' : '') : '<b>sem provedor ainda</b> — configure depois em ⚙ Configurações') + '</span></div>' +
+          '<div class="tip">🧍 <span>' + (vrmOk ? 'avatar <b>instalado ✓</b>' : 'avatar <b>pendente</b> — coloque um .vrm em assets/ quando quiser') + '</span></div>' +
+          '<div class="tip">🗣️ <span>voz <b>' + (voice === 'edge' ? 'Edge (grátis) ✓' : 'desligada') + '</b></span></div>';
+      }
+      async function persist() {
+        const p = PROVS[provSel];
+        const cfg = { wizardDone: true, ttsProvider: voice };
+        if (p) {
+          cfg.provider = p.provider;
+          cfg.baseUrl = p.baseUrl;
+          cfg.model = p.model;
+          const k = $('apiKey').value.trim();
+          if (k) cfg.apiKey = k;
+        }
+        await window.api.setConfig(cfg);
+        const nm = $('userName').value.trim();
+        if (nm) await window.api.factsAdd('O usuário se chama ' + nm + ' (pediu pra ser chamado assim).');
+      }
+      $('openChat').onclick = async () => {
+        await persist();
+        window.api.openChatWindow();
+        window.close();
+      };
+
+      // ---- navegação ----
+      $('next').onclick = async () => {
+        if (step === TOTAL - 1) {
+          await persist();
+          window.close();
+          return;
+        }
+        show(step + 1);
+      };
+      $('back').onclick = () => show(step - 1);
+      $('skip').onclick = async () => {
+        await window.api.setConfig({ wizardDone: true });
+        window.close();
+      };
+      show(0);
+    </script>
+  </body>
+</html>
