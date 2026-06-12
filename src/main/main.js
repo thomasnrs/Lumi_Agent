@@ -3859,6 +3859,8 @@ function createWindow() {
   // re-afirma o nível ao perder foco/reaparecer e num batimento defensivo
   const reassertTop = () => {
     try {
+      // menu de contexto aberto? ele tem prioridade (senão o avatar cobre o menu)
+      if (ctxWin && !ctxWin.isDestroyed() && ctxWin.isVisible()) return;
       if (win && !win.isDestroyed() && win.isVisible()) win.setAlwaysOnTop(true, 'screen-saver');
     } catch (e) {
       /* ok */
@@ -4237,6 +4239,11 @@ function ensureCtxWin() {
       ctxWin.hide(); // clicou fora → fecha (comportamento de menu)
     } catch (e) {}
   });
+  ctxWin.on('hide', () => {
+    try {
+      if (win && !win.isDestroyed() && win.isVisible()) win.setAlwaysOnTop(true, 'screen-saver'); // avatar volta ao topo
+    } catch (e) {}
+  });
   return ctxWin;
 }
 
@@ -4266,6 +4273,14 @@ ipcMain.on('ctx:size', (_e, { w, h }) => {
   const y = Math.min(Math.max(pt.y, wa.y), wa.y + wa.height - H - 4);
   ctxWin.setBounds({ x, y, width: W, height: H });
   if (!ctxWin.isVisible()) ctxWin.show();
+  // entre janelas topmost do Windows, quem subiu por ÚLTIMO fica na frente —
+  // o blur do avatar dispara o reassert dele, então o menu se re-eleva já e de novo num tiquinho
+  ctxWin.moveTop();
+  setTimeout(() => {
+    try {
+      if (ctxWin && !ctxWin.isDestroyed() && ctxWin.isVisible()) ctxWin.moveTop();
+    } catch (e) {}
+  }, 80);
 });
 ipcMain.on('ctx:click', (_e, { id, checked }) => {
   const fn = ctxActions.get(id);
