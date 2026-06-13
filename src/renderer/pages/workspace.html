@@ -1026,6 +1026,7 @@
             });
             row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
             row.addEventListener('drop', (e) => {
+              if (!dragSrc) return; // arquivo externo do SO → deixa borbulhar pro handler do #tree (importa)
               e.preventDefault();
               e.stopPropagation();
               row.classList.remove('drop-target');
@@ -1386,6 +1387,36 @@
         if (!dragSrc || e.target.closest('.item')) return;
         e.preventDefault();
         doMove(dragSrc, '');
+      });
+
+      // ---- DROP de arquivos EXTERNOS (do SO) → copia pro workspace (envia ao servidor se remoto) ----
+      // aceita soltar numa pasta (vai pra ela) ou no vazio (raiz). dragSrc=null = é externo.
+      function destDirFromTarget(target) {
+        // row.title guarda o node.path; .item.dir = pasta. soltou numa pasta → vai pra ela; senão raiz.
+        const item = target.closest && target.closest('.item.dir');
+        return item ? (item.title || '') : '';
+      }
+      tree.addEventListener('dragover', (e) => {
+        if (dragSrc) return; // arraste interno tem seu próprio handler
+        if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) {
+          e.preventDefault();
+          tree.classList.add('drop-root');
+        }
+      });
+      tree.addEventListener('drop', async (e) => {
+        if (dragSrc || !e.dataTransfer || !e.dataTransfer.files.length) return; // só arquivos externos
+        e.preventDefault();
+        tree.classList.remove('drop-root');
+        const destDir = destDirFromTarget(e.target);
+        let ok = 0;
+        for (const f of e.dataTransfer.files) {
+          const p = f.path || (window.api.pathForFile && window.api.pathForFile(f));
+          if (!p) continue;
+          const r = await window.api.importFileToWorkspace(p, destDir);
+          if (r && r.error) toast('⚠ ' + r.error, false);
+          else ok++;
+        }
+        if (ok) toast('✓ ' + ok + ' arquivo(s) ' + (remoteActive ? 'enviado(s) pro servidor' : 'copiado(s)') + (destDir ? ' → ' + destDir : ''));
       });
 
       // clique direito no vazio da árvore = criar na raiz
@@ -2009,6 +2040,13 @@
         if (show && !termsUi.size) newTerminal();
       };
       window.addEventListener('resize', fitActive);
+      // soltar arquivo FORA do explorador não deve navegar/abrir no Electron (só o #tree trata)
+      window.addEventListener('dragover', (e) => {
+        if (e.dataTransfer && [...e.dataTransfer.types].includes('Files') && !e.target.closest('#tree')) e.preventDefault();
+      });
+      window.addEventListener('drop', (e) => {
+        if (e.dataTransfer && e.dataTransfer.files.length && !e.target.closest('#tree')) e.preventDefault();
+      });
       // QUALQUER mudança no espaço do terminal (redimensionar o chat lateral, o painel,
       // a janela, toggles...) re-ajusta colunas/linhas do xterm — sem precisar reabrir
       if (window.ResizeObserver) {

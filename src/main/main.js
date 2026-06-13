@@ -6728,6 +6728,22 @@ ipcMain.handle('live:stop', () => {
   return { ok: true };
 });
 
+// drop de arquivo externo no explorador: copia pro workspace (funciona inclusive
+// quando o workspace é um mount remoto Z: — o sshfs envia pro servidor)
+ipcMain.handle('workspace:import-file', async (_e, { srcPath, destDir }) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !srcPath) return { error: 'inválido' };
+  const dest = safeWsPath(cfg, path.join(destDir || '', path.basename(srcPath)));
+  if (!dest) return { error: 'destino fora do workspace' };
+  try {
+    if (fs.existsSync(dest)) return { error: '"' + path.basename(srcPath) + '" já existe aqui' };
+    await fs.promises.copyFile(srcPath, dest);
+    broadcast('workspace:changed');
+    return { ok: true, name: path.basename(srcPath) };
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 160) };
+  }
+});
 ipcMain.handle('workspace:create', (_e, { rel, dir }) => {
   const cfg = loadConfig();
   const fp = cfg.workspace && safeWsPath(cfg, rel);

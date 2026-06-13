@@ -1,8 +1,16 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Ponte segura entre o avatar (renderer) e o processo principal (janela do SO + I.A.)
 contextBridge.exposeInMainWorld('api', {
   platform: process.platform, // win32 | linux | darwin (decide titlebar custom, etc.)
+  // caminho real de um File arrastado do SO (File.path foi removido no Electron 32+)
+  pathForFile: (file) => {
+    try {
+      return webUtils && webUtils.getPathForFile ? webUtils.getPathForFile(file) : file.path || '';
+    } catch (e) {
+      return file && file.path ? file.path : '';
+    }
+  },
   // janela / avatar
   getVrmPath: () => ipcRenderer.invoke('get-vrm-path'),
   getVrmaPaths: () => ipcRenderer.invoke('get-vrma-paths'),
@@ -24,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
   readWorkspaceFile: (rel) => ipcRenderer.invoke('workspace:read', rel),
   readWorkspaceImage: (rel) => ipcRenderer.invoke('workspace:read-image', rel),
   createWorkspaceEntry: (rel, dir) => ipcRenderer.invoke('workspace:create', { rel, dir }),
+  importFileToWorkspace: (srcPath, destDir) => ipcRenderer.invoke('workspace:import-file', { srcPath, destDir }),
   deleteWorkspaceEntry: (rel) => ipcRenderer.invoke('workspace:delete', rel),
   renameWorkspaceEntry: (rel, name) => ipcRenderer.invoke('workspace:rename', { rel, name }),
   moveWorkspaceEntry: (src, destDir) => ipcRenderer.invoke('workspace:move', { src, destDir }),
