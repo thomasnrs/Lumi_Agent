@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('api', {
   setWorkspaceMemory: (content) => ipcRenderer.invoke('workspace:set-memory', content),
   getWorkspaceTree: () => ipcRenderer.invoke('workspace:tree'),
   getWorkspaceFullTree: () => ipcRenderer.invoke('workspace:fulltree'),
+  getWorkspaceChildren: (rel) => ipcRenderer.invoke('workspace:children', rel),
   readWorkspaceFile: (rel) => ipcRenderer.invoke('workspace:read', rel),
   readWorkspaceImage: (rel) => ipcRenderer.invoke('workspace:read-image', rel),
   createWorkspaceEntry: (rel, dir) => ipcRenderer.invoke('workspace:create', { rel, dir }),

@@ -5369,7 +5369,12 @@ ipcMain.handle('pick-folder', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 // arvore de arquivos do workspace (para o editor)
-const WS_IGNORE = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.cache']);
+const WS_IGNORE = new Set([
+  'node_modules', '.git', 'dist', 'build', 'out', '.next', '.cache',
+  // pastas notoriamente pesadas que estouravam o orçamento da árvore e cortavam as irmãs:
+  '.venv', 'venv', 'env', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox',
+  '.nuxt', '.svelte-kit', '.angular', '.gradle', '.idea', '.vscode-test', 'vendor', 'target', '.terraform',
+]);
 async function walkWorkspace(dir, base, out, depth, deadline) {
   if (!deadline) deadline = Date.now() + 5000; // FS remoto não pode segurar o main
   if (depth > 8 || out.length > 3000 || Date.now() > deadline) return;
@@ -5443,44 +5448,63 @@ ipcMain.handle('workspace:write', (_e, { rel, content }) => {
   }
 });
 
-// árvore COMPLETA (pastas + arquivos, aninhada) para o editor estilo VS Code
-async function buildWsTree(absDir, base, depth, budget) {
-  // ORÇAMENTO: workspace remoto (SSHFS) com home gigante TRAVAVA o main por minutos
-  // (caso real). withFileTypes = 1 chamada por pasta (sem stat por arquivo) e a
-  // varredura para em ~6s/2500 entradas — a árvore vem parcial em vez de congelar.
-  if (!budget) budget = { until: Date.now() + 6000, left: 2500 };
-  if (Date.now() > budget.until || budget.left <= 0) return [];
+// lista UM nível (pastas + arquivos ordenados) — sem descer; usado pelo BFS e pelo lazy
+async function lsLevel(absDir, base) {
   let entries = [];
   try {
-    // ASSÍNCRONO: FS remoto lento/morto não congela o app — no pior caso a árvore só demora
-    entries = await fs.promises.readdir(absDir, { withFileTypes: true });
+    entries = await fs.promises.readdir(absDir, { withFileTypes: true }); // async, sem stat por arquivo
   } catch (e) {
     return [];
   }
   const dirs = [];
   const files = [];
   for (const ent of entries) {
-    if (Date.now() > budget.until || budget.left <= 0) break;
     const name = ent.name;
     // esconde internos .lumi-* MAS mostra a memória do projeto (o usuário quer vê-la/editá-la)
     if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
-    budget.left--;
-    const full = path.join(absDir, name);
-    const rel = path.relative(base, full).replace(/\\/g, '/');
-    if (ent.isDirectory()) {
-      dirs.push({ name, path: rel, dir: true, children: depth < 12 ? await buildWsTree(full, base, depth + 1, budget) : [] });
-    } else {
-      files.push({ name, path: rel, dir: false });
-    }
+    const rel = path.relative(base, path.join(absDir, name)).replace(/\\/g, '/');
+    if (ent.isDirectory()) dirs.push({ name, path: rel, dir: true, children: [], loaded: false });
+    else files.push({ name, path: rel, dir: false });
   }
   dirs.sort((a, b) => a.name.localeCompare(b.name));
   files.sort((a, b) => a.name.localeCompare(b.name));
   return dirs.concat(files);
 }
+
+// árvore COMPLETA aninhada — varredura em LARGURA (BFS): cada nível INTEIRO é listado
+// antes de aprofundar, então uma pasta pesada (.venv etc) nunca "come" o orçamento e
+// deixa as irmãs de fora (bug real: docs/scripts/src/tests sumiam). Orçamento total
+// protege contra FS remoto gigante (árvore parcial, mas sempre com o topo completo).
+async function buildWsTree(rootAbs) {
+  const budget = { until: Date.now() + 8000, left: 4000 };
+  const root = await lsLevel(rootAbs, rootAbs);
+  let queue = root.filter((n) => n.dir); // pastas do nível 1 a expandir
+  let depth = 1;
+  while (queue.length && depth < 12 && Date.now() < budget.until && budget.left > 0) {
+    const next = [];
+    for (const node of queue) {
+      if (Date.now() > budget.until || budget.left <= 0) break;
+      node.children = await lsLevel(path.join(rootAbs, node.path), rootAbs);
+      node.loaded = true; // expandida nesta varredura (pastas não-carregadas: lazy ao clicar)
+      budget.left -= node.children.length;
+      for (const c of node.children) if (c.dir) next.push(c);
+    }
+    queue = next;
+    depth++;
+  }
+  return root;
+}
 ipcMain.handle('workspace:fulltree', async () => {
   const cfg = loadConfig();
   if (!cfg.workspace) return null;
-  return await buildWsTree(cfg.workspace, cfg.workspace, 0);
+  return await buildWsTree(cfg.workspace);
+});
+// lazy: filhos de UMA pasta sob demanda (a UI pode pedir ao expandir uma não-carregada)
+ipcMain.handle('workspace:children', async (_e, rel) => {
+  const cfg = loadConfig();
+  const fp = cfg.workspace && safeWsPath(cfg, rel);
+  if (!fp) return [];
+  return await lsLevel(fp, cfg.workspace);
 });
 
 // busca global no projeto (Ctrl+Shift+F do editor): texto simples, case-insensitive

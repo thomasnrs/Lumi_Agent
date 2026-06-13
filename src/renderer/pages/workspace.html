@@ -883,6 +883,15 @@
         const [td] = await Promise.all([window.api.getWorkspaceFullTree(), loadGit()]);
         treeData = td || [];
         qFlat = null; // árvore mudou → o cache do Ctrl+P refaz na próxima busca
+        // restaura pastas que você tinha aberto mas que o BFS não recarregou (lazy) — senão
+        // voltariam vazias após um refresh (ex.: ao salvar um arquivo)
+        for (const p of expanded) {
+          const n = findNode(treeData, p);
+          if (n && n.dir && !n.loaded) {
+            n.loaded = true;
+            n.children = (await window.api.getWorkspaceChildren(p)) || [];
+          }
+        }
         drawTree();
       }
       function drawTree() {
@@ -954,10 +963,30 @@
           if (open && node.children && node.children.length) renderNodes(node.children, container, depth + 1);
         });
       }
-      function toggle(p) {
-        if (expanded.has(p)) expanded.delete(p);
-        else expanded.add(p);
+      async function toggle(p) {
+        if (expanded.has(p)) {
+          expanded.delete(p);
+          drawTree();
+          return;
+        }
+        expanded.add(p);
+        // lazy: pasta que o BFS não chegou a expandir (loaded=false) → busca os filhos ao abrir
+        const node = findNode(treeData, p);
+        if (node && node.dir && !node.loaded) {
+          node.loaded = true;
+          node.children = (await window.api.getWorkspaceChildren(p)) || [];
+        }
         drawTree();
+      }
+      function findNode(nodes, p) {
+        for (const n of nodes || []) {
+          if (n.path === p) return n;
+          if (n.dir && n.children && n.children.length && p.startsWith(n.path + '/')) {
+            const f = findNode(n.children, p);
+            if (f) return f;
+          }
+        }
+        return null;
       }
 
       const toast = (m, ok) => (window.__lumiToast ? window.__lumiToast(m, ok) : (curpath.textContent = m));
