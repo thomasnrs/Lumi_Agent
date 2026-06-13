@@ -6184,6 +6184,83 @@ ipcMain.handle('git:pull', async () => {
   }
 });
 
+// ---- stash: guardar/listar/aplicar/descartar alterações ----
+ipcMain.handle('git:stash-list', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  try {
+    const { stdout } = await gitRun(cfg, ['stash', 'list', '--format=%gd\t%s']);
+    return stdout.split('\n').filter(Boolean).map((l) => {
+      const [ref, ...rest] = l.split('\t');
+      return { ref, desc: rest.join('\t') };
+    });
+  } catch (e) {
+    return [];
+  }
+});
+ipcMain.handle('git:stash', async (_e, { action, ref }) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return { error: 'nenhum workspace' };
+  try {
+    if (action === 'push') await gitRun(cfg, ['stash', 'push', '-u']); // -u inclui não rastreados
+    else if (action === 'pop') await gitRun(cfg, ['stash', 'pop', ...(ref ? [ref] : [])]);
+    else if (action === 'apply') await gitRun(cfg, ['stash', 'apply', ...(ref ? [ref] : [])]);
+    else if (action === 'drop') await gitRun(cfg, ['stash', 'drop', ...(ref ? [ref] : [])]);
+    else return { error: 'ação inválida' };
+    broadcast('workspace:changed');
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).trim().slice(0, 200) };
+  }
+});
+
+// ---- conflitos de merge: listar e resolver (ficar com o nosso / o deles) ----
+ipcMain.handle('git:conflicts', async () => {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  try {
+    const { stdout } = await gitRun(cfg, ['diff', '--name-only', '--diff-filter=U']);
+    return stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+});
+ipcMain.handle('git:resolve', async (_e, { file, side }) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !file) return { error: 'inválido' };
+  // ours = a versão da branch atual; theirs = a que está vindo (merge/rebase)
+  const opt = side === 'theirs' ? '--theirs' : '--ours';
+  try {
+    await gitRun(cfg, ['checkout', opt, '--', file]);
+    await gitRun(cfg, ['add', '--', file]);
+    broadcast('workspace:changed');
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).trim().slice(0, 200) };
+  }
+});
+
+// ---- blame: autor/data/commit por linha de um arquivo ----
+ipcMain.handle('git:blame', async (_e, rel) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !rel) return null;
+  try {
+    const { stdout } = await gitRun(cfg, ['blame', '--line-porcelain', '--', rel]);
+    const lines = [];
+    let cur = {};
+    for (const l of stdout.split('\n')) {
+      if (/^[0-9a-f]{40} /.test(l)) cur = { hash: l.slice(0, 8) };
+      else if (l.startsWith('author ')) cur.author = l.slice(7);
+      else if (l.startsWith('author-time ')) cur.ts = parseInt(l.slice(12), 10) * 1000;
+      else if (l.startsWith('summary ')) cur.summary = l.slice(8);
+      else if (l.startsWith('\t')) lines.push({ ...cur }); // linha de conteúdo → fecha o registro
+    }
+    return lines;
+  } catch (e) {
+    return null;
+  }
+});
+
 // links clicados no terminal integrado (xterm web-links)
 ipcMain.on('open-external-url', (_e, u) => {
   if (typeof u === 'string' && /^https?:\/\//i.test(u)) shell.openExternal(u);

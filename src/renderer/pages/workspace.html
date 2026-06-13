@@ -149,6 +149,11 @@
       }
       .gacts button:hover { background: var(--border); color: var(--text); }
       #gitEmpty { padding: 20px 12px; color: #778; text-align: center; font-size: 12px; }
+      /* conflitos de merge */
+      .gconflicts { border-bottom: 1px solid var(--border); background: color-mix(in srgb, #ff6b6b 8%, transparent); padding-bottom: 4px; }
+      .gconf-head { padding: 7px 10px 3px; font-size: 11px; font-weight: 600; color: #ff9b9b; }
+      .gconflicts .gacts button { border: none; border-radius: 5px; padding: 2px 7px; font-size: 10.5px; cursor: pointer; background: var(--border); color: var(--text); }
+      .gconflicts .gacts button:hover { background: var(--accent); color: var(--accent-text); }
       /* caixa da revisão pré-commit da Lumi */
       #gitReview { border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
       #gitReviewHead { display: flex; align-items: center; gap: 6px; padding: 6px 10px 0; font-size: 11px; color: var(--accent); font-weight: 600; }
@@ -662,6 +667,7 @@
               <span id="ghCi" hidden></span>
               <span style="flex: 1"></span>
               <button class="ga wide" id="ghPrBtn" hidden title="Criar Pull Request com título e descrição escritos pela Lumi">✦PR</button>
+              <button class="ga" id="gitStashBtn" title="Stash — guardar/restaurar alterações">📦</button>
               <button class="ga" id="gitPull" title="Pull (puxar do remoto)">↓ pull</button>
               <button class="ga wide" id="gitPush" title="Push (enviar commits pro remoto)">↑ push</button>
               <button class="ga" id="gitRefresh" title="Atualizar">⟳</button>
@@ -2249,6 +2255,7 @@
         gitPushBtn.classList.toggle('viewon', st.ahead > 0);
         gitPushBtn.title = st.ahead ? 'Push: ' + st.ahead + ' commit(s) pra enviar' : 'Push (nada novo pra enviar)';
         gitListsEl.innerHTML = '';
+        renderConflicts(); // se houver merge em conflito, mostra no topo
         if (!st.staged.length && !st.unstaged.length) {
           gitListsEl.innerHTML = '<div id="gitEmpty">Nenhuma alteração ✨</div>';
         } else {
@@ -2446,6 +2453,97 @@
       window.addEventListener('focus', () => {
         if (sideMode === 'git') loadGitPanel(); // voltou pra janela → status fresco
       });
+
+      // blame da linha atual do cursor → toast com autor/quando/commit
+      let blameCache = null; // { path, lines }
+      async function blameCurrentLine() {
+        const t = active && findTab(active);
+        if (!t || t.diff || t.image || !editor) return;
+        const ln = editor.getPosition().lineNumber;
+        if (!blameCache || blameCache.path !== t.path) blameCache = { path: t.path, lines: await window.api.gitBlame(t.path) };
+        const b = blameCache.lines && blameCache.lines[ln - 1];
+        if (!b) return toast('sem blame (arquivo novo / fora do git)', false);
+        const quando = b.ts ? new Date(b.ts).toLocaleDateString('pt-BR') : '?';
+        toast('⎇ ' + (b.author || '?') + ' · ' + quando + ' · ' + (b.hash || '') + (b.summary ? ' — ' + b.summary.slice(0, 50) : ''));
+      }
+
+      // ---- conflitos de merge: aceitar o nosso lado ou o que está vindo ----
+      async function renderConflicts() {
+        const conf = await window.api.gitConflicts();
+        if (!conf || !conf.length) return;
+        const box = document.createElement('div');
+        box.className = 'gconflicts';
+        box.innerHTML = '<div class="gconf-head">⚠ ' + conf.length + ' arquivo(s) em conflito</div>';
+        conf.forEach((f) => {
+          const row = document.createElement('div');
+          row.className = 'gitem';
+          row.innerHTML = '<span class="ic">' + iconFor(baseName(f)) + '</span><span class="nm">' + esc(baseName(f)) + '</span><span class="dr">' + esc(dirOf(f)) + '</span>';
+          const acts = document.createElement('span');
+          acts.className = 'gacts';
+          acts.style.display = 'flex';
+          const mk = (lbl, side, title) => {
+            const b = document.createElement('button');
+            b.textContent = lbl;
+            b.title = title;
+            b.onclick = async () => {
+              const r = await window.api.gitResolve(f, side);
+              if (r && r.error) return toast('⚠ ' + r.error, false);
+              toast('✓ ' + baseName(f) + ': ' + (side === 'theirs' ? 'versão recebida' : 'sua versão'));
+              const t = findTab(f);
+              if (t) t.stale = true;
+              loadGitPanel();
+            };
+            acts.appendChild(b);
+          };
+          mk('◀ meu', 'ours', 'Ficar com a SUA versão (da branch atual)');
+          mk('deles ▶', 'theirs', 'Ficar com a versão que está VINDO (merge/pull)');
+          const diffb = document.createElement('button');
+          diffb.textContent = '⇆';
+          diffb.title = 'Abrir o arquivo (ver os marcadores <<<<)';
+          diffb.onclick = () => openFile(f);
+          acts.appendChild(diffb);
+          row.appendChild(acts);
+          box.appendChild(row);
+        });
+        gitListsEl.prepend(box);
+      }
+
+      // ---- stash: guardar/restaurar alterações ----
+      document.getElementById('gitStashBtn').onclick = async (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.brmenu').forEach((x) => x.remove());
+        const list = await window.api.gitStashList();
+        const menu = document.createElement('div');
+        menu.className = 'brmenu';
+        const rect = e.target.getBoundingClientRect();
+        menu.style.left = Math.max(8, rect.left - 120) + 'px';
+        menu.style.top = rect.bottom + 4 + 'px';
+        const add = (label, fn, cls) => {
+          const it = document.createElement('div');
+          it.className = 'bri' + (cls ? ' ' + cls : '');
+          it.textContent = label;
+          it.onclick = async () => {
+            menu.remove();
+            const r = await fn();
+            if (r && r.error) toast('⚠ ' + r.error, false);
+            else loadGitPanel();
+          };
+          menu.appendChild(it);
+        };
+        add('📦 Guardar alterações (stash)', () => window.api.gitStash('push'));
+        if (list.length) {
+          const head = document.createElement('div');
+          head.className = 'bri';
+          head.style.cssText = 'color:#9aa;cursor:default;font-size:11px';
+          head.textContent = 'guardados:';
+          menu.appendChild(head);
+          list.forEach((s) => {
+            add('↩ aplicar — ' + s.desc.slice(0, 40), () => window.api.gitStash('pop', s.ref));
+          });
+        }
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+      };
 
       // ---- 🔍 revisão pré-commit: a Lumi lê o diff e aponta o que importa ----
       const gitReviewEl = document.getElementById('gitReview');
@@ -3573,6 +3671,8 @@
           editor.addAction({ id: 'lumi-send', label: '✦ Enviar seleção pra Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 1, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('', false) });
           editor.addAction({ id: 'lumi-explain', label: '✦ Explicar com a Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 2, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('Me explica esse trecho:', true) });
           editor.addAction({ id: 'lumi-refactor', label: '✦ Refatorar com a Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 3, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('Refatore este trecho (pode editar o arquivo direto):', false) });
+          // blame: quem mudou a linha atual (git blame da linha do cursor)
+          editor.addAction({ id: 'lumi-blame', label: '⎇ Quem mudou esta linha (blame)', contextMenuGroupId: '9_git', run: () => blameCurrentLine() });
           // editor de diff do painel git (HEAD ⇆ atual); inline quando o espaço aperta
           diffEditor = monaco.editor.createDiffEditor(diffEl, {
             theme: 'lumi',

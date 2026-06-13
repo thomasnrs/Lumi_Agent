@@ -52,6 +52,11 @@ contextBridge.exposeInMainWorld('api', {
   gitCheckout: (opts) => ipcRenderer.invoke('git:checkout', opts),
   gitPush: () => ipcRenderer.invoke('git:push'),
   gitPull: () => ipcRenderer.invoke('git:pull'),
+  gitStashList: () => ipcRenderer.invoke('git:stash-list'),
+  gitStash: (action, ref) => ipcRenderer.invoke('git:stash', { action, ref }),
+  gitConflicts: () => ipcRenderer.invoke('git:conflicts'),
+  gitResolve: (file, side) => ipcRenderer.invoke('git:resolve', { file, side }),
+  gitBlame: (rel) => ipcRenderer.invoke('git:blame', rel),
   openExternal: (url) => ipcRenderer.send('open-external-url', url),
 
   // live server (preview ao vivo do workspace)
