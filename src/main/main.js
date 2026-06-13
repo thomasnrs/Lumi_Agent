@@ -5369,12 +5369,14 @@ ipcMain.handle('pick-folder', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 // arvore de arquivos do workspace (para o editor)
-const WS_IGNORE = new Set([
+// PESADAS: aparecem na árvore (você sabe que existem) mas NÃO são auto-expandidas —
+// o conteúdo só carrega quando você clica nelas (lazy). Melhor dos 2 mundos: visível + leve.
+const WS_HEAVY = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', '.next', '.cache',
-  // pastas notoriamente pesadas que estouravam o orçamento da árvore e cortavam as irmãs:
   '.venv', 'venv', 'env', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox',
   '.nuxt', '.svelte-kit', '.angular', '.gradle', '.idea', '.vscode-test', 'vendor', 'target', '.terraform',
 ]);
+const WS_IGNORE = new Set([]); // nada totalmente oculto — só os internos .lumi-* (tratados à parte)
 async function walkWorkspace(dir, base, out, depth, deadline) {
   if (!deadline) deadline = Date.now() + 5000; // FS remoto não pode segurar o main
   if (depth > 8 || out.length > 3000 || Date.now() > deadline) return;
@@ -5463,7 +5465,7 @@ async function lsLevel(absDir, base) {
     // esconde internos .lumi-* MAS mostra a memória do projeto (o usuário quer vê-la/editá-la)
     if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
     const rel = path.relative(base, path.join(absDir, name)).replace(/\\/g, '/');
-    if (ent.isDirectory()) dirs.push({ name, path: rel, dir: true, children: [], loaded: false });
+    if (ent.isDirectory()) dirs.push({ name, path: rel, dir: true, children: [], loaded: false, heavy: WS_HEAVY.has(name) });
     else files.push({ name, path: rel, dir: false });
   }
   dirs.sort((a, b) => a.name.localeCompare(b.name));
@@ -5478,7 +5480,7 @@ async function lsLevel(absDir, base) {
 async function buildWsTree(rootAbs) {
   const budget = { until: Date.now() + 8000, left: 4000 };
   const root = await lsLevel(rootAbs, rootAbs);
-  let queue = root.filter((n) => n.dir); // pastas do nível 1 a expandir
+  let queue = root.filter((n) => n.dir && !n.heavy); // nível 1 (pesadas ficam lazy ao clicar)
   let depth = 1;
   while (queue.length && depth < 12 && Date.now() < budget.until && budget.left > 0) {
     const next = [];
@@ -5487,7 +5489,7 @@ async function buildWsTree(rootAbs) {
       node.children = await lsLevel(path.join(rootAbs, node.path), rootAbs);
       node.loaded = true; // expandida nesta varredura (pastas não-carregadas: lazy ao clicar)
       budget.left -= node.children.length;
-      for (const c of node.children) if (c.dir) next.push(c);
+      for (const c of node.children) if (c.dir && !c.heavy) next.push(c); // pesadas ficam lazy
     }
     queue = next;
     depth++;

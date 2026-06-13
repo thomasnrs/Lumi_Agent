@@ -303,6 +303,11 @@
         overflow: hidden;
       }
       #sbLeft { overflow: hidden; text-overflow: ellipsis; }
+      /* indicador de "acontecendo algo" (conexão remota) na statusbar */
+      #connBusy { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); white-space: nowrap; margin: 0 10px; }
+      #connBusy[hidden] { display: none; }
+      .cspin { width: 11px; height: 11px; border: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color: var(--accent); border-radius: 50%; display: inline-block; animation: cspin 0.7s linear infinite; }
+      @keyframes cspin { to { transform: rotate(360deg); } }
       /* divisória do explorador (painel lateral redimensionável) */
       #sideresize {
         width: 5px; flex: 0 0 auto; cursor: col-resize; background: var(--border);
@@ -718,7 +723,7 @@
       <div id="chatresize" title="Arraste para redimensionar"></div>
       <div id="chatpane"><iframe id="chatframe" src="chat.html" title="Chat da Lumi"></iframe></div>
     </div>
-    <div id="statusbar"><span id="sbLeft">Lumi Workspace</span><span id="sbRight"></span></div>
+    <div id="statusbar"><span id="sbLeft">Lumi Workspace</span><span id="connBusy" hidden><span class="cspin"></span><span id="connBusyTxt"></span></span><span id="sbRight"></span></div>
 
     <!-- Ctrl+P: abrir arquivo rápido -->
     <div id="qopen" hidden>
@@ -2913,18 +2918,13 @@
           it.textContent = h;
           it.onclick = async () => {
             menu.remove();
-            // ACESSO POR CHAVE AUTOMÁTICO: 1ª vez neste servidor? a Lumi gera/instala a
-            // chave — você só digita a senha do SSH UMA vez no terminal "chave: host"
-            toast('🔑 verificando acesso em ' + h + ' — se pedir senha, digita no terminal "chave: ' + h + '" (só desta vez)');
-            const k = await window.api.sshEnsureKey(h);
-            if (k && k.error) return toast('⚠ ' + k.error, false);
-            if (k && k.installed) toast('🔑 chave instalada no servidor — nunca mais pede senha!');
-            // navegador de pastas remoto (em vez de digitar às cegas) — evita errar o path
+            // navegador de pastas remoto (verifica a chave por dentro, com feedback no modal)
             const remotePath = await pickRemotePath(h);
             if (remotePath === null) return; // cancelou
             showPanel(true);
-            toast('📡 montando ' + h + '…');
+            setBusy('📡 montando ' + h + '…'); // feedback persistente no rodapé até montar/falhar
             const r = await window.api.sshMount(h, remotePath);
+            clearBusy();
             if (r && r.error) return toast('⚠ ' + r.error, false);
             remoteActive = h;
             updateStatus();
@@ -2949,17 +2949,32 @@
       const rbrMsgEl = document.getElementById('rbrMsg');
       let rbrResolve = null; // promessa do pickRemotePath
       let rbrCwd = '.'; // caminho absoluto atual no servidor
+      // indicador "acontecendo algo" no rodapé (conexão leva alguns segundos)
+      function setBusy(msg) {
+        document.getElementById('connBusyTxt').textContent = msg;
+        document.getElementById('connBusy').hidden = false;
+      }
+      function clearBusy() {
+        document.getElementById('connBusy').hidden = true;
+      }
       function pickRemotePath(host) {
-        return new Promise((resolve) => {
+        return new Promise(async (resolve) => {
           rbrResolve = resolve;
           document.getElementById('rbrHost').textContent = host;
           rbrPathEl.value = '';
-          rbrMsgEl.textContent = '⏳ carregando…';
           rbrListEl.innerHTML = '';
-          rbrOv.hidden = false;
-          rbrCwd = '.';
-          rbrBrowse(host, '.'); // começa na home
           rbrOv.dataset.host = host;
+          rbrCwd = '.';
+          rbrOv.hidden = false;
+          // verifica/instala a chave AQUI (com feedback visível) — antes era um gap mudo
+          rbrMsgEl.textContent = '🔑 verificando acesso… (se pedir senha, responda no terminal "chave: ' + host + '")';
+          const k = await window.api.sshEnsureKey(host);
+          if (k && k.error) {
+            rbrMsgEl.textContent = '⚠ ' + k.error;
+            return; // deixa o usuário fechar/cancelar
+          }
+          if (rbrOv.hidden) return; // cancelou durante a verificação
+          rbrBrowse(host, '.'); // chave ok → lista a home
         });
       }
       async function rbrBrowse(host, p) {
