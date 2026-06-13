@@ -1364,7 +1364,8 @@
         });
       }
       setInterval(() => {
-        if (!panel.hidden && panelTab === 'docker') loadDocker(); // ao vivo só com a aba aberta
+        // ao vivo só com a aba aberta E a janela visível (em background não há pra quem mostrar)
+        if (!document.hidden && !panel.hidden && panelTab === 'docker') loadDocker();
       }, 5000);
       function fitActive() {
         const u = activeTerm && termsUi.get(activeTerm);
@@ -1608,9 +1609,20 @@
           tb.appendChild(tr);
         });
       }
+      // poll de portas: netstat é caro, então só roda com a janela VISÍVEL e o painel aberto;
+      // na aba PORTAS a 3s (responsivo), nas outras a cada ~9s (só atualiza o badge de contagem)
+      let portsTick = 0;
       setInterval(() => {
-        if (!panel.hidden) loadPorts(); // AO VIVO sempre que o painel está aberto (qualquer aba)
+        if (document.hidden || panel.hidden) return;
+        portsTick++;
+        if (panelTab === 'ports' || portsTick % 3 === 0) loadPorts();
       }, 3000);
+      // voltou a focar a janela → atualiza na hora o que estiver à vista (sem esperar o tick)
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden || panel.hidden) return;
+        if (panelTab === 'ports') loadPorts(true);
+        else if (panelTab === 'docker') loadDocker(true);
+      });
 
       // ---- busca global no projeto (Ctrl+Shift+F) ----
       const searchRow = document.getElementById('searchRow');
