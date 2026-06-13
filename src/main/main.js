@@ -1845,15 +1845,28 @@ async function unmountRemote() {
   logd('ssh:unmount', mp);
   try {
     if (process.platform === 'win32') {
-      // desconecta a unidade do net use; taskkill de fallback (mount antigo via sshfs.exe direto)
-      await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true, timeout: 10000 }).catch(() =>
-        execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {})
-      );
+      await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true, timeout: 10000 }).catch(() => {});
+      // mata o backend pra não deixar processo segurando a UNC (causa do erro 64 ao remontar)
+      await execAsync('taskkill /IM sshfs-win.exe /F', { windowsHide: true }).catch(() => {});
+      await execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {});
     } else {
       await execAsync('fusermount -u "' + mp + '"', { timeout: 8000 }).catch(() => execAsync('umount "' + mp + '"', { timeout: 8000 }).catch(() => {}));
     }
   } catch (e) {
     /* best-effort */
+  }
+  // fecha terminais abertos pelo mount (net use / ssh de brinde) — senão ficam zumbis
+  if (remoteMount.terms) {
+    for (const id of remoteMount.terms) {
+      const t = terminals.get(id);
+      if (t) {
+        try {
+          termKill(t);
+        } catch (e) {
+          /* ok */
+        }
+      }
+    }
   }
   remoteMount = null;
 }
@@ -1897,6 +1910,11 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
         /* segue */
       }
     }
+    // mata processos sshfs-win/sshfs órfãos — o net use /delete tira da tabela mas o
+    // PROCESSO backend pode segurar a UNC \\sshfs.k\host → próxima montagem dá erro 64
+    await execAsync('taskkill /IM sshfs-win.exe /F', { windowsHide: true }).catch(() => {});
+    await execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 1200)); // respiro pro WinFsp liberar o nome de rede
     // SSHFS-Win/WinFsp: letra de unidade é o formato robusto ("invalid mount point" com diretório)
     for (const L of 'ZYXWVUTSRQPONML') {
       if (!fs.existsSync(L + ':\\')) {
@@ -1958,7 +1976,13 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
         require('child_process').execSync('mountpoint -q "' + mp + '"', { timeout: 3000 });
       }
       const prev = loadConfig().workspace || '';
-      remoteMount = { host, mountPoint: mp, prevWorkspace: prev };
+      const terms = t && t.id ? [t.id] : []; // terminal do net use/sshfs — fechado no unmount
+      // shell SSH no servidor de brinde, já no path montado (criado no MAIN pra ser rastreado/morto)
+      const rp = (remotePath || '').trim();
+      const sshArgs = rp && rp !== '.' ? ['-t', host, 'cd "' + rp.replace(/"/g, '\\"') + '" && exec ${SHELL:-bash} -l'] : [host];
+      const st = createTerminal({ shell: 'ssh', args: sshArgs, title: 'SSH: ' + host });
+      if (st && st.id) terms.push(st.id);
+      remoteMount = { host, mountPoint: mp, prevWorkspace: prev, terms };
       // remoteWs marca que o workspace é um mount de sessão — o boot seguinte restaura o prev
       saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true, remoteWs: { host, prev } });
       startWorkspaceWatcher(); // re-observa o novo workspace (modo rede: poll leve)

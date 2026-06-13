@@ -2869,13 +2869,7 @@
             remoteActive = h;
             updateStatus();
             toast('📡 montado: ' + h + ' — workspace remoto ativo!');
-            // shell no servidor de brinde — já dentro do path montado (não na home)
-            const rp = (remotePath || '').trim();
-            const sshArgs =
-              rp && rp !== '.'
-                ? ['-t', h, 'cd "' + rp.replace(/"/g, '\\"') + '" && exec ${SHELL:-bash} -l']
-                : [h];
-            window.api.termCreate({ shell: 'ssh', args: sshArgs, title: 'SSH: ' + h });
+            // o shell SSH de brinde agora é criado no main (rastreado e fechado no unmount)
           };
           menu.appendChild(it);
         });
