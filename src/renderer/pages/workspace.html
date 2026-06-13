@@ -726,7 +726,7 @@
           <div id="dbBody" hidden>
             <div id="dbConnRow">
               <select id="dbPick" title="Conexões detectadas no .env"></select>
-              <input id="dbUrl" type="text" placeholder="postgres://user:senha@host:5432/banco" spellcheck="false" />
+              <input id="dbUrl" type="text" placeholder="postgres:// · mysql:// · redis:// · mongodb://" spellcheck="false" />
               <button id="dbConnBtn">Conectar</button>
               <span id="dbStatus"></span>
             </div>
@@ -1530,6 +1530,7 @@
         }
       }
       dbPickEl.addEventListener('change', () => (dbUrlEl.value = dbPickEl.value));
+      let dbKind = 'pg';
       document.getElementById('dbConnBtn').onclick = async () => {
         const r = await window.api.dbConnect(dbUrlEl.value.trim());
         if (r && r.error) {
@@ -1537,8 +1538,18 @@
           return;
         }
         dbReady = true;
+        dbKind = r.kind;
         dbStatusEl.textContent = '✓ ' + r.kind + ' · ' + r.label;
         document.getElementById('dbMain').hidden = false;
+        // o textarea muda de cara conforme o tipo de banco
+        const ph = {
+          pg: 'SELECT * FROM ...   (Ctrl+Enter roda)',
+          mysql: 'SELECT * FROM ...   (Ctrl+Enter roda)',
+          redis: 'comando Redis: GET chave · KEYS user:* · HGETALL h   (Ctrl+Enter)',
+          mongo: 'coleção [filtro]: users {"age":{"$gt":18}}   (Ctrl+Enter)',
+        };
+        document.getElementById('dbSql').placeholder = ph[dbKind] || ph.pg;
+        document.getElementById('dbAi').textContent = '✦ ' + (dbKind === 'redis' ? 'comando' : dbKind === 'mongo' ? 'consulta' : 'SQL') + ' em português';
         dbLoadTables();
       };
       document.getElementById('dbDisc').onclick = async () => {
@@ -1555,9 +1566,11 @@
           const d = document.createElement('div');
           d.className = 'dbt';
           d.textContent = t;
-          d.title = 'clique: SELECT * · duplo: só o nome';
+          d.title = 'clique para consultar';
           d.onclick = () => {
-            document.getElementById('dbSql').value = 'SELECT * FROM ' + t + ' LIMIT 100';
+            // a consulta inicial depende do tipo de banco
+            const q = dbKind === 'redis' ? 'GET ' + t : dbKind === 'mongo' ? t : 'SELECT * FROM ' + t + ' LIMIT 100';
+            document.getElementById('dbSql').value = q;
             dbRunQuery();
           };
           box.appendChild(d);

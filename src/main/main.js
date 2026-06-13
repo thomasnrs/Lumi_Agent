@@ -6139,7 +6139,7 @@ function detectDbUrls() {
     try {
       const vars = parseEnv(fs.readFileSync(path.join(loadConfig().workspace, f), 'utf8'));
       for (const v of vars) {
-        if (/^(DATABASE_URL|DB_URL|POSTGRES_URL|MYSQL_URL|PG_CONNECTION_STRING)$/i.test(v.key) && /^(postgres|postgresql|mysql):\/\//i.test(v.value)) {
+        if (/(DATABASE|DB|POSTGRES|MYSQL|REDIS|MONGO|PG)_?(URL|URI|CONNECTION_STRING)?$/i.test(v.key) && /^(postgres|postgresql|mysql|redis|rediss|mongodb(\+srv)?):\/\//i.test(v.value)) {
           found.push({ from: f, key: v.key, url: v.value });
         }
       }
@@ -6153,7 +6153,8 @@ ipcMain.handle('db:detect', () => detectDbUrls().map((d) => ({ from: d.from, key
 async function dbClose() {
   if (!dbConn) return;
   try {
-    if (dbConn.kind === 'pg') await dbConn.client.end();
+    if (dbConn.kind === 'redis') dbConn.client.disconnect();
+    else if (dbConn.kind === 'mongo') await dbConn.client.close();
     else await dbConn.client.end();
   } catch (e) {
     /* ok */
@@ -6162,13 +6163,23 @@ async function dbClose() {
 }
 ipcMain.handle('db:connect', async (_e, url) => {
   const u = String(url || '').trim();
-  if (!/^(postgres|postgresql|mysql):\/\//i.test(u)) return { error: 'URL inválida (use postgres:// ou mysql://)' };
+  if (!/^(postgres|postgresql|mysql|redis|rediss|mongodb(\+srv)?):\/\//i.test(u))
+    return { error: 'URL inválida (postgres:// mysql:// redis:// mongodb://)' };
   await dbClose();
   try {
     if (/^mysql:/i.test(u)) {
       const mysql = require('mysql2/promise');
-      const client = await mysql.createConnection(u);
-      dbConn = { kind: 'mysql', client, label: maskDbUrl(u) };
+      dbConn = { kind: 'mysql', client: await mysql.createConnection(u), label: maskDbUrl(u) };
+    } else if (/^rediss?:/i.test(u)) {
+      const Redis = require('ioredis');
+      const client = new Redis(u, { connectTimeout: 8000, maxRetriesPerRequest: 1, lazyConnect: true });
+      await client.connect();
+      dbConn = { kind: 'redis', client, label: maskDbUrl(u) };
+    } else if (/^mongodb/i.test(u)) {
+      const { MongoClient } = require('mongodb');
+      const client = new MongoClient(u, { serverSelectionTimeoutMS: 8000 });
+      await client.connect();
+      dbConn = { kind: 'mongo', client, db: client.db(), label: maskDbUrl(u) };
     } else {
       const { Client } = require('pg');
       const client = new Client({ connectionString: u, connectionTimeoutMillis: 8000 });
@@ -6186,24 +6197,69 @@ ipcMain.handle('db:disconnect', async () => {
   await dbClose();
   return { ok: true };
 });
-async function dbRun(sql) {
+// divide um comando respeitando aspas (pro Redis: GET "minha chave")
+function splitArgs(s) {
+  const out = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(s))) out.push(m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]);
+  return out;
+}
+async function dbRun(input) {
   if (!dbConn) throw new Error('sem conexão');
+  if (dbConn.kind === 'redis') {
+    const args = splitArgs(String(input).trim());
+    if (!args.length) return { columns: [], rows: [] };
+    const res = await dbConn.client.call(...args);
+    if (Array.isArray(res)) return { columns: ['valor'], rows: res.map((v) => ({ valor: v })), rowCount: res.length };
+    if (res && typeof res === 'object') return { columns: ['campo', 'valor'], rows: Object.entries(res).map(([k, v]) => ({ campo: k, valor: v })) };
+    return { columns: ['resultado'], rows: [{ resultado: res == null ? '(nil)' : String(res) }] };
+  }
+  if (dbConn.kind === 'mongo') {
+    // sintaxe simples: "colecao" | "colecao {filtroJSON}" | "colecao {filtro} {limite}"
+    const t = String(input).trim();
+    const sp = t.indexOf(' ');
+    const coll = (sp < 0 ? t : t.slice(0, sp)).trim();
+    if (!coll) return { columns: [], rows: [] };
+    let filter = {};
+    const rest = sp < 0 ? '' : t.slice(sp + 1).trim();
+    const jm = rest.match(/^\{[\s\S]*\}/);
+    if (jm) {
+      try {
+        filter = JSON.parse(jm[0]);
+      } catch (e) {
+        throw new Error('filtro JSON inválido');
+      }
+    }
+    const docs = await dbConn.db.collection(coll).find(filter).limit(200).toArray();
+    const cols = [];
+    for (const d of docs) for (const k of Object.keys(d)) if (!cols.includes(k)) cols.push(k);
+    return { columns: cols.slice(0, 30), rows: docs.map((d) => { const o = {}; for (const c of cols) o[c] = d[c]; return o; }), rowCount: docs.length };
+  }
   if (dbConn.kind === 'pg') {
-    const r = await dbConn.client.query(sql);
-    const res = Array.isArray(r) ? r[r.length - 1] : r; // múltiplos statements → último
+    const r = await dbConn.client.query(input);
+    const res = Array.isArray(r) ? r[r.length - 1] : r;
     return { columns: (res.fields || []).map((f) => f.name), rows: res.rows || [], rowCount: res.rowCount };
   }
-  const [rows, fields] = await dbConn.client.query(sql);
+  const [rows, fields] = await dbConn.client.query(input);
   if (Array.isArray(rows)) return { columns: (fields || []).map((f) => f.name), rows, rowCount: rows.length };
-  return { columns: [], rows: [], rowCount: rows.affectedRows, info: rows }; // INSERT/UPDATE...
+  return { columns: [], rows: [], rowCount: rows.affectedRows, info: rows };
 }
 async function dbTables() {
   if (!dbConn) return [];
-  const sql =
-    dbConn.kind === 'pg'
-      ? "select table_name as t from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_name"
-      : 'select table_name as t from information_schema.tables where table_schema = database() order by table_name';
   try {
+    if (dbConn.kind === 'redis') {
+      const keys = await dbConn.client.call('keys', '*'); // cap defensivo na UI; em prod use SCAN
+      return (keys || []).slice(0, 500).sort();
+    }
+    if (dbConn.kind === 'mongo') {
+      const cols = await dbConn.db.listCollections().toArray();
+      return cols.map((c) => c.name).sort();
+    }
+    const sql =
+      dbConn.kind === 'pg'
+        ? "select table_name as t from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_name"
+        : 'select table_name as t from information_schema.tables where table_schema = database() order by table_name';
     const r = await dbRun(sql);
     return r.rows.map((x) => x.t || x.T).filter(Boolean);
   } catch (e) {
@@ -6224,46 +6280,52 @@ ipcMain.handle('db:query', async (_e, sql) => {
     return { error: String((e && e.message) || e).slice(0, 300) };
   }
 });
-// schema resumido (tabela: colunas) pra dar contexto à I.A.
+// schema/contexto resumido pra dar à I.A. (varia por tipo de banco)
 async function dbSchema() {
   if (!dbConn) return '';
-  const sql =
-    dbConn.kind === 'pg'
-      ? "select table_name as t, column_name as c, data_type as d from information_schema.columns where table_schema not in ('pg_catalog','information_schema') order by table_name, ordinal_position"
-      : 'select table_name as t, column_name as c, data_type as d from information_schema.columns where table_schema = database() order by table_name, ordinal_position';
   try {
+    if (dbConn.kind === 'redis') return '(Redis — use comandos: GET, SET, KEYS pattern, HGETALL, LRANGE, TYPE, TTL, SCAN...)';
+    if (dbConn.kind === 'mongo') {
+      const cols = (await dbConn.db.listCollections().toArray()).map((c) => c.name).slice(0, 40);
+      const out = [];
+      for (const c of cols.slice(0, 15)) {
+        const doc = await dbConn.db.collection(c).findOne({});
+        out.push(c + '(' + (doc ? Object.keys(doc).slice(0, 25).join(', ') : '?') + ')');
+      }
+      return 'Coleções MongoDB:\n' + out.join('\n');
+    }
+    const sql =
+      dbConn.kind === 'pg'
+        ? "select table_name as t, column_name as c, data_type as d from information_schema.columns where table_schema not in ('pg_catalog','information_schema') order by table_name, ordinal_position"
+        : 'select table_name as t, column_name as c, data_type as d from information_schema.columns where table_schema = database() order by table_name, ordinal_position';
     const r = await dbRun(sql);
     const byTable = {};
     for (const row of r.rows) {
       const t = row.t || row.T;
       (byTable[t] = byTable[t] || []).push((row.c || row.C) + ' ' + (row.d || row.D));
     }
-    return Object.entries(byTable)
-      .slice(0, 60)
-      .map(([t, cols]) => t + '(' + cols.slice(0, 40).join(', ') + ')')
-      .join('\n');
+    return Object.entries(byTable).slice(0, 60).map(([t, cols]) => t + '(' + cols.slice(0, 40).join(', ') + ')').join('\n');
   } catch (e) {
     return '';
   }
 }
-// ✦ pergunta em português → a Lumi escreve o SQL (não roda; a UI mostra pra você rodar)
+// ✦ pergunta em português → a Lumi escreve a consulta (não roda; a UI mostra pra você rodar)
 ipcMain.handle('db:ai-sql', async (_e, question) => {
   if (!dbConn) return { error: 'conecte a um banco primeiro' };
   const schema = await dbSchema();
+  const sys = {
+    pg: 'Você gera UMA query SQL PostgreSQL. Responda SOMENTE o SQL puro, sem markdown, sem ponto-e-vírgula final.',
+    mysql: 'Você gera UMA query SQL MySQL. Responda SOMENTE o SQL puro, sem markdown, sem ponto-e-vírgula final.',
+    redis: 'Você gera UM comando Redis (ex.: GET chave, KEYS user:*, HGETALL h). Responda SOMENTE o comando, sem markdown.',
+    mongo: 'Você gera uma consulta no formato "colecao {filtroJSON}" (ex.: users {"age":{"$gt":18}}). Responda SOMENTE isso, sem markdown.',
+  }[dbConn.kind];
   try {
     const out = await llmComplete(loadConfig(), [
-      {
-        role: 'system',
-        content:
-          'Você gera UMA query SQL para ' +
-          (dbConn.kind === 'pg' ? 'PostgreSQL' : 'MySQL') +
-          '. Responda SOMENTE com o SQL puro, sem markdown, sem explicação, sem ponto-e-vírgula final. Use exatamente os nomes do schema.\n\nSchema:\n' +
-          (schema || '(schema indisponível)'),
-      },
+      { role: 'system', content: sys + '\n\nContexto:\n' + (schema || '(indisponível)') },
       { role: 'user', content: String(question || '') },
     ]);
     const sql = String(out || '').replace(/^```[a-z]*\n?|```$/g, '').replace(/;\s*$/, '').trim();
-    return sql ? { sql } : { error: 'a I.A. não retornou SQL' };
+    return sql ? { sql } : { error: 'a I.A. não retornou nada' };
   } catch (e) {
     return { error: String((e && e.message) || e).slice(0, 200) };
   }
