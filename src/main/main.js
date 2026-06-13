@@ -1787,7 +1787,9 @@ ipcMain.handle('ssh:install-cmd', async () => {
 // ---- acesso por chave AUTOMÁTICO: gera id_rsa (sem passphrase), instala no servidor
 // (o usuário digita a senha do SSH UMA vez no terminal) e valida — depois disso o
 // mount e os terminais SSH nunca mais perguntam nada ----
+const sshKeyOkHosts = new Set(); // hosts já validados nesta sessão (não re-testa/re-instala)
 ipcMain.handle('ssh:ensure-key', async (_e, host) => {
+  if (sshKeyOkHosts.has(host)) return { ready: true };
   const sshDir = path.join(require('os').homedir(), '.ssh');
   const keyPath = path.join(sshDir, 'id_rsa');
   try {
@@ -1803,20 +1805,34 @@ ipcMain.handle('ssh:ensure-key', async (_e, host) => {
       return { error: 'não consegui gerar a chave: ' + String((e && e.stderr) || (e && e.message) || e).slice(0, 200) };
     }
   }
+  // testa a chave; distingue SUCESSO / FALHA-DE-AUTH (precisa instalar) / problema-de-REDE
   const test = async () => {
     try {
       const { stdout } = await execFileAsync(
         resolveExe('ssh'),
         ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', host, 'echo __lumi_ok'],
-        { timeout: 20000, windowsHide: true }
+        { timeout: 15000, windowsHide: true }
       );
-      return /__lumi_ok/.test(String(stdout));
+      return /__lumi_ok/.test(String(stdout)) ? 'ok' : 'net';
     } catch (e) {
-      return false;
+      const err = String((e && e.stderr) || (e && e.message) || e);
+      // só "Permission denied / publickey" = a chave não autoriza → vale instalar.
+      // timeout/conexão recusada/host inalcançável = REDE → não adianta instalar
+      return /permission denied|publickey|password|authentication/i.test(err) ? 'auth' : 'net';
     }
   };
-  if (await test()) return { ready: true }; // chave já funciona — nada a fazer
-  // instala a .pub no servidor: roda no TERMINAL (PTY) — a senha é digitada UMA vez lá
+  const r0 = await test();
+  if (r0 === 'ok') {
+    sshKeyOkHosts.add(host);
+    return { ready: true };
+  }
+  if (r0 === 'net') {
+    // servidor não respondeu: NÃO abre o terminal de instalação (era o "chave nova toda hora").
+    // segue pro mount mesmo assim — se a chave já estiver lá, o mount funciona; senão o net use avisa.
+    logd('ssh:ensure-key: servidor não respondeu ao teste — seguindo sem reinstalar', host);
+    return { ready: true, unverified: true };
+  }
+  // r0 === 'auth' → a chave não está autorizada: instala a .pub no servidor (senha 1x no terminal)
   const pub = keyPath + '.pub';
   const remoteCmd = 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys && echo CHAVE-INSTALADA';
   const command =
@@ -1830,7 +1846,8 @@ ipcMain.handle('ssh:ensure-key', async (_e, host) => {
   const t0 = Date.now();
   while (Date.now() - t0 < 180000) {
     await new Promise((r) => setTimeout(r, 4000));
-    if (await test()) {
+    if ((await test()) === 'ok') {
+      sshKeyOkHosts.add(host);
       logd('ssh:ensure-key OK', host);
       return { ready: true, installed: true };
     }
@@ -1969,7 +1986,7 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   while (Date.now() - t0 < 90000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
-      fs.readdirSync(wsPath); // win: a unidade só existe depois de montada
+      await fs.promises.readdir(wsPath); // async: não trava o main se o SFTP estiver lento
       if (process.platform !== 'win32') {
         // linux: o dir existe antes — confirma que virou mountpoint de verdade
         require('child_process').execSync('mountpoint -q "' + mp + '"', { timeout: 3000 });
