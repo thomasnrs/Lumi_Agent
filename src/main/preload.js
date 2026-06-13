@@ -82,6 +82,9 @@ contextBridge.exposeInMainWorld('api', {
   sshRecents: () => ipcRenderer.invoke('ssh:recents'),
   onRemoteActive: (cb) => ipcRenderer.on('remote:active', (_e, d) => cb(d)),
 
+  // REST client
+  restSend: (req) => ipcRenderer.invoke('rest:send', req),
+
   // painel do servidor (systemd + recursos)
   serverContext: () => ipcRenderer.invoke('server:context'),
   serverStats: () => ipcRenderer.invoke('server:stats'),

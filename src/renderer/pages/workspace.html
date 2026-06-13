@@ -522,6 +522,23 @@
       .srvrow:hover .acts { display: flex; }
       .srvrow .acts button { border: none; border-radius: 5px; padding: 2px 7px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
       .srvrow .acts button:hover { background: var(--accent); color: var(--accent-text); }
+      /* ---- aba REST ---- */
+      #restBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
+      #restBar { display: flex; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+      #restBar select, #restBar input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; outline: none; }
+      #restBar #restUrl { flex: 1; min-width: 0; font-family: Consolas, monospace; }
+      #restBar button { border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-text); }
+      #restCols { flex: 1; min-height: 0; display: flex; }
+      #restReq { width: 42%; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: auto; padding: 0 8px 8px; }
+      #restReq label { font-size: 10px; color: #9aa; text-transform: uppercase; letter-spacing: 0.3px; margin: 8px 2px 3px; }
+      #restReq textarea { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font: 12px/1.5 Consolas, monospace; resize: vertical; outline: none; }
+      #restHeaders { height: 70px; } #restBodyIn { height: 130px; }
+      #restRes { flex: 1; min-width: 0; overflow: auto; padding: 8px 10px; }
+      #restRes .rstatus { font-size: 12px; margin-bottom: 8px; font-weight: 600; }
+      #restRes .ok2 { color: #7ee0a0; } #restRes .bad { color: #ff9b9b; }
+      #restRes pre { margin: 0; font: 11.5px/1.5 Consolas, monospace; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+      #restRes .rhdr { font-size: 10.5px; color: #889; white-space: pre-wrap; margin-bottom: 8px; border-bottom: 1px dashed var(--border); padding-bottom: 6px; }
+      #restRes .restmsg { color: #889; font-size: 12px; padding: 14px; }
       /* ---- aba BANCO ---- */
       #dbBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
       #dbConnRow { display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
@@ -697,6 +714,7 @@
             <span class="ptab" data-tab="docker">DOCKER</span>
             <span class="ptab" data-tab="db">BANCO</span>
             <span class="ptab" data-tab="server">SERVIDOR</span>
+            <span class="ptab" data-tab="rest">REST</span>
             <span class="pgrow"></span>
             <select id="termSel" title="Terminais abertos"></select>
             <button class="pbtn" id="termNew" title="Novo terminal (PowerShell)">＋</button>
@@ -722,6 +740,22 @@
           <div id="srvBody" hidden>
             <div id="srvStats"><span class="srvmsg">carregando…</span></div>
             <div id="srvServices"></div>
+          </div>
+          <div id="restBody" hidden>
+            <div id="restBar">
+              <select id="restMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select>
+              <input id="restUrl" type="text" placeholder="http://localhost:3000/api/..." spellcheck="false" />
+              <button id="restSend">▶ Enviar</button>
+            </div>
+            <div id="restCols">
+              <div id="restReq">
+                <label>Headers (um por linha — Nome: valor)</label>
+                <textarea id="restHeaders" spellcheck="false" placeholder="Content-Type: application/json&#10;Authorization: Bearer ..."></textarea>
+                <label>Body</label>
+                <textarea id="restBodyIn" spellcheck="false" placeholder='{ "exemplo": true }'></textarea>
+              </div>
+              <div id="restRes"><div class="restmsg">a resposta aparece aqui 👋</div></div>
+            </div>
           </div>
           <div id="dbBody" hidden>
             <div id="dbConnRow">
@@ -1425,12 +1459,45 @@
         document.getElementById('dockerBody').hidden = t !== 'docker';
         document.getElementById('dbBody').style.display = t === 'db' ? 'flex' : 'none';
         document.getElementById('srvBody').style.display = t === 'server' ? 'flex' : 'none';
+        document.getElementById('restBody').style.display = t === 'rest' ? 'flex' : 'none';
         if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
         if (t === 'docker') loadDocker(true);
         if (t === 'db') dbInit();
         if (t === 'server') loadServer();
         if (t === 'term') setTimeout(fitActive, 30);
       }
+
+      // ============================================================
+      //  Aba REST: dispara a requisição e mostra a resposta (Insomnia minúsculo)
+      // ============================================================
+      async function restSend() {
+        const url = document.getElementById('restUrl').value.trim();
+        const resEl = document.getElementById('restRes');
+        if (!url) return;
+        resEl.innerHTML = '<div class="restmsg">⏳ enviando…</div>';
+        const r = await window.api.restSend({
+          method: document.getElementById('restMethod').value,
+          url,
+          headers: document.getElementById('restHeaders').value,
+          body: document.getElementById('restBodyIn').value,
+        });
+        if (r && r.error) {
+          resEl.innerHTML = '<div class="rstatus bad">⚠ ' + esc(r.error) + '</div>';
+          return;
+        }
+        const cls = r.ok ? 'ok2' : 'bad';
+        const hdr = Object.entries(r.headers || {}).map(([k, v]) => k + ': ' + v).join('\n');
+        resEl.innerHTML =
+          '<div class="rstatus ' + cls + '">' + r.status + (r.ok ? ' OK' : '') + '  ·  ' + r.ms + 'ms  ·  ' + fmtBytes(r.size) + '</div>' +
+          '<div class="rhdr">' + esc(hdr) + '</div><pre>' + esc(r.body) + '</pre>';
+      }
+      document.getElementById('restSend').onclick = restSend;
+      document.getElementById('restUrl').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          restSend();
+        }
+      });
 
       // ============================================================
       //  Aba SERVIDOR: monitor de recursos + serviços systemd (remoto ativo ou Linux local)
@@ -3286,6 +3353,7 @@
             { label: 'Navegador (localhost)', icon: MI.reveal, fn: () => openBrowserTab('') },
             { label: 'Banco de dados', icon: MI.db, fn: () => { showPanel(true); setPanelTab('db'); } },
             { label: 'Servidor (serviços/recursos)', icon: MI.server, fn: () => { showPanel(true); setPanelTab('server'); } },
+            { label: 'REST client (testar API)', icon: MI.goto, fn: () => { showPanel(true); setPanelTab('rest'); } },
             { label: 'Variáveis (.env)', icon: MI.gear, fn: openEnv },
             '-',
             // toggles do editor (✓ = ligado; persistem entre sessões)

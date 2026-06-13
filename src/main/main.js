@@ -1881,6 +1881,41 @@ async function serverRun(cmd, timeout) {
   }
   throw new Error('sem servidor (conecte a um host SSH ou rode no Linux)');
 }
+// REST client (aba do painel): dispara a requisição e devolve a resposta completa
+ipcMain.handle('rest:send', async (_e, { method, url, headers, body }) => {
+  const u = String(url || '').trim();
+  if (!/^https?:\/\//i.test(u)) return { error: 'a URL deve começar com http:// ou https://' };
+  const m = (method || 'GET').toUpperCase();
+  const hdrs = {};
+  for (const line of String(headers || '').split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i > 0) hdrs[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  const t0 = Date.now();
+  try {
+    const res = await fetch(u, {
+      method: m,
+      headers: Object.keys(hdrs).length ? hdrs : undefined,
+      body: body != null && body !== '' && m !== 'GET' && m !== 'HEAD' ? String(body) : undefined,
+      signal: AbortSignal.timeout(30000),
+    });
+    const text = await res.text();
+    const h = {};
+    res.headers.forEach((v, k) => (h[k] = v));
+    let pretty = text;
+    if (/application\/json|^\s*[[{]/.test(res.headers.get('content-type') || text)) {
+      try {
+        pretty = JSON.stringify(JSON.parse(text), null, 2);
+      } catch (e) {
+        /* não era JSON válido */
+      }
+    }
+    return { status: res.status, ok: res.ok, ms: Date.now() - t0, size: text.length, headers: h, body: pretty.slice(0, 200000) };
+  } catch (e) {
+    return { error: String((e && e.message) || e) + (/(localhost|127\.0\.0\.1)/.test(u) ? ' — o servidor local está rodando?' : '') };
+  }
+});
+
 ipcMain.handle('server:context', () => serverCtx());
 ipcMain.handle('server:stats', async () => {
   const ctx = serverCtx();
