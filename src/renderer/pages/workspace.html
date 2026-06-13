@@ -116,10 +116,14 @@
         flex: 1; border-radius: 7px; padding: 7px 0; font-size: 12px; font-weight: 600; cursor: pointer;
         display: flex; align-items: center; justify-content: center; gap: 5px;
       }
+      #gitBtnRow button svg { width: 14px; height: 14px; flex: 0 0 auto; }
+      #gitReviewBtn { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+      #gitReviewBtn:hover { border-color: var(--accent); color: var(--accent); }
       #gitAiBtn { background: var(--surface); color: var(--accent); border: 1px solid var(--border); }
       #gitAiBtn:hover { border-color: var(--accent); }
       #gitCommitBtn { background: var(--accent); color: var(--accent-text, #fff); border: none; }
-      #gitBtnRow button:disabled { opacity: 0.55; cursor: default; }
+      #gitCommitBtn:hover { filter: brightness(1.08); }
+      #gitBtnRow button:disabled { opacity: 0.55; cursor: default; filter: none; }
       #gitLists { flex: 1; overflow: auto; padding: 2px 0 8px; }
       .gsec-head {
         display: flex; align-items: center; gap: 6px; padding: 8px 8px 3px;
@@ -148,6 +152,7 @@
         cursor: pointer; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0;
       }
       .gacts button:hover { background: var(--border); color: var(--text); }
+      .gacts button svg, .gsec-head .ga svg { width: 14px; height: 14px; }
       #gitEmpty { padding: 20px 12px; color: #778; text-align: center; font-size: 12px; }
       /* conflitos de merge */
       .gconflicts { border-bottom: 1px solid var(--border); background: color-mix(in srgb, #ff6b6b 8%, transparent); padding-bottom: 4px; }
@@ -157,6 +162,9 @@
       /* caixa da revisão pré-commit da Lumi */
       #gitReview { border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
       #gitReviewHead { display: flex; align-items: center; gap: 6px; padding: 6px 10px 0; font-size: 11px; color: var(--accent); font-weight: 600; }
+      #gitReviewHead .rvclose { width: 20px; height: 20px; padding: 0; border: none; background: transparent; color: var(--accent); border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+      #gitReviewHead .rvclose svg { width: 13px; height: 13px; }
+      #gitReviewHead .rvclose:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
       #gitReviewBody {
         padding: 6px 12px 10px; font-size: 12px; line-height: 1.55; color: var(--text);
         white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto;
@@ -602,10 +610,27 @@
       #composeBar .cf { color: #9aa; font-size: 11px; margin-right: 4px; }
       #composeBar button { border: none; border-radius: 6px; padding: 3px 10px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
       #composeBar button:hover { background: var(--accent); color: var(--accent-text); }
-      /* CI + botão de PR no painel git */
+      /* CI + botões-ícone do cabeçalho git (consistentes, sem emoji) */
       #ghCi { font-size: 11px; cursor: pointer; }
-      #gitBranchRow .ga.wide { width: auto; padding: 0 7px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.2px; }
-      #gitBranchRow .ga.viewon { background: var(--accent); color: var(--accent-text, #fff); } /* push com commits a enviar */
+      #gitBranchRow .ga {
+        width: 26px; height: 24px; padding: 0; flex: 0 0 auto;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: var(--surface); color: #aeb6c2; border: 1px solid var(--border);
+        border-radius: 6px; cursor: pointer; position: relative; transition: background 0.12s, border-color 0.12s, color 0.12s;
+      }
+      #gitBranchRow .ga svg { width: 14px; height: 14px; }
+      #gitBranchRow .ga:hover { color: var(--accent); border-color: var(--accent); }
+      #gitBranchRow .ga.viewon { background: var(--accent); color: var(--accent-text, #fff); border-color: var(--accent); } /* commits a enviar/puxar */
+      #gitBranchRow .ga.viewon:hover { color: var(--accent-text, #fff); filter: brightness(1.08); }
+      #gitBranchRow .ga .cbadge {
+        position: absolute; top: -5px; right: -5px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box;
+        background: var(--accent); color: var(--accent-text, #fff); border: 1.5px solid var(--surface-2);
+        border-radius: 8px; font-size: 9px; font-weight: 700; line-height: 11px; display: flex; align-items: center; justify-content: center;
+      }
+      #gitBranchRow .ga.viewon .cbadge { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+      #gitBranchRow .ga.is-busy { pointer-events: none; opacity: 0.65; }
+      #gitBranchRow .ga.is-busy svg { animation: gaspin 0.7s linear infinite; }
+      @keyframes gaspin { to { transform: rotate(360deg); } }
       /* badge de erros do console no navegador embutido */
       #webTools #wbErr { color: #ffb4b4; border-color: #6a3040; }
       #webTools #wbErr:hover { background: #3a2030; }
@@ -666,21 +691,21 @@
               <span id="gitSync"></span>
               <span id="ghCi" hidden></span>
               <span style="flex: 1"></span>
-              <button class="ga wide" id="ghPrBtn" hidden title="Criar Pull Request com título e descrição escritos pela Lumi">✦PR</button>
-              <button class="ga" id="gitStashBtn" title="Stash — guardar/restaurar alterações">📦</button>
-              <button class="ga" id="gitPull" title="Pull (puxar do remoto)">↓ pull</button>
-              <button class="ga wide" id="gitPush" title="Push (enviar commits pro remoto)">↑ push</button>
-              <button class="ga" id="gitRefresh" title="Atualizar">⟳</button>
+              <button class="ga" id="ghPrBtn" hidden title="Criar Pull Request com título e descrição escritos pela Lumi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></svg></button>
+              <button class="ga" id="gitStashBtn" title="Stash — guardar/restaurar alterações"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></button>
+              <button class="ga" id="gitPull" title="Pull (puxar do remoto)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg><span class="cbadge" hidden></span></button>
+              <button class="ga" id="gitPush" title="Push (enviar commits pro remoto)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg><span class="cbadge" hidden></span></button>
+              <button class="ga" id="gitRefresh" title="Atualizar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
             </div>
             <textarea id="gitMsg" placeholder="Mensagem do commit (Ctrl+Enter commita)" spellcheck="false"></textarea>
             <div id="gitBtnRow">
-              <button id="gitReviewBtn" title="A Lumi revisa o diff antes de você commitar">🔍 Revisar</button>
-              <button id="gitAiBtn" title="A Lumi escreve a mensagem olhando o diff">✦ Lumi</button>
-              <button id="gitCommitBtn" title="Commita o que está preparado (staged)">✓ Commitar</button>
+              <button id="gitReviewBtn" title="A Lumi revisa o diff antes de você commitar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 11 2 2 4-4"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><span class="lbl">Revisar</span></button>
+              <button id="gitAiBtn" title="A Lumi escreve a mensagem olhando o diff"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"/></svg><span class="lbl">Lumi</span></button>
+              <button id="gitCommitBtn" title="Commita o que está preparado (staged)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span class="lbl">Commitar</span></button>
             </div>
           </div>
           <div id="gitReview" hidden>
-            <div id="gitReviewHead"><span>✦ revisão da Lumi</span><span style="flex: 1"></span><button class="ga" id="gitReviewClose" title="Fechar">✕</button></div>
+            <div id="gitReviewHead"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" style="width:13px;height:13px;flex:0 0 auto"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"/></svg><span>revisão da Lumi</span><span style="flex: 1"></span><button class="rvclose" id="gitReviewClose" title="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
             <div id="gitReviewBody"></div>
           </div>
           <div id="gitLists"></div>
@@ -2278,6 +2303,14 @@
         if (gitBranch) setSideMode(sideMode === 'git' ? 'files' : 'git'); // ⎇ na statusbar abre o painel
       });
 
+      // contador (badge) sobre os botões-ícone de pull/push
+      function setGaBadge(btn, n) {
+        const b = btn && btn.querySelector('.cbadge');
+        if (!b) return;
+        if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = false; }
+        else b.hidden = true;
+      }
+
       async function loadGitPanel() {
         const st = await window.api.gitPanelStatus();
         gitSt = st && !st.error ? st : null;
@@ -2288,10 +2321,14 @@
           return;
         }
         gitBranchNameEl.textContent = st.branch;
-        gitSyncEl.textContent = (st.ahead ? '↑' + st.ahead : '') + (st.behind ? ' ↓' + st.behind : '');
-        // push acende em accent quando há commits locais pra enviar (você nota na hora)
+        gitSyncEl.textContent = ''; // a contagem agora vive nos próprios botões (badge), estilo VS Code
+        // push/pull acendem em accent + badge com o número quando há o que sincronizar (você nota na hora)
+        setGaBadge(gitPushBtn, st.ahead);
+        setGaBadge(gitPullBtn, st.behind);
         gitPushBtn.classList.toggle('viewon', st.ahead > 0);
-        gitPushBtn.title = st.ahead ? 'Push: ' + st.ahead + ' commit(s) pra enviar' : 'Push (nada novo pra enviar)';
+        gitPullBtn.classList.toggle('viewon', st.behind > 0);
+        gitPushBtn.title = st.ahead ? 'Push — ' + st.ahead + ' commit(s) pra enviar' : 'Push (nada novo pra enviar)';
+        gitPullBtn.title = st.behind ? 'Pull — ' + st.behind + ' commit(s) pra puxar' : 'Pull (puxar do remoto)';
         gitListsEl.innerHTML = '';
         renderConflicts(); // se houver merge em conflito, mostra no topo
         if (!st.staged.length && !st.unstaged.length) {
@@ -2349,11 +2386,10 @@
       document.getElementById('ghPrBtn').onclick = async () => {
         const btn = document.getElementById('ghPrBtn');
         btn.disabled = true;
-        const old = btn.textContent;
-        btn.textContent = '…';
+        btn.classList.add('is-busy'); // ícone gira, preserva o SVG
         const r = await window.api.ghPrCreate();
         btn.disabled = false;
-        btn.textContent = old;
+        btn.classList.remove('is-busy');
         if (r && r.error) return toast('⚠ ' + r.error, false);
         toast('✓ PR criado: ' + (r.title || ''));
         if (r.url) window.api.openExternal(r.url);
@@ -2366,6 +2402,13 @@
         loadGitPanel();
       }
 
+      // ícones das ações do git (stage/unstage/discard) — SVG, sem glifos tortos
+      const _svg = (p) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + p + '</svg>';
+      const GICO = {
+        stage: _svg('<path d="M5 12h14"/><path d="M12 5v14"/>'),          // +  preparar
+        unstage: _svg('<path d="M5 12h14"/>'),                            // −  despreparar
+        discard: _svg('<path d="M3 12a9 9 0 1 0 3-7.7L3 7"/><path d="M3 3v4h4"/>'), // ↶ descartar
+      };
       function gitSection(title, files, staged) {
         const sec = document.createElement('div');
         const head = document.createElement('div');
@@ -2373,8 +2416,8 @@
         head.innerHTML =
           '<span>' + title + '</span><span class="cnt">' + files.length + '</span><span class="grow"></span>' +
           (staged
-            ? '<button class="ga" title="Despreparar tudo">−</button>'
-            : '<button class="ga" title="Descartar todas as alterações">↶</button><button class="ga" title="Preparar tudo (stage)">＋</button>');
+            ? '<button class="ga" title="Despreparar tudo">' + GICO.unstage + '</button>'
+            : '<button class="ga" title="Descartar todas as alterações">' + GICO.discard + '</button><button class="ga" title="Preparar tudo (stage)">' + GICO.stage + '</button>');
         const btns = head.querySelectorAll('.ga');
         const paths = files.map((f) => f.path);
         if (staged) btns[0].onclick = () => gitAct(window.api.gitUnstage(paths));
@@ -2398,7 +2441,7 @@
         d.innerHTML =
           '<span class="ic">' + iconFor(nm) + '</span><span class="nm">' + esc(nm) + '</span><span class="dr">' + esc(dirOf(f.path)) + '</span>' +
           '<span class="gacts">' +
-          (staged ? '<button title="Despreparar">−</button>' : '<button title="Descartar alterações">↶</button><button title="Preparar (stage)">＋</button>') +
+          (staged ? '<button title="Despreparar">' + GICO.unstage + '</button>' : '<button title="Descartar alterações">' + GICO.discard + '</button><button title="Preparar (stage)">' + GICO.stage + '</button>') +
           '</span><span class="gst gst-' + f.st + '">' + f.st + '</span>';
         d.addEventListener('click', (e) => {
           if (e.target.closest('.gacts')) return;
@@ -2478,11 +2521,12 @@
       });
       gitAiBtn.onclick = async () => {
         gitAiBtn.disabled = true;
-        const old = gitAiBtn.innerHTML;
-        gitAiBtn.textContent = '✦ escrevendo…';
+        const lbl = gitAiBtn.querySelector('.lbl');
+        const old = lbl.textContent;
+        lbl.textContent = 'escrevendo…';
         const r = await window.api.gitAiMessage();
         gitAiBtn.disabled = false;
-        gitAiBtn.innerHTML = old;
+        lbl.textContent = old;
         if (r && r.error) return toast('⚠ ' + String(r.error).slice(0, 160), false);
         gitMsgEl.value = r.message;
         gitMsgEl.focus();
@@ -2553,7 +2597,7 @@
         const list = await window.api.gitStashList();
         const menu = document.createElement('div');
         menu.className = 'brmenu';
-        const rect = e.target.getBoundingClientRect();
+        const rect = e.currentTarget.getBoundingClientRect(); // o botão, não o <path> do ícone
         menu.style.left = Math.max(8, rect.left - 120) + 'px';
         menu.style.top = rect.bottom + 4 + 'px';
         const add = (label, fn, cls) => {
@@ -2568,7 +2612,7 @@
           };
           menu.appendChild(it);
         };
-        add('📦 Guardar alterações (stash)', () => window.api.gitStash('push'));
+        add('Guardar alterações (stash)', () => window.api.gitStash('push'));
         if (list.length) {
           const head = document.createElement('div');
           head.className = 'bri';
@@ -2576,7 +2620,7 @@
           head.textContent = 'guardados:';
           menu.appendChild(head);
           list.forEach((s) => {
-            add('↩ aplicar — ' + s.desc.slice(0, 40), () => window.api.gitStash('pop', s.ref));
+            add('Aplicar — ' + s.desc.slice(0, 40), () => window.api.gitStash('pop', s.ref));
           });
         }
         document.body.appendChild(menu);
@@ -2589,11 +2633,12 @@
       const gitReviewBtn = document.getElementById('gitReviewBtn');
       gitReviewBtn.onclick = async () => {
         gitReviewBtn.disabled = true;
-        const old = gitReviewBtn.textContent;
-        gitReviewBtn.textContent = '🔍 revisando…';
+        const lbl = gitReviewBtn.querySelector('.lbl');
+        const old = lbl.textContent;
+        lbl.textContent = 'revisando…';
         const r = await window.api.gitAiReview();
         gitReviewBtn.disabled = false;
-        gitReviewBtn.textContent = old;
+        lbl.textContent = old;
         if (r && r.error) return toast('⚠ ' + String(r.error).slice(0, 160), false);
         gitReviewBody.textContent = r.review + (r.truncated ? '\n\n(diff grande — revisei a primeira parte)' : '');
         gitReviewEl.hidden = false;
@@ -2650,12 +2695,11 @@
       const gitPushBtn = document.getElementById('gitPush');
       async function gitSyncRun(kind) {
         const btn = kind === 'push' ? gitPushBtn : gitPullBtn;
-        const old = btn.textContent;
         btn.disabled = true;
-        btn.textContent = '…';
+        btn.classList.add('is-busy'); // o ícone gira (não apaga o SVG)
         const r = await (kind === 'push' ? window.api.gitPush() : window.api.gitPull());
         btn.disabled = false;
-        btn.textContent = old;
+        btn.classList.remove('is-busy');
         if (r && r.error) toast('⚠ ' + String(r.error).slice(0, 180), false);
         else toast('✓ ' + kind + ' feito' + (r.out ? ' · ' + r.out.split('\n')[0].slice(0, 60) : ''));
         loadGitPanel();
