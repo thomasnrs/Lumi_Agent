@@ -1845,10 +1845,10 @@ async function unmountRemote() {
   logd('ssh:unmount', mp);
   try {
     if (process.platform === 'win32') {
+      // net use /delete encerra o backend sshfs GRACIOSAMENTE (confirmado: o processo some).
+      // NÃO dar taskkill /F depois — force-kill atropela o cleanup do WinFsp.Launcher e
+      // deixa a UNC envenenada → erro 64 ao remontar a mesma pasta (causa real do bug).
       await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true, timeout: 10000 }).catch(() => {});
-      // mata o backend pra não deixar processo segurando a UNC (causa do erro 64 ao remontar)
-      await execAsync('taskkill /IM sshfs-win.exe /F', { windowsHide: true }).catch(() => {});
-      await execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {});
     } else {
       await execAsync('fusermount -u "' + mp + '"', { timeout: 8000 }).catch(() => execAsync('umount "' + mp + '"', { timeout: 8000 }).catch(() => {}));
     }
@@ -1910,11 +1910,10 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
         /* segue */
       }
     }
-    // mata processos sshfs-win/sshfs órfãos — o net use /delete tira da tabela mas o
-    // PROCESSO backend pode segurar a UNC \\sshfs.k\host → próxima montagem dá erro 64
-    await execAsync('taskkill /IM sshfs-win.exe /F', { windowsHide: true }).catch(() => {});
-    await execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 1200)); // respiro pro WinFsp liberar o nome de rede
+    // respiro pro WinFsp.Launcher concluir o cleanup das conexões deletadas antes de
+    // remontar (sem isso, remontar a MESMA pasta rápido demais dá erro 64). Sem taskkill:
+    // o /delete acima já encerra os backends; force-kill envenenaria a UNC.
+    await new Promise((r) => setTimeout(r, 1500));
     // SSHFS-Win/WinFsp: letra de unidade é o formato robusto ("invalid mount point" com diretório)
     for (const L of 'ZYXWVUTSRQPONML') {
       if (!fs.existsSync(L + ':\\')) {
@@ -5074,6 +5073,12 @@ app.whenReady().then(() => {
     if (c0.remoteWs) {
       saveConfig({ ...c0, workspace: c0.remoteWs.prev || '', remoteWs: undefined });
       logd('boot: workspace remoto da sessão anterior descartado → ' + (c0.remoteWs.prev || '(vazio)'));
+      // sessão anterior teve mount remoto → mata sshfs órfãos de um possível crash (SEGURO no
+      // boot: nenhum mount nosso ativo ainda, então não atropela cleanup em andamento)
+      if (process.platform === 'win32') {
+        execAsync('taskkill /IM sshfs-win.exe /F', { windowsHide: true }).catch(() => {});
+        execAsync('taskkill /IM sshfs.exe /F', { windowsHide: true }).catch(() => {});
+      }
     } else if (c0.workspace && !fs.existsSync(c0.workspace)) {
       saveConfig({ ...c0, workspace: '' });
       logd('boot: workspace inexistente limpo: ' + c0.workspace);
