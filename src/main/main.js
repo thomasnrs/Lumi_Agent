@@ -2462,6 +2462,98 @@ const TOOLS = {
     schema: { name: 'list_ssh_hosts', description: 'Lista os aliases de servidores SSH do ~/.ssh/config (pra usar com connect_remote).', parameters: { type: 'object', properties: {} } },
     run: async () => ({ hosts: sshConfigHosts() }),
   },
+  project_overview: {
+    category: null,
+    schema: {
+      name: 'project_overview',
+      description:
+        'Mapa do projeto atual pra você entender a arquitetura SEM ler arquivo por arquivo: stack detectada, árvore de pastas/arquivos (resumida), e o conteúdo dos arquivos-chave (package.json, README, configs, pontos de entrada). Use quando o usuário pedir "explique o projeto" ou quando precisar de visão geral antes de mexer.',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto (Modo arquiteto)' };
+      const det = detectStack(cfg.workspace);
+      const tree = [];
+      await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0); // já ignora node_modules/.git/etc e tem deadline
+      // arquivos-chave que dão o panorama (lê os que existirem, com teto de tamanho)
+      const keyNames = ['package.json', 'README.md', 'readme.md', 'pyproject.toml', 'requirements.txt', 'go.mod', 'Cargo.toml', 'composer.json', 'pom.xml', 'docker-compose.yml', 'Makefile', 'tsconfig.json', '.lumi-memory.md'];
+      const key = {};
+      for (const rel of tree) {
+        const base = rel.split('/').pop();
+        if (keyNames.includes(base) && !rel.includes('/')) {
+          try {
+            key[rel] = truncate(fs.readFileSync(path.join(cfg.workspace, rel), 'utf8'), 4000);
+          } catch (e) {
+            /* ok */
+          }
+        }
+      }
+      return {
+        workspace: cfg.workspace,
+        stack: det.stack || 'desconhecida',
+        verifyCommand: det.verify || null,
+        fileCount: tree.length,
+        tree: tree.slice(0, 400),
+        keyFiles: key,
+        note: 'Resuma a arquitetura, o propósito e como rodar; aponte os pontos de entrada. Salve o essencial com update_project_memory.',
+      };
+    },
+  },
+  find_in_code: {
+    category: null,
+    schema: {
+      name: 'find_in_code',
+      description:
+        'Acha ONDE algo está no projeto por palavra-chave: procura no NOME dos arquivos E no conteúdo (regex/texto) ao mesmo tempo. Use pra "onde está X", "qual arquivo faz Y" antes de abrir/editar. Mais direto que grep_files quando você não sabe o nome exato.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+    run: async ({ query }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      const q = String(query || '').trim();
+      if (!q) return { error: 'consulta vazia' };
+      const tree = [];
+      await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
+      const ql = q.toLowerCase();
+      const byName = tree.filter((p) => p.toLowerCase().includes(ql)).slice(0, 30);
+      // busca no CONTEÚDO (cap por tempo/quantidade, pula pastas pesadas)
+      const hits = [];
+      const deadline = Date.now() + 6000;
+      const walk = async (dir, depth) => {
+        if (hits.length >= 40 || depth > 10 || Date.now() > deadline) return;
+        let ents = [];
+        try {
+          ents = await fs.promises.readdir(dir, { withFileTypes: true });
+        } catch (e) {
+          return;
+        }
+        for (const e of ents) {
+          if (hits.length >= 40 || Date.now() > deadline) return;
+          if (WS_HEAVY.has(e.name) || WS_IGNORE.has(e.name)) continue;
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) {
+            await walk(full, depth + 1);
+            continue;
+          }
+          try {
+            const st = await fs.promises.stat(full);
+            if (st.size > 800000) continue;
+            const txt = await fs.promises.readFile(full, 'utf8');
+            if (txt.includes('\0')) continue;
+            const lines = txt.split('\n');
+            for (let i = 0; i < lines.length && hits.length < 40; i++) {
+              if (lines[i].toLowerCase().includes(ql)) hits.push({ file: path.relative(cfg.workspace, full).replace(/\\/g, '/'), line: i + 1, text: lines[i].trim().slice(0, 160) });
+            }
+          } catch (e2) {
+            /* ok */
+          }
+        }
+      };
+      await walk(cfg.workspace, 0);
+      return { query: q, files_matching_name: byName, content_matches: hits };
+    },
+  },
   read_clipboard: {
     category: 'screen', // mesma permissão de "ver" (conteúdo do usuário)
     schema: {

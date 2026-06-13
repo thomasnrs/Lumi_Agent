@@ -3379,6 +3379,10 @@
         {
           label: 'Ir',
           items: [
+            { label: '✦ Explicar este projeto (pra Lumi)', icon: MI.help, fn: () => {
+              if (chatpane.classList.contains('hidden')) document.getElementById('toggleChat').click();
+              document.getElementById('chatframe').contentWindow.postMessage({ __lumi: 'insert', text: 'Use a ferramenta project_overview e me explique a arquitetura deste projeto: propósito, stack, estrutura, pontos de entrada e como rodar.', send: true }, '*');
+            } },
             { label: 'Abrir arquivo rápido…', icon: MI.search, hint: 'Ctrl+P', fn: () => qOpen() },
             { label: 'Símbolo no arquivo…', icon: MI.goto, hint: 'Ctrl+Shift+O', fn: () => editor && (editor.focus(), editor.trigger('menu', 'editor.action.quickOutline')) },
             { label: 'Buscar no projeto…', icon: MI.search, hint: 'Ctrl+Shift+F', fn: () => toggleSearch(true) },
