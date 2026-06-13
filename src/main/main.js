@@ -268,6 +268,7 @@ const DEFAULT_CONFIG = {
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
+  watchServer: false, // opt-in: vigia o servidor remoto montado (disco cheio / serviço caído) e avisa
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   includeActiveTab: true, // anexa o arquivo ativo do editor a cada mensagem do chat (chip liga/desliga)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
@@ -1853,6 +1854,97 @@ ipcMain.handle('ssh:ensure-key', async (_e, host) => {
     }
   }
   return { error: 'a chave não ficou pronta em 3min — digitou a senha no terminal "chave: ' + host + '"? (deve aparecer CHAVE-INSTALADA)' };
+});
+
+// ============================================================
+//  PAINEL DO SERVIDOR (systemd + recursos) — opera no remoto SSH ativo,
+//  ou na própria máquina se for Linux. No Windows sem remoto, fica inerte.
+// ============================================================
+function serverCtx() {
+  if (remoteMount) return { kind: 'remote', host: remoteMount.host };
+  if (IS_LINUX) return { kind: 'local' };
+  return { kind: 'none' };
+}
+async function serverRun(cmd, timeout) {
+  const ctx = serverCtx();
+  if (ctx.kind === 'remote') {
+    const { stdout } = await execFileAsync(
+      resolveExe('ssh'),
+      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', ctx.host, cmd],
+      { timeout: timeout || 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }
+    );
+    return stdout;
+  }
+  if (ctx.kind === 'local') {
+    const { stdout } = await execAsync(cmd, { timeout: timeout || 15000, maxBuffer: 4 * 1024 * 1024 });
+    return stdout;
+  }
+  throw new Error('sem servidor (conecte a um host SSH ou rode no Linux)');
+}
+ipcMain.handle('server:context', () => serverCtx());
+ipcMain.handle('server:stats', async () => {
+  const ctx = serverCtx();
+  if (ctx.kind === 'none') return { error: 'conecte a um servidor SSH (📡) ou rode no Linux' };
+  try {
+    const cmd =
+      "echo UP:$(uptime -p 2>/dev/null | sed 's/^up //'); " +
+      "echo LOAD:$(cut -d' ' -f1-3 /proc/loadavg):$(nproc); " +
+      "echo MEM:$(free -b | awk '/Mem:/{print $2\" \"$3}'); " +
+      "echo DISK:$(df -B1 / | awk 'NR==2{print $2\" \"$3\" \"$5}')";
+    const out = await serverRun(cmd, 12000);
+    const g = (re) => (re.exec(out) || [])[1] || '';
+    const mem = g(/MEM:(.+)/).trim().split(/\s+/).map(Number);
+    const disk = g(/DISK:(.+)/).trim().split(/\s+/);
+    const load = g(/LOAD:(.+)/).trim().split(/[:\s]+/);
+    return {
+      ctx,
+      uptime: g(/UP:(.+)/).trim(),
+      cores: parseInt(load[3], 10) || 1,
+      load: load.slice(0, 3).join(' '),
+      memTotal: mem[0] || 0,
+      memUsed: mem[1] || 0,
+      diskTotal: parseInt(disk[0], 10) || 0,
+      diskUsed: parseInt(disk[1], 10) || 0,
+      diskPct: disk[2] || '?',
+    };
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 160) };
+  }
+});
+ipcMain.handle('server:services', async () => {
+  try {
+    const out = await serverRun('systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -200', 12000);
+    const svcs = [];
+    for (const line of out.split(/\r?\n/)) {
+      const m = /^(\S+\.service)\s+\S+\s+(\S+)\s+(\S+)\s+(.*)$/.exec(line.trim());
+      if (m) svcs.push({ name: m[1].replace(/\.service$/, ''), active: m[2], sub: m[3], desc: m[4] });
+    }
+    // ativos/falhos primeiro
+    svcs.sort((a, b) => (b.active === 'active') - (a.active === 'active') || a.name.localeCompare(b.name));
+    return { services: svcs };
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 160) };
+  }
+});
+ipcMain.handle('server:action', async (_e, { name, action }) => {
+  if (!/^[\w.@-]+$/.test(String(name || '')) || !['start', 'stop', 'restart'].includes(action)) return { error: 'inválido' };
+  try {
+    // tenta sem sudo; serviços de sistema podem exigir sudo -n (sem senha) configurado
+    await serverRun('systemctl ' + action + " '" + name + "' 2>&1 || sudo -n systemctl " + action + " '" + name + "' 2>&1", 30000);
+    return { ok: true };
+  } catch (e) {
+    const err = String((e && e.message) || e);
+    return { error: /password|sudo/i.test(err) ? 'precisa de sudo sem senha pra esse serviço (visudo: NOPASSWD)' : err.slice(0, 200) };
+  }
+});
+// logs ao vivo de um serviço, no terminal integrado (journalctl -fu)
+ipcMain.handle('server:logs', (_e, name) => {
+  if (!/^[\w.@-]+$/.test(String(name || ''))) return { error: 'nome inválido' };
+  const ctx = serverCtx();
+  const jcmd = 'journalctl -fu ' + name + ' -n 100 --no-pager';
+  if (ctx.kind === 'remote') return createTerminal({ shell: 'ssh', args: ['-t', ctx.host, jcmd], title: 'logs: ' + name });
+  if (ctx.kind === 'local') return createTerminal({ command: jcmd, title: 'logs: ' + name });
+  return { error: 'sem servidor' };
 });
 
 // navegador de pastas remotas (autocomplete tipo Remote-SSH do VS Code): lista as
@@ -7120,6 +7212,30 @@ function fmtHour(ms) {
   const d = new Date(ms);
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
+
+// vigia do servidor remoto (opt-in): a cada ~5min checa disco e serviços caídos do host
+// montado e a Lumi AVISA (sem virar spam — só quando algo novo fica crítico)
+let srvWatchState = { disk: false, failed: '' };
+setInterval(async () => {
+  if (!loadConfig().watchServer || !remoteMount || agentRunning || proactivityLevel() < 1) return;
+  try {
+    const out = await serverRun("echo D:$(df / | awk 'NR==2{print $5}'); echo F:$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | wc -l):$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | head -3 | awk '{print $1}' | tr '\\n' ' ')", 12000);
+    const diskPct = parseInt((/D:(\d+)/.exec(out) || [])[1], 10) || 0;
+    const fm = /F:(\d+):(.*)/.exec(out) || [];
+    const failedN = parseInt(fm[1], 10) || 0;
+    const failedList = (fm[2] || '').trim();
+    if (diskPct >= 90 && !srvWatchState.disk) {
+      srvWatchState.disk = true;
+      proactiveSay(await proactiveLLM('O disco do servidor ' + remoteMount.host + ' está em ' + diskPct + '% — avise com cuidado e sugira liberar espaço.', '⚠ O disco do ' + remoteMount.host + ' tá em ' + diskPct + '%! Bora liberar espaço? 😬'), 'surprised');
+    } else if (diskPct < 85) srvWatchState.disk = false; // histerese: só re-avisa se cair e subir de novo
+    if (failedN > 0 && failedList !== srvWatchState.failed) {
+      srvWatchState.failed = failedList;
+      proactiveSay(await proactiveLLM('Serviço(s) com falha no servidor ' + remoteMount.host + ': ' + failedList + '. Avise e ofereça ajuda (ver logs/reiniciar).', '⚠ Caiu serviço no ' + remoteMount.host + ': ' + failedList + ' — quer que eu veja os logs?'), 'sad');
+    } else if (failedN === 0) srvWatchState.failed = '';
+  } catch (e) {
+    /* servidor inacessível no momento — ignora */
+  }
+}, 300000);
 
 // loop dos lembretes: dispara os vencidos (espera o turno atual acabar, se houver)
 setInterval(() => {

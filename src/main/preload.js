@@ -82,6 +82,13 @@ contextBridge.exposeInMainWorld('api', {
   sshRecents: () => ipcRenderer.invoke('ssh:recents'),
   onRemoteActive: (cb) => ipcRenderer.on('remote:active', (_e, d) => cb(d)),
 
+  // painel do servidor (systemd + recursos)
+  serverContext: () => ipcRenderer.invoke('server:context'),
+  serverStats: () => ipcRenderer.invoke('server:stats'),
+  serverServices: () => ipcRenderer.invoke('server:services'),
+  serverAction: (name, action) => ipcRenderer.invoke('server:action', { name, action }),
+  serverLogs: (name) => ipcRenderer.invoke('server:logs', name),
+
   // .env viewer/editor
   envList: () => ipcRenderer.invoke('env:list'),
   envRead: (file) => ipcRenderer.invoke('env:read', file),

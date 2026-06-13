@@ -530,6 +530,11 @@
             Reagir ao app em foco ("abriu o VS Code, bora codar?")
           </label>
           <p class="hint">Opt-in (Windows e Linux/X11): ela vê só o <b>nome</b> do app/janela ativa — nunca o conteúdo — e comenta de vez em quando (precisa de proatividade Normal+).</p>
+          <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px">
+            <input id="watchServer" type="checkbox" style="width: auto; margin: 0" />
+            Vigiar o servidor remoto (avisa se disco encher / serviço cair)
+          </label>
+          <p class="hint">Opt-in: quando você tem uma pasta remota (SSH) montada, ela checa o servidor a cada ~5min e avisa se o disco passar de 90% ou algum serviço falhar.</p>
           <div id="modelsStatus" class="hint"></div>
 
           <label>Temperatura (criatividade): <span id="tempVal"></span></label>

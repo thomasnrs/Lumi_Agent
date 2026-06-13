@@ -1070,6 +1070,7 @@ const searxUrlEl = document.getElementById('searxUrl');
 const fallbackModelEl = document.getElementById('fallbackModel');
 const proactivityEl = document.getElementById('proactivity');
 const reactAppsEl = document.getElementById('reactApps');
+const watchServerEl = document.getElementById('watchServer');
 const maxStepsEl = document.getElementById('maxSteps');
 const clearFactsBtn = document.getElementById('clearFacts');
 const permEls = {
@@ -1416,6 +1417,7 @@ async function openSettings() {
   fallbackModelEl.value = c.fallbackModel || '';
   proactivityEl.value = c.proactivity || 'normal';
   reactAppsEl.checked = !!c.reactApps;
+  watchServerEl.checked = !!c.watchServer;
   maxStepsEl.value = c.maxSteps || 48;
   const perms = c.perms || {};
   permEls.read.value = perms.read || 'ask';
@@ -1563,6 +1565,7 @@ function readForm() {
     fallbackModel: fallbackModelEl.value.trim(),
     proactivity: proactivityEl.value,
     reactApps: reactAppsEl.checked,
+    watchServer: watchServerEl.checked,
     maxSteps: Math.min(200, Math.max(4, parseInt(maxStepsEl.value, 10) || 48)),
     perms: {
       read: permEls.read.value,

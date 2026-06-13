@@ -500,6 +500,28 @@
       #dockerBody .pact button.danger:hover { background: #e0556e; color: #fff; }
       .dkdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #667; }
       .dkdot.up { background: #7ee0a0; box-shadow: 0 0 6px #7ee0a066; }
+      /* ---- aba SERVIDOR (systemd + recursos) ---- */
+      #srvBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
+      #srvStats { display: flex; gap: 14px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+      #srvStats .stat { display: flex; flex-direction: column; gap: 3px; min-width: 90px; }
+      #srvStats .stat .lbl { font-size: 10px; color: #9aa; text-transform: uppercase; letter-spacing: 0.3px; }
+      #srvStats .stat .val { font-size: 13px; font-weight: 600; }
+      #srvStats .bar { height: 4px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 2px; }
+      #srvStats .bar > i { display: block; height: 100%; background: var(--accent); }
+      #srvStats .bar > i.warn { background: #e2b75e; }
+      #srvStats .bar > i.crit { background: #ff6b6b; }
+      #srvStats .srvmsg { color: #9aa; }
+      #srvServices { flex: 1; overflow: auto; }
+      .srvrow { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+      .srvrow .dot { width: 8px; height: 8px; border-radius: 50%; background: #667; flex: 0 0 auto; }
+      .srvrow .dot.on { background: #7ee0a0; }
+      .srvrow .dot.fail { background: #ff6b6b; }
+      .srvrow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, monospace; }
+      .srvrow .sb { color: #889; font-size: 11px; }
+      .srvrow .acts { display: none; gap: 3px; }
+      .srvrow:hover .acts { display: flex; }
+      .srvrow .acts button { border: none; border-radius: 5px; padding: 2px 7px; font-size: 11px; cursor: pointer; background: var(--border); color: var(--text); }
+      .srvrow .acts button:hover { background: var(--accent); color: var(--accent-text); }
       /* ---- aba BANCO ---- */
       #dbBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
       #dbConnRow { display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
@@ -674,6 +696,7 @@
             <span class="ptab" data-tab="ports">PORTAS</span>
             <span class="ptab" data-tab="docker">DOCKER</span>
             <span class="ptab" data-tab="db">BANCO</span>
+            <span class="ptab" data-tab="server">SERVIDOR</span>
             <span class="pgrow"></span>
             <select id="termSel" title="Terminais abertos"></select>
             <button class="pbtn" id="termNew" title="Novo terminal (PowerShell)">＋</button>
@@ -695,6 +718,10 @@
               <thead><tr><th></th><th>Container</th><th>Imagem</th><th>Status</th><th>Portas</th><th>Ações</th></tr></thead>
               <tbody id="dockerRows"></tbody>
             </table>
+          </div>
+          <div id="srvBody" hidden>
+            <div id="srvStats"><span class="srvmsg">carregando…</span></div>
+            <div id="srvServices"></div>
           </div>
           <div id="dbBody" hidden>
             <div id="dbConnRow">
@@ -1397,10 +1424,81 @@
         portsBodyEl.hidden = t !== 'ports';
         document.getElementById('dockerBody').hidden = t !== 'docker';
         document.getElementById('dbBody').style.display = t === 'db' ? 'flex' : 'none';
+        document.getElementById('srvBody').style.display = t === 'server' ? 'flex' : 'none';
         if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
         if (t === 'docker') loadDocker(true);
         if (t === 'db') dbInit();
+        if (t === 'server') loadServer();
         if (t === 'term') setTimeout(fitActive, 30);
+      }
+
+      // ============================================================
+      //  Aba SERVIDOR: monitor de recursos + serviços systemd (remoto ativo ou Linux local)
+      // ============================================================
+      const fmtGB = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : (b / 1048576).toFixed(0) + ' MB');
+      function barClass(pct) {
+        return pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : '';
+      }
+      async function loadServer() {
+        const statsEl = document.getElementById('srvStats');
+        const svcEl = document.getElementById('srvServices');
+        statsEl.innerHTML = '<span class="srvmsg">⏳ consultando o servidor…</span>';
+        svcEl.innerHTML = '';
+        const s = await window.api.serverStats();
+        if (s && s.error) {
+          statsEl.innerHTML = '<span class="srvmsg">🖥️ ' + esc(s.error) + '</span>';
+          return;
+        }
+        const memPct = s.memTotal ? Math.round((s.memUsed / s.memTotal) * 100) : 0;
+        const diskPct = parseInt(s.diskPct, 10) || 0;
+        const where = s.ctx && s.ctx.kind === 'remote' ? '📡 ' + s.ctx.host : '🖥️ local';
+        statsEl.innerHTML =
+          '<div class="stat"><span class="lbl">onde</span><span class="val">' + where + '</span></div>' +
+          '<div class="stat"><span class="lbl">uptime</span><span class="val">' + esc(s.uptime || '?') + '</span></div>' +
+          '<div class="stat"><span class="lbl">carga (' + s.cores + ' cores)</span><span class="val">' + esc(s.load || '?') + '</span></div>' +
+          '<div class="stat" style="flex:1;min-width:140px"><span class="lbl">memória ' + fmtGB(s.memUsed) + ' / ' + fmtGB(s.memTotal) + ' (' + memPct + '%)</span><span class="bar"><i class="' + barClass(memPct) + '" style="width:' + memPct + '%"></i></span></div>' +
+          '<div class="stat" style="flex:1;min-width:140px"><span class="lbl">disco / ' + fmtGB(s.diskUsed) + ' / ' + fmtGB(s.diskTotal) + ' (' + diskPct + '%)</span><span class="bar"><i class="' + barClass(diskPct) + '" style="width:' + diskPct + '%"></i></span></div>';
+        // serviços
+        const r = await window.api.serverServices();
+        if (r && r.error) {
+          svcEl.innerHTML = '<div class="srvrow" style="color:#9aa">' + esc(r.error) + '</div>';
+          return;
+        }
+        svcEl.innerHTML = '';
+        (r.services || []).forEach((sv) => {
+          const row = document.createElement('div');
+          row.className = 'srvrow';
+          const on = sv.active === 'active';
+          const fail = sv.active === 'failed';
+          row.innerHTML =
+            '<span class="dot ' + (fail ? 'fail' : on ? 'on' : '') + '" title="' + esc(sv.active + '/' + sv.sub) + '"></span>' +
+            '<span class="nm" title="' + esc(sv.desc) + '">' + esc(sv.name) + '</span><span class="sb">' + esc(sv.sub) + '</span>';
+          const acts = document.createElement('span');
+          acts.className = 'acts';
+          const mk = (lbl, action) => {
+            const b = document.createElement('button');
+            b.textContent = lbl;
+            b.onclick = async () => {
+              const res = await window.api.serverAction(sv.name, action);
+              if (res && res.error) toast('⚠ ' + res.error, false);
+              else {
+                toast('✓ ' + sv.name + ' ' + action);
+                setTimeout(loadServer, 800);
+              }
+            };
+            acts.appendChild(b);
+          };
+          if (on) mk('⏹', 'stop');
+          else mk('▶', 'start');
+          mk('🔄', 'restart');
+          const logb = document.createElement('button');
+          logb.textContent = '📜';
+          logb.title = 'logs ao vivo';
+          logb.onclick = () => window.api.serverLogs(sv.name);
+          acts.appendChild(logb);
+          row.appendChild(acts);
+          svcEl.appendChild(row);
+        });
       }
 
       // ============================================================
@@ -3116,6 +3214,7 @@
         trash: MNI('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
         plus: MNI('<path d="M5 12h14"/><path d="M12 5v14"/>'),
         db: MNI('<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>'),
+        server: MNI('<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/>'),
         gear: MNI('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/>'),
       };
 
@@ -3173,6 +3272,7 @@
             { label: 'Live Server (preview ao vivo)', icon: MI.plug, fn: () => liveBtn.click() },
             { label: 'Navegador (localhost)', icon: MI.reveal, fn: () => openBrowserTab('') },
             { label: 'Banco de dados', icon: MI.db, fn: () => { showPanel(true); setPanelTab('db'); } },
+            { label: 'Servidor (serviços/recursos)', icon: MI.server, fn: () => { showPanel(true); setPanelTab('server'); } },
             { label: 'Variáveis (.env)', icon: MI.gear, fn: openEnv },
             '-',
             // toggles do editor (✓ = ligado; persistem entre sessões)
