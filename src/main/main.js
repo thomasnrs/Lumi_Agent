@@ -1912,7 +1912,7 @@ async function unmountRemote() {
   }
   remoteMount = null;
 }
-ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
+async function doSshMount(host, remotePath) {
   if (!host) return { error: 'host vazio' };
   const sshfsBin = findSshfs();
   if (!sshfsBin) return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
@@ -2045,9 +2045,11 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
       remoteMount = { host, mountPoint: mp, prevWorkspace: prev, terms };
       // remoteWs marca que o workspace é um mount de sessão — o boot seguinte restaura o prev
       saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true, remoteWs: { host, prev } });
+      rememberRemote(host, rpTrim || '.'); // histórico (menu Arquivo → Remotos recentes)
       startWorkspaceWatcher(); // re-observa o novo workspace (modo rede: poll leve)
       broadcast('workspace:switched', wsPath);
       broadcast('config:changed');
+      broadcast('remote:active', { host }); // a statusbar/menu marcam 📡 (inclusive se foi via chat)
       logd('ssh:mount OK', wsPath);
       return { ok: true, mountPoint: wsPath, host };
     } catch (e) {
@@ -2068,7 +2070,20 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     }
   }
   return { error: 'não montou — confira o terminal "sshfs: ' + host + '" (caminho? permissão?) e o lumi.log' };
-});
+}
+// histórico de pastas remotas (volta num clique pelo menu Arquivo)
+function rememberRemote(host, p) {
+  try {
+    const c = loadConfig();
+    const list = (c.recentRemotes || []).filter((r) => !(r.host === host && r.path === p));
+    list.unshift({ host, path: p });
+    saveConfig({ ...c, recentRemotes: list.slice(0, 8) });
+  } catch (e) {
+    /* ok */
+  }
+}
+ipcMain.handle('ssh:mount', (_e, { host, remotePath }) => doSshMount(host, remotePath));
+ipcMain.handle('ssh:recents', () => loadConfig().recentRemotes || []);
 ipcMain.handle('ssh:unmount', async () => {
   const prev = (remoteMount && remoteMount.prevWorkspace) || (loadConfig().remoteWs && loadConfig().remoteWs.prev) || '';
   await unmountRemote();
@@ -2076,6 +2091,7 @@ ipcMain.handle('ssh:unmount', async () => {
   startWorkspaceWatcher(); // volta a observar o workspace local
   broadcast('workspace:switched', prev);
   broadcast('config:changed');
+  broadcast('remote:active', { host: null });
   return { ok: true };
 });
 
@@ -2269,6 +2285,45 @@ const TOOLS = {
     category: null,
     schema: { name: 'get_datetime', description: 'Retorna a data e a hora atuais do PC.', parameters: { type: 'object', properties: {} } },
     run: async () => ({ datetime: new Date().toLocaleString('pt-BR') }),
+  },
+  connect_remote: {
+    category: 'exec', // monta um FS remoto e abre terminais — pede permissão de execução
+    schema: {
+      name: 'connect_remote',
+      description:
+        'Conecta a um servidor SSH e monta uma pasta dele como workspace (estilo Remote-SSH), quando o usuário pedir "conecta no <alias>". host = um alias do ~/.ssh/config (use list_ssh_hosts se não souber). path = pasta no servidor (opcional; vazio = home). A chave precisa já estar instalada (a 1ª vez é pelo botão 📡 do workspace).',
+      parameters: {
+        type: 'object',
+        properties: { host: { type: 'string' }, path: { type: 'string' } },
+        required: ['host'],
+      },
+    },
+    run: async ({ host, path: p }) => {
+      const hosts = sshConfigHosts();
+      if (!hosts.includes(host)) return { error: 'host "' + host + '" não está no ~/.ssh/config. Disponíveis: ' + (hosts.join(', ') || '(nenhum)') };
+      if (!sshKeyOkHosts.has(host)) {
+        // testa a chave sem UI; se não autoriza, orienta usar o botão (que instala a chave)
+        try {
+          const { stdout } = await execFileAsync(
+            resolveExe('ssh'),
+            ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', host, 'echo __ok'],
+            { timeout: 15000, windowsHide: true }
+          );
+          if (/__ok/.test(stdout)) sshKeyOkHosts.add(host);
+          else return { error: 'não consegui autenticar por chave em ' + host + '. Use o botão 📡 do workspace uma vez pra instalar a chave (pede a senha).' };
+        } catch (e) {
+          return { error: 'não consegui acessar ' + host + ' por chave. Use o botão 📡 do workspace a 1ª vez (instala a chave com a senha).' };
+        }
+      }
+      const r = await doSshMount(host, p || '.');
+      if (r && r.error) return { error: r.error };
+      return { ok: true, mounted: host, at: r.mountPoint, note: 'workspace remoto ativo' };
+    },
+  },
+  list_ssh_hosts: {
+    category: null,
+    schema: { name: 'list_ssh_hosts', description: 'Lista os aliases de servidores SSH do ~/.ssh/config (pra usar com connect_remote).', parameters: { type: 'object', properties: {} } },
+    run: async () => ({ hosts: sshConfigHosts() }),
   },
   read_clipboard: {
     category: 'screen', // mesma permissão de "ver" (conteúdo do usuário)

@@ -2941,6 +2941,20 @@
         remoteActive = null;
         toast('⏏ pasta remota desmontada');
       }
+      // remonta um remoto do histórico (1 clique, sem navegar de novo)
+      async function remountRemote(host, p) {
+        showPanel(true);
+        setBusy('📡 reconectando ' + host + '…');
+        const r = await window.api.sshMount(host, p || '.');
+        clearBusy();
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        toast('📡 montado: ' + host);
+      }
+      // o main avisa quando um remoto monta/desmonta (inclusive via comando no chat) → statusbar 📡
+      window.api.onRemoteActive((d) => {
+        remoteActive = d && d.host ? d.host : null;
+        updateStatus();
+      });
 
       // ---- navegador de pastas remotas (autocomplete estilo Remote-SSH) ----
       const rbrOv = document.getElementById('rbrOv');
@@ -3115,6 +3129,10 @@
               { label: 'Abrir pasta (workspace)…', icon: MI.folderOpen, fn: openFolder },
               { label: '📡 Abrir pasta remota (SSH)…', icon: MI.plug, fn: openRemote },
               ...(remoteActive ? [{ label: '⏏ Fechar pasta remota (' + remoteActive + ')', icon: MI.reveal, fn: closeRemote }] : []),
+              ...(await (async () => {
+                const rec = (await window.api.sshRecents()) || [];
+                return rec.length ? [{ head: 'Remotos recentes' }, ...rec.map((r) => ({ label: '📡 ' + r.host + (r.path && r.path !== '.' ? ':' + r.path : ''), fn: () => remountRemote(r.host, r.path) }))] : [];
+              })()),
               ...(rec.length ? [{ head: 'Workspaces recentes' }] : []),
               ...rec.map((w) => ({ label: w.replace(/\\/g, '/').split('/').pop(), icon: MI.folder, title: w, fn: () => switchWorkspace(w) })),
               '-',
