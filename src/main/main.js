@@ -1891,6 +1891,25 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
   if (!host) return { error: 'host vazio' };
   const sshfsBin = findSshfs();
   if (!sshfsBin) return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
+  // VALIDA o path no servidor ANTES de montar — o sshfs monta drive quebrado se a pasta não
+  // existe e o vigia só descobre via timeout de 90s (caso real: /home/targex/TargeX vs
+  // .../targex/TargeX). Com a chave já ok, esse teste é instantâneo e dá erro claro.
+  const rpTrim = (remotePath || '').trim();
+  if (rpTrim && rpTrim !== '.') {
+    try {
+      const { stdout } = await execFileAsync(
+        resolveExe('ssh'),
+        ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', host, "test -d '" + rpTrim.replace(/'/g, "'\\''") + "' && echo __OK || echo __NODIR"],
+        { timeout: 15000, windowsHide: true }
+      );
+      if (/__NODIR/.test(stdout)) {
+        logd('ssh:mount path inexistente', host, rpTrim);
+        return { error: 'a pasta "' + rpTrim + '" não existe no servidor (confira o caminho — Linux diferencia maiúsculas)' };
+      }
+    } catch (e) {
+      /* rede instável no teste: segue e deixa o mount tentar mesmo assim */
+    }
+  }
   if (remoteMount) await unmountRemote().catch(() => {});
   let mp; // ponto de montagem passado pro sshfs
   let wsPath; // caminho que vira o workspace
@@ -1981,9 +2000,9 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     logd('ssh:mount via terminal', sshfsBin, spec, '→', mp);
   }
   if (t && t.error) return { error: t.error };
-  // vigia o ponto de montagem por até 90s (tempo de digitar senha etc.)
+  // vigia o ponto de montagem por até 35s (com chave monta em segundos; path já foi validado)
   const t0 = Date.now();
-  while (Date.now() - t0 < 90000) {
+  while (Date.now() - t0 < 35000) {
     await new Promise((r) => setTimeout(r, 1500));
     try {
       await fs.promises.readdir(wsPath); // async: não trava o main se o SFTP estiver lento
@@ -2011,7 +2030,19 @@ ipcMain.handle('ssh:mount', async (_e, { host, remotePath }) => {
     }
   }
   logd('ssh:mount TIMEOUT', host);
-  return { error: 'não montou em 90s — olha o terminal "sshfs: ' + host + '": ele deve estar pedindo senha, confirmação de host key (yes) ou reclamando do caminho' };
+  // limpa o mount meio-feito (remoteMount ainda é null aqui) pra não deixar drive/terminal pendurado
+  if (process.platform === 'win32') await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true }).catch(() => {});
+  if (t && t.id) {
+    const tt = terminals.get(t.id);
+    if (tt) {
+      try {
+        termKill(tt);
+      } catch (e) {
+        /* ok */
+      }
+    }
+  }
+  return { error: 'não montou — confira o terminal "sshfs: ' + host + '" (caminho? permissão?) e o lumi.log' };
 });
 ipcMain.handle('ssh:unmount', async () => {
   const prev = (remoteMount && remoteMount.prevWorkspace) || (loadConfig().remoteWs && loadConfig().remoteWs.prev) || '';
