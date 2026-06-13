@@ -600,6 +600,7 @@
       /* CI + botão de PR no painel git */
       #ghCi { font-size: 11px; cursor: pointer; }
       #gitBranchRow .ga.wide { width: auto; padding: 0 7px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.2px; }
+      #gitBranchRow .ga.viewon { background: var(--accent); color: var(--accent-text, #fff); } /* push com commits a enviar */
       /* badge de erros do console no navegador embutido */
       #webTools #wbErr { color: #ffb4b4; border-color: #6a3040; }
       #webTools #wbErr:hover { background: #3a2030; }
@@ -661,8 +662,8 @@
               <span id="ghCi" hidden></span>
               <span style="flex: 1"></span>
               <button class="ga wide" id="ghPrBtn" hidden title="Criar Pull Request com título e descrição escritos pela Lumi">✦PR</button>
-              <button class="ga" id="gitPull" title="Pull (puxar do remoto)">↓</button>
-              <button class="ga" id="gitPush" title="Push (enviar pro remoto)">↑</button>
+              <button class="ga" id="gitPull" title="Pull (puxar do remoto)">↓ pull</button>
+              <button class="ga wide" id="gitPush" title="Push (enviar commits pro remoto)">↑ push</button>
               <button class="ga" id="gitRefresh" title="Atualizar">⟳</button>
             </div>
             <textarea id="gitMsg" placeholder="Mensagem do commit (Ctrl+Enter commita)" spellcheck="false"></textarea>
@@ -2244,6 +2245,9 @@
         }
         gitBranchNameEl.textContent = st.branch;
         gitSyncEl.textContent = (st.ahead ? '↑' + st.ahead : '') + (st.behind ? ' ↓' + st.behind : '');
+        // push acende em accent quando há commits locais pra enviar (você nota na hora)
+        gitPushBtn.classList.toggle('viewon', st.ahead > 0);
+        gitPushBtn.title = st.ahead ? 'Push: ' + st.ahead + ' commit(s) pra enviar' : 'Push (nada novo pra enviar)';
         gitListsEl.innerHTML = '';
         if (!st.staged.length && !st.unstaged.length) {
           gitListsEl.innerHTML = '<div id="gitEmpty">Nenhuma alteração ✨</div>';

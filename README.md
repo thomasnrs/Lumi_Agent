@@ -15,6 +15,10 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 ![Linux](https://img.shields.io/badge/Linux-X11-FCC624?logo=linux&logoColor=black)
 ![BYOK](https://img.shields.io/badge/I.A.-BYOK%20multi--provedor-8A2BE2)
 
+<br><br>
+
+<img src="assets/brand/screenshot.png" width="760" alt="Lumi em ação: workspace com editor, avatar 3D, chat e terminal" />
+
 </div>
 
 ---
