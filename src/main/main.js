@@ -1865,21 +1865,31 @@ function serverCtx() {
   if (IS_LINUX) return { kind: 'local' };
   return { kind: 'none' };
 }
-async function serverRun(cmd, timeout) {
+async function serverRun(cmd, timeout, retries) {
   const ctx = serverCtx();
-  if (ctx.kind === 'remote') {
-    const { stdout } = await execFileAsync(
-      resolveExe('ssh'),
-      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', ctx.host, cmd],
-      { timeout: timeout || 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }
-    );
-    return stdout;
+  if (ctx.kind === 'none') throw new Error('sem servidor (conecte a um host SSH ou rode no Linux)');
+  // retry só em LEITURAS (idempotentes): a 1ª conexão a um host "frio" costuma demorar mais
+  // que o timeout — algumas tentativas com backoff resolvem a flakiness. Ações NÃO usam retry.
+  const tries = (retries == null ? 0 : retries) + 1;
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      if (ctx.kind === 'remote') {
+        const { stdout } = await execFileAsync(
+          resolveExe('ssh'),
+          ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', ctx.host, cmd],
+          { timeout: timeout || 18000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }
+        );
+        return stdout;
+      }
+      const { stdout } = await execAsync(cmd, { timeout: timeout || 18000, maxBuffer: 4 * 1024 * 1024 });
+      return stdout;
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 1200)); // respiro antes de retentar
+    }
   }
-  if (ctx.kind === 'local') {
-    const { stdout } = await execAsync(cmd, { timeout: timeout || 15000, maxBuffer: 4 * 1024 * 1024 });
-    return stdout;
-  }
-  throw new Error('sem servidor (conecte a um host SSH ou rode no Linux)');
+  throw lastErr;
 }
 // REST client (aba do painel): dispara a requisição e devolve a resposta completa
 ipcMain.handle('rest:send', async (_e, { method, url, headers, body }) => {
@@ -1926,7 +1936,7 @@ ipcMain.handle('server:stats', async () => {
       "echo LOAD:$(cut -d' ' -f1-3 /proc/loadavg):$(nproc); " +
       "echo MEM:$(free -b | awk '/Mem:/{print $2\" \"$3}'); " +
       "echo DISK:$(df -B1 / | awk 'NR==2{print $2\" \"$3\" \"$5}')";
-    const out = await serverRun(cmd, 12000);
+    const out = await serverRun(cmd, 15000, 3); // até 4 tentativas (1ª conexão fria demora)
     const g = (re) => (re.exec(out) || [])[1] || '';
     const mem = g(/MEM:(.+)/).trim().split(/\s+/).map(Number);
     const disk = g(/DISK:(.+)/).trim().split(/\s+/);
@@ -1948,7 +1958,7 @@ ipcMain.handle('server:stats', async () => {
 });
 ipcMain.handle('server:services', async () => {
   try {
-    const out = await serverRun('systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -200', 12000);
+    const out = await serverRun('systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -200', 15000, 2);
     const svcs = [];
     for (const line of out.split(/\r?\n/)) {
       const m = /^(\S+\.service)\s+\S+\s+(\S+)\s+(\S+)\s+(.*)$/.exec(line.trim());
