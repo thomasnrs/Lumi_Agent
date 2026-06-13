@@ -1855,6 +1855,31 @@ ipcMain.handle('ssh:ensure-key', async (_e, host) => {
   return { error: 'a chave não ficou pronta em 3min — digitou a senha no terminal "chave: ' + host + '"? (deve aparecer CHAVE-INSTALADA)' };
 });
 
+// navegador de pastas remotas (autocomplete tipo Remote-SSH do VS Code): lista as
+// subpastas de um caminho no servidor — evita errar o path (a chave já está ok)
+ipcMain.handle('ssh:listdir', async (_e, { host, path: p }) => {
+  const dir = p && p.trim() ? p.trim() : '.';
+  try {
+    const q = dir.replace(/'/g, "'\\''");
+    const { stdout } = await execFileAsync(
+      resolveExe('ssh'),
+      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=accept-new', host, "cd '" + q + "' && pwd && ls -1p"],
+      { timeout: 15000, windowsHide: true }
+    );
+    const lines = String(stdout).split(/\r?\n/);
+    const cwd = (lines.shift() || dir).trim(); // 1ª linha = caminho absoluto resolvido
+    const dirs = lines
+      .filter((l) => l.endsWith('/'))
+      .map((l) => l.replace(/\/$/, ''))
+      .filter((n) => n && n !== '.' && n !== '..')
+      .sort((a, b) => a.localeCompare(b));
+    return { cwd, dirs };
+  } catch (e) {
+    const err = String((e && e.stderr) || (e && e.message) || e);
+    return { error: /no such file|not a directory/i.test(err) ? 'pasta não encontrada' : err.slice(0, 160) };
+  }
+});
+
 let remoteMount = null; // { host, mountPoint, prevWorkspace }
 async function unmountRemote() {
   if (!remoteMount) return;

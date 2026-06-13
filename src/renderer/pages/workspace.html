@@ -519,6 +519,22 @@
       #dbResult td { padding: 3px 9px; border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; font-family: Consolas, monospace; }
       #dbResult .dbmsg { padding: 14px; color: #9aa; font-size: 12px; }
       #dbResult .dberr { padding: 14px; color: #ff9b9b; font-size: 12px; white-space: pre-wrap; font-family: Consolas, monospace; }
+      /* ---- navegador de pastas remotas ---- */
+      #rbrOv { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 90; display: flex; justify-content: center; align-items: flex-start; padding-top: 56px; }
+      #rbrOv[hidden] { display: none; }
+      #rbrBox { width: min(560px, 92vw); background: var(--surface-2); border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; overflow: hidden; }
+      #rbrHead { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid var(--border); }
+      #rbrPath { margin: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; font-family: Consolas, monospace; font-size: 12.5px; outline: none; }
+      #rbrPath:focus { border-color: var(--accent); }
+      #rbrList { flex: 1; min-height: 120px; max-height: 320px; overflow: auto; padding: 0 8px; }
+      .rbrItem { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; font-size: 12.5px; cursor: pointer; font-family: Consolas, monospace; }
+      .rbrItem:hover { background: var(--surface); }
+      .rbrItem .ic { color: var(--accent); }
+      #rbrFoot { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--border); }
+      #rbrMsg { font-size: 11px; color: #9aa; }
+      #rbrFoot button { border: none; border-radius: 7px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
+      #rbrCancel { background: var(--border); color: var(--text); }
+      #rbrOpen { background: var(--accent); color: var(--accent-text); font-weight: 600; }
       /* ---- overlay .env ---- */
       #envOv { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding-top: 56px; }
       #envOv[hidden] { display: none; }
@@ -709,6 +725,21 @@
       <div id="qbox">
         <input id="qinput" type="text" placeholder="Buscar arquivo pelo nome..." spellcheck="false" />
         <div id="qlist"></div>
+      </div>
+    </div>
+
+    <!-- navegador de pastas remotas (SSH) -->
+    <div id="rbrOv" hidden>
+      <div id="rbrBox">
+        <div id="rbrHead">📡 <b id="rbrHost"></b> — escolha a pasta</div>
+        <input id="rbrPath" type="text" spellcheck="false" placeholder="/home/voce/projeto (Enter navega)" />
+        <div id="rbrList"></div>
+        <div id="rbrFoot">
+          <span id="rbrMsg"></span>
+          <span class="dbgrow"></span>
+          <button id="rbrCancel">Cancelar</button>
+          <button id="rbrOpen">✓ Abrir esta pasta</button>
+        </div>
       </div>
     </div>
 
@@ -2853,16 +2884,16 @@
           it.textContent = h;
           it.onclick = async () => {
             menu.remove();
-            // o askName trata vazio como cancelar — então o "home" entra como "." já preenchido
-            const remotePath = await askName('Caminho no servidor "' + h + '" (. = home)', '.');
-            if (remotePath === null) return; // cancelou (Esc/Cancelar/apagou tudo)
-            showPanel(true);
             // ACESSO POR CHAVE AUTOMÁTICO: 1ª vez neste servidor? a Lumi gera/instala a
             // chave — você só digita a senha do SSH UMA vez no terminal "chave: host"
             toast('🔑 verificando acesso em ' + h + ' — se pedir senha, digita no terminal "chave: ' + h + '" (só desta vez)');
             const k = await window.api.sshEnsureKey(h);
             if (k && k.error) return toast('⚠ ' + k.error, false);
             if (k && k.installed) toast('🔑 chave instalada no servidor — nunca mais pede senha!');
+            // navegador de pastas remoto (em vez de digitar às cegas) — evita errar o path
+            const remotePath = await pickRemotePath(h);
+            if (remotePath === null) return; // cancelou
+            showPanel(true);
             toast('📡 montando ' + h + '…');
             const r = await window.api.sshMount(h, remotePath);
             if (r && r.error) return toast('⚠ ' + r.error, false);
@@ -2881,6 +2912,72 @@
         remoteActive = null;
         toast('⏏ pasta remota desmontada');
       }
+
+      // ---- navegador de pastas remotas (autocomplete estilo Remote-SSH) ----
+      const rbrOv = document.getElementById('rbrOv');
+      const rbrPathEl = document.getElementById('rbrPath');
+      const rbrListEl = document.getElementById('rbrList');
+      const rbrMsgEl = document.getElementById('rbrMsg');
+      let rbrResolve = null; // promessa do pickRemotePath
+      let rbrCwd = '.'; // caminho absoluto atual no servidor
+      function pickRemotePath(host) {
+        return new Promise((resolve) => {
+          rbrResolve = resolve;
+          document.getElementById('rbrHost').textContent = host;
+          rbrPathEl.value = '';
+          rbrMsgEl.textContent = '⏳ carregando…';
+          rbrListEl.innerHTML = '';
+          rbrOv.hidden = false;
+          rbrCwd = '.';
+          rbrBrowse(host, '.'); // começa na home
+          rbrOv.dataset.host = host;
+        });
+      }
+      async function rbrBrowse(host, p) {
+        rbrMsgEl.textContent = '⏳ listando…';
+        const r = await window.api.sshListDir(host, p);
+        if (r && r.error) {
+          rbrMsgEl.textContent = '⚠ ' + r.error;
+          return;
+        }
+        rbrCwd = r.cwd;
+        rbrPathEl.value = r.cwd;
+        rbrMsgEl.textContent = r.dirs.length + ' subpasta(s) · clique pra entrar, ou "Abrir esta pasta"';
+        rbrListEl.innerHTML = '';
+        // ".." pra subir (se não está na raiz)
+        if (r.cwd !== '/') {
+          const up = document.createElement('div');
+          up.className = 'rbrItem';
+          up.innerHTML = '<span class="ic">↩</span><span>.. (subir)</span>';
+          up.onclick = () => rbrBrowse(host, r.cwd.replace(/\/[^/]+\/?$/, '') || '/');
+          rbrListEl.appendChild(up);
+        }
+        r.dirs.forEach((d) => {
+          const it = document.createElement('div');
+          it.className = 'rbrItem';
+          it.innerHTML = '<span class="ic">📁</span><span>' + esc(d) + '</span>';
+          it.onclick = () => rbrBrowse(host, (r.cwd === '/' ? '' : r.cwd) + '/' + d);
+          rbrListEl.appendChild(it);
+        });
+        if (!r.dirs.length && r.cwd === '/') rbrListEl.innerHTML = '<div class="rbrItem" style="cursor:default;color:#667">(sem subpastas)</div>';
+      }
+      rbrPathEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          rbrBrowse(rbrOv.dataset.host, rbrPathEl.value.trim() || '.');
+        }
+      });
+      function rbrFinish(val) {
+        rbrOv.hidden = true;
+        const r = rbrResolve;
+        rbrResolve = null;
+        if (r) r(val);
+      }
+      document.getElementById('rbrOpen').onclick = () => rbrFinish(rbrPathEl.value.trim() || rbrCwd);
+      document.getElementById('rbrCancel').onclick = () => rbrFinish(null);
+      rbrOv.addEventListener('mousedown', (e) => {
+        if (e.target === rbrOv) rbrFinish(null);
+      });
       function resetWorkspaceUI() {
         [...openTabs].forEach((t) => closeTab(t.path, true));
         expanded.clear();

@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('api', {
   sshAvailable: () => ipcRenderer.invoke('ssh:available'),
   sshInstallCmd: () => ipcRenderer.invoke('ssh:install-cmd'),
   sshEnsureKey: (host) => ipcRenderer.invoke('ssh:ensure-key', host),
+  sshListDir: (host, path) => ipcRenderer.invoke('ssh:listdir', { host, path }),
 
   // .env viewer/editor
   envList: () => ipcRenderer.invoke('env:list'),
