@@ -58,6 +58,8 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 | `edit_file` | Edição **cirúrgica**: substitui um trecho exato sem reescrever o arquivo |
 | `write_file` / `append_file` | Cria/sobrescreve · acrescenta ao fim |
 | `grep_files` | Busca texto/regex no projeto inteiro (arquivo + linha de cada match) |
+| `find_in_code` | **"Onde está X?"** — acha por nome de arquivo **e** por conteúdo de uma vez |
+| `project_overview` | **"Explica este projeto"** — varre a arquitetura, detecta a stack e resume os arquivos-chave |
 | `list_dir` / `make_dir` / `delete_file` | Navegação e manutenção de arquivos |
 | `read_project_memory` / `update_project_memory` | Memória por projeto (`.lumi-memory.md`) — o contexto sobrevive entre sessões |
 
@@ -67,6 +69,7 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 | `run_command` | Comando rápido no shell (com saída de volta pra ela) |
 | `run_in_terminal` | Processo **longo** (dev server, watch) num terminal visível — sem travar a conversa |
 | `read_terminal` / `list_terminals` / `kill_terminal` | Acompanha a saída, lista e encerra terminais |
+| `list_ssh_hosts` / `connect_remote` | Lista os hosts do seu `~/.ssh/config` e **monta uma pasta remota** pra trabalhar nela |
 
 ### 🌐 Web & rede
 | Ferramenta | O que faz |
@@ -116,7 +119,7 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 
 ## 🖥️ O workspace (um mini VS Code com a Lumi dentro)
 
-- **Controle de fontes completo** (`Ctrl+Shift+G`): alterações staged/não-staged com ações por arquivo, **diff em abas** no Monaco (HEAD ⇆ atual), barrinhas de linhas alteradas na margem, push/pull, troca/criação de branch, **histórico de commits** com diff inline — e os pulos do gato: **✦ a Lumi escreve a mensagem do commit** e **🔍 revisa o diff antes** de você commitar.
+- **Controle de fontes completo** (`Ctrl+Shift+G`): alterações staged/não-staged com ações por arquivo, **diff em abas** no Monaco (HEAD ⇆ atual), barrinhas de linhas alteradas na margem, **push/pull com botão que avisa quando há commit pra subir**, troca/criação de branch, **histórico de commits** com diff inline, **🔀 resolver conflitos de merge** (manter o seu / o deles num clique), **🏷️ blame inline** (quem mudou cada linha) e **stash** (guardar/aplicar/descartar) — e os pulos do gato: **✦ a Lumi escreve a mensagem do commit** e **🔍 revisa o diff antes** de você commitar.
 - **⚡ Live Server**: preview ao vivo do site dentro do editor com **recarga automática ao salvar** (inclusive quando *ela* edita). E o **🎯 apontar**: clique num elemento da página e ele vira contexto pronto no chat — "deixa esse título maior" e ela sabe exatamente qual é.
 - **🌐 Navegador embutido**: acesse o `localhost` dos seus dev servers (Vite, Node…) numa aba — com 🎯 apontar e um badge de **erros do console** que manda tudo pra Lumi corrigir.
 - **🐳 Docker integrado**: aba com containers ao vivo (iniciar/parar/logs/shell direto no terminal), barra **docker-compose** (up/down/logs) — e ela *sabe* se Docker/WSL estão disponíveis na máquina.
@@ -125,6 +128,7 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 - **🧰 Tarefas**: os scripts do `package.json`/`Makefile` viram menu de 1 clique; **🌍 expor porta** cria um túnel público (cloudflared/ngrok) com URL na hora.
 - **🐙 GitHub** (com o `gh` CLI): status do CI da branch, PRs abertos e **✦PR** — ela escreve título e descrição olhando seus commits e cria o Pull Request.
 - **Seleção → Lumi**: clique direito em qualquer trecho de código — *enviar*, *explicar* ou *refatorar* com ela, direto no chat lateral.
+- **🖱️ Arrastar pra dentro**: solte um arquivo do Explorer do Windows **direto no explorador** (igual VS Code) — cai na pasta onde você soltou. Com pasta remota montada, isso **envia pro servidor** automaticamente.
 - **Editor profissional**: `Ctrl+P` (abrir arquivo com busca fuzzy), sticky scroll, formatar documento, símbolos do arquivo, zoom com Ctrl+scroll, quebra de linha/minimapa configuráveis, ícones por tecnologia, indent guides.
 - **Terminal & portas**: múltiplos terminais (**PTY real**), URLs clicáveis, tracker de portas ao vivo com kill em um clique.
 - Painéis **redimensionáveis** (explorador, chat, terminal) com larguras que persistem.
