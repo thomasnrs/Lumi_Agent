@@ -1001,6 +1001,13 @@ function buildSystemPrompt(cfg) {
     } catch (e) {
       /* ok */
     }
+    try {
+      // só os NOMES das variáveis do .env (nunca os valores — são segredos) pra ela orientar config
+      const ev = parseEnv(fs.readFileSync(path.join(cfg.workspace, '.env'), 'utf8')).map((v) => v.key);
+      if (ev.length) proj += '\nO .env define: ' + ev.slice(0, 40).join(', ') + ' (você sabe os NOMES, não os valores).';
+    } catch (e) {
+      /* sem .env */
+    }
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     const rules = readRepoRules(cfg.workspace);
     if (rules) proj += `\n\n## Regras do repositório (escritas pelo dono do projeto — SIGA À RISCA, têm prioridade sobre o guia geral)\n${rules}`;
@@ -5771,6 +5778,223 @@ ipcMain.on('open-external-url', (_e, u) => {
 });
 
 // ============================================================
+//  .env do workspace: listar / ler (mascarado) / salvar
+// ============================================================
+function envFiles() {
+  const cfg = loadConfig();
+  if (!cfg.workspace) return [];
+  const out = [];
+  try {
+    for (const f of fs.readdirSync(cfg.workspace)) {
+      if (f === '.env' || f.startsWith('.env.')) out.push(f);
+    }
+  } catch (e) {
+    /* ok */
+  }
+  return out.sort();
+}
+function parseEnv(text) {
+  const vars = [];
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let val = m[2];
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
+    vars.push({ key: m[1], value: val });
+  }
+  return vars;
+}
+ipcMain.handle('env:list', () => envFiles());
+ipcMain.handle('env:read', (_e, file) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !/^\.env(\.[\w.-]+)?$/.test(String(file || ''))) return { error: 'arquivo inválido' };
+  try {
+    const vars = parseEnv(fs.readFileSync(path.join(cfg.workspace, file), 'utf8'));
+    return { vars };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+});
+ipcMain.handle('env:save', (_e, { file, vars }) => {
+  const cfg = loadConfig();
+  if (!cfg.workspace || !/^\.env(\.[\w.-]+)?$/.test(String(file || ''))) return { error: 'arquivo inválido' };
+  try {
+    const fp = path.join(cfg.workspace, file);
+    // preserva comentários/linhas e ordem; atualiza só os valores das chaves conhecidas
+    let lines = [];
+    try {
+      lines = fs.readFileSync(fp, 'utf8').split(/\r?\n/);
+    } catch (e) {
+      /* arquivo novo */
+    }
+    const want = new Map((vars || []).map((v) => [v.key, v.value]));
+    const seen = new Set();
+    const quote = (v) => (/[\s#"'$]/.test(v) ? '"' + v.replace(/"/g, '\\"') + '"' : v);
+    const outLines = lines.map((raw) => {
+      const m = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*).*$/.exec(raw);
+      if (m && want.has(m[2])) {
+        seen.add(m[2]);
+        return m[1] + m[2] + '=' + quote(want.get(m[2]));
+      }
+      return raw;
+    });
+    for (const [k, v] of want) if (!seen.has(k)) outLines.push(k + '=' + quote(v)); // chaves novas no fim
+    fs.writeFileSync(fp, outLines.join('\n'));
+    broadcast('workspace:changed');
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+});
+
+// ============================================================
+//  BANCO DE DADOS (Postgres / MySQL) — painel de query do workspace
+//  drivers pg/mysql2 são JS puro (sem rebuild). 1 conexão ativa por vez.
+// ============================================================
+let dbConn = null; // { kind:'pg'|'mysql', client/pool, label }
+function maskDbUrl(u) {
+  return String(u || '').replace(/(:\/\/[^:/@]+:)[^@]*(@)/, '$1•••$2');
+}
+// acha uma URL de banco no .env do workspace (DATABASE_URL e variações comuns)
+function detectDbUrls() {
+  const found = [];
+  for (const f of envFiles()) {
+    try {
+      const vars = parseEnv(fs.readFileSync(path.join(loadConfig().workspace, f), 'utf8'));
+      for (const v of vars) {
+        if (/^(DATABASE_URL|DB_URL|POSTGRES_URL|MYSQL_URL|PG_CONNECTION_STRING)$/i.test(v.key) && /^(postgres|postgresql|mysql):\/\//i.test(v.value)) {
+          found.push({ from: f, key: v.key, url: v.value });
+        }
+      }
+    } catch (e) {
+      /* ok */
+    }
+  }
+  return found;
+}
+ipcMain.handle('db:detect', () => detectDbUrls().map((d) => ({ from: d.from, key: d.key, url: d.url, masked: maskDbUrl(d.url) })));
+async function dbClose() {
+  if (!dbConn) return;
+  try {
+    if (dbConn.kind === 'pg') await dbConn.client.end();
+    else await dbConn.client.end();
+  } catch (e) {
+    /* ok */
+  }
+  dbConn = null;
+}
+ipcMain.handle('db:connect', async (_e, url) => {
+  const u = String(url || '').trim();
+  if (!/^(postgres|postgresql|mysql):\/\//i.test(u)) return { error: 'URL inválida (use postgres:// ou mysql://)' };
+  await dbClose();
+  try {
+    if (/^mysql:/i.test(u)) {
+      const mysql = require('mysql2/promise');
+      const client = await mysql.createConnection(u);
+      dbConn = { kind: 'mysql', client, label: maskDbUrl(u) };
+    } else {
+      const { Client } = require('pg');
+      const client = new Client({ connectionString: u, connectionTimeoutMillis: 8000 });
+      await client.connect();
+      dbConn = { kind: 'pg', client, label: maskDbUrl(u) };
+    }
+    logd('db:connect', dbConn.kind, dbConn.label);
+    return { ok: true, kind: dbConn.kind, label: dbConn.label };
+  } catch (e) {
+    dbConn = null;
+    return { error: String((e && e.message) || e).slice(0, 200) };
+  }
+});
+ipcMain.handle('db:disconnect', async () => {
+  await dbClose();
+  return { ok: true };
+});
+async function dbRun(sql) {
+  if (!dbConn) throw new Error('sem conexão');
+  if (dbConn.kind === 'pg') {
+    const r = await dbConn.client.query(sql);
+    const res = Array.isArray(r) ? r[r.length - 1] : r; // múltiplos statements → último
+    return { columns: (res.fields || []).map((f) => f.name), rows: res.rows || [], rowCount: res.rowCount };
+  }
+  const [rows, fields] = await dbConn.client.query(sql);
+  if (Array.isArray(rows)) return { columns: (fields || []).map((f) => f.name), rows, rowCount: rows.length };
+  return { columns: [], rows: [], rowCount: rows.affectedRows, info: rows }; // INSERT/UPDATE...
+}
+async function dbTables() {
+  if (!dbConn) return [];
+  const sql =
+    dbConn.kind === 'pg'
+      ? "select table_name as t from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_name"
+      : 'select table_name as t from information_schema.tables where table_schema = database() order by table_name';
+  try {
+    const r = await dbRun(sql);
+    return r.rows.map((x) => x.t || x.T).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+}
+ipcMain.handle('db:tables', () => dbTables());
+ipcMain.handle('db:query', async (_e, sql) => {
+  try {
+    const r = await dbRun(String(sql || ''));
+    // cap defensivo de linhas devolvidas pra UI (a query em si decide o resto)
+    if (r.rows.length > 1000) {
+      r.rows = r.rows.slice(0, 1000);
+      r.truncated = true;
+    }
+    return r;
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 300) };
+  }
+});
+// schema resumido (tabela: colunas) pra dar contexto à I.A.
+async function dbSchema() {
+  if (!dbConn) return '';
+  const sql =
+    dbConn.kind === 'pg'
+      ? "select table_name as t, column_name as c, data_type as d from information_schema.columns where table_schema not in ('pg_catalog','information_schema') order by table_name, ordinal_position"
+      : 'select table_name as t, column_name as c, data_type as d from information_schema.columns where table_schema = database() order by table_name, ordinal_position';
+  try {
+    const r = await dbRun(sql);
+    const byTable = {};
+    for (const row of r.rows) {
+      const t = row.t || row.T;
+      (byTable[t] = byTable[t] || []).push((row.c || row.C) + ' ' + (row.d || row.D));
+    }
+    return Object.entries(byTable)
+      .slice(0, 60)
+      .map(([t, cols]) => t + '(' + cols.slice(0, 40).join(', ') + ')')
+      .join('\n');
+  } catch (e) {
+    return '';
+  }
+}
+// ✦ pergunta em português → a Lumi escreve o SQL (não roda; a UI mostra pra você rodar)
+ipcMain.handle('db:ai-sql', async (_e, question) => {
+  if (!dbConn) return { error: 'conecte a um banco primeiro' };
+  const schema = await dbSchema();
+  try {
+    const out = await llmComplete(loadConfig(), [
+      {
+        role: 'system',
+        content:
+          'Você gera UMA query SQL para ' +
+          (dbConn.kind === 'pg' ? 'PostgreSQL' : 'MySQL') +
+          '. Responda SOMENTE com o SQL puro, sem markdown, sem explicação, sem ponto-e-vírgula final. Use exatamente os nomes do schema.\n\nSchema:\n' +
+          (schema || '(schema indisponível)'),
+      },
+      { role: 'user', content: String(question || '') },
+    ]);
+    const sql = String(out || '').replace(/^```[a-z]*\n?|```$/g, '').replace(/;\s*$/, '').trim();
+    return sql ? { sql } : { error: 'a I.A. não retornou SQL' };
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 200) };
+  }
+});
+
+// ============================================================
 //  LIVE SERVER — preview ao vivo do workspace (estilo VS Code Live Server)
 //  Serve os arquivos estáticos + injeta um script nas páginas HTML com:
 //  recarga automática (SSE) e o modo "apontar elemento" (🎯 → chat da Lumi)
@@ -6815,6 +7039,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopAppWatcher(); // encerra o powershell do app ativo
   if (remoteMount) unmountRemote().catch(() => {}); // best-effort: solta o SSHFS
+  dbClose().catch(() => {}); // fecha conexão de banco
   if (cursorTimer) clearInterval(cursorTimer);
   if (hookOk) {
     try {

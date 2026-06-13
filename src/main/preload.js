@@ -77,6 +77,19 @@ contextBridge.exposeInMainWorld('api', {
   sshAvailable: () => ipcRenderer.invoke('ssh:available'),
   sshInstallCmd: () => ipcRenderer.invoke('ssh:install-cmd'),
   sshEnsureKey: (host) => ipcRenderer.invoke('ssh:ensure-key', host),
+
+  // .env viewer/editor
+  envList: () => ipcRenderer.invoke('env:list'),
+  envRead: (file) => ipcRenderer.invoke('env:read', file),
+  envSave: (file, vars) => ipcRenderer.invoke('env:save', { file, vars }),
+
+  // banco de dados (painel de query)
+  dbDetect: () => ipcRenderer.invoke('db:detect'),
+  dbConnect: (url) => ipcRenderer.invoke('db:connect', url),
+  dbDisconnect: () => ipcRenderer.invoke('db:disconnect'),
+  dbTables: () => ipcRenderer.invoke('db:tables'),
+  dbQuery: (sql) => ipcRenderer.invoke('db:query', sql),
+  dbAiSql: (question) => ipcRenderer.invoke('db:ai-sql', question),
   sshMount: (host, remotePath) => ipcRenderer.invoke('ssh:mount', { host, remotePath }),
   sshUnmount: () => ipcRenderer.invoke('ssh:unmount'),
   termBuffer: (id) => ipcRenderer.invoke('term:buffer', id),

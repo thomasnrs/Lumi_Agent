@@ -495,6 +495,43 @@
       #dockerBody .pact button.danger:hover { background: #e0556e; color: #fff; }
       .dkdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #667; }
       .dkdot.up { background: #7ee0a0; box-shadow: 0 0 6px #7ee0a066; }
+      /* ---- aba BANCO ---- */
+      #dbBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
+      #dbConnRow { display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+      #dbConnRow select, #dbConnRow input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; outline: none; }
+      #dbConnRow #dbUrl { flex: 1; min-width: 0; font-family: Consolas, monospace; }
+      #dbConnRow button, #dbQueryTools button { border: none; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; background: var(--accent); color: var(--accent-text); }
+      #dbStatus { font-size: 11px; color: #9aa; white-space: nowrap; }
+      #dbMain { flex: 1; min-height: 0; display: flex; }
+      #dbTables { width: 170px; flex: 0 0 auto; overflow: auto; border-right: 1px solid var(--border); padding: 4px 0; }
+      #dbTables .dbt { padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: Consolas, monospace; color: #aab; }
+      #dbTables .dbt:hover { background: var(--surface); color: var(--text); }
+      #dbQueryArea { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      #dbQueryTools { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+      #dbQueryTools button { background: var(--border); color: var(--text); }
+      #dbQueryTools #dbRun { background: var(--accent); color: var(--accent-text); }
+      .dbgrow { flex: 1; }
+      #dbResInfo { font-size: 11px; color: #9aa; }
+      #dbSql { height: 80px; resize: none; background: var(--surface-2); color: var(--text); border: none; border-bottom: 1px solid var(--border); padding: 8px 10px; font: 12.5px/1.5 Consolas, monospace; outline: none; }
+      #dbResult { flex: 1; min-height: 0; overflow: auto; }
+      #dbResult table { border-collapse: collapse; font-size: 11.5px; width: max-content; min-width: 100%; }
+      #dbResult th { position: sticky; top: 0; background: var(--surface); text-align: left; padding: 4px 9px; border: 1px solid var(--border); color: #9aa; white-space: nowrap; }
+      #dbResult td { padding: 3px 9px; border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis; font-family: Consolas, monospace; }
+      #dbResult .dbmsg { padding: 14px; color: #9aa; font-size: 12px; }
+      #dbResult .dberr { padding: 14px; color: #ff9b9b; font-size: 12px; white-space: pre-wrap; font-family: Consolas, monospace; }
+      /* ---- overlay .env ---- */
+      #envOv { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding-top: 56px; }
+      #envOv[hidden] { display: none; }
+      #envBox { width: min(620px, 92vw); max-height: 80vh; background: var(--surface-2); border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; overflow: hidden; }
+      #envHead { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+      #envHead select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; font-size: 12px; }
+      #envHead button { border: none; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; background: var(--border); color: var(--text); }
+      #envHead #envSave { background: var(--accent); color: var(--accent-text); }
+      #envList { overflow: auto; padding: 6px; }
+      .envrow { display: flex; gap: 6px; align-items: center; padding: 3px 4px; }
+      .envrow .ek { flex: 0 0 38%; font-family: Consolas, monospace; font-size: 12px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; }
+      .envrow .ev { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-family: Consolas, monospace; font-size: 12px; outline: none; }
+      .envrow .ev:focus { border-color: var(--accent); }
       /* barrinha do docker-compose */
       #composeBar { display: flex; gap: 6px; align-items: center; padding: 4px 8px 8px; }
       #composeBar .cf { color: #9aa; font-size: 11px; margin-right: 4px; }
@@ -615,6 +652,7 @@
             <span class="ptab active" data-tab="term">TERMINAL</span>
             <span class="ptab" data-tab="ports">PORTAS</span>
             <span class="ptab" data-tab="docker">DOCKER</span>
+            <span class="ptab" data-tab="db">BANCO</span>
             <span class="pgrow"></span>
             <select id="termSel" title="Terminais abertos"></select>
             <button class="pbtn" id="termNew" title="Novo terminal (PowerShell)">＋</button>
@@ -637,6 +675,28 @@
               <tbody id="dockerRows"></tbody>
             </table>
           </div>
+          <div id="dbBody" hidden>
+            <div id="dbConnRow">
+              <select id="dbPick" title="Conexões detectadas no .env"></select>
+              <input id="dbUrl" type="text" placeholder="postgres://user:senha@host:5432/banco" spellcheck="false" />
+              <button id="dbConnBtn">Conectar</button>
+              <span id="dbStatus"></span>
+            </div>
+            <div id="dbMain" hidden>
+              <div id="dbTables"></div>
+              <div id="dbQueryArea">
+                <div id="dbQueryTools">
+                  <button id="dbRun" title="Rodar (Ctrl+Enter)">▶ Rodar</button>
+                  <button id="dbAi" title="Descreva em português — a Lumi escreve o SQL">✦ SQL em português</button>
+                  <span class="dbgrow"></span>
+                  <span id="dbResInfo"></span>
+                  <button id="dbDisc" title="Desconectar">⏏</button>
+                </div>
+                <textarea id="dbSql" spellcheck="false" placeholder="SELECT * FROM ...   (clique numa tabela à esquerda pra começar)"></textarea>
+                <div id="dbResult"></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div id="chatresize" title="Arraste para redimensionar"></div>
@@ -649,6 +709,21 @@
       <div id="qbox">
         <input id="qinput" type="text" placeholder="Buscar arquivo pelo nome..." spellcheck="false" />
         <div id="qlist"></div>
+      </div>
+    </div>
+
+    <!-- variáveis de ambiente (.env) com mascaramento -->
+    <div id="envOv" hidden>
+      <div id="envBox">
+        <div id="envHead">
+          <span>🔑 Variáveis de ambiente</span>
+          <select id="envFile"></select>
+          <span class="dbgrow"></span>
+          <button id="envReveal" title="Mostrar/ocultar valores">👁</button>
+          <button id="envSave">Salvar</button>
+          <button id="envClose">✕</button>
+        </div>
+        <div id="envList"></div>
       </div>
     </div>
 
@@ -1256,10 +1331,182 @@
         termBody.style.display = t === 'term' ? '' : 'none';
         portsBodyEl.hidden = t !== 'ports';
         document.getElementById('dockerBody').hidden = t !== 'docker';
+        document.getElementById('dbBody').style.display = t === 'db' ? 'flex' : 'none';
         if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
         if (t === 'docker') loadDocker(true);
+        if (t === 'db') dbInit();
         if (t === 'term') setTimeout(fitActive, 30);
       }
+
+      // ============================================================
+      //  Aba BANCO: conecta (Postgres/MySQL), lista tabelas, roda query, SQL em português
+      // ============================================================
+      let dbReady = false; // já conectou nesta sessão do painel?
+      let dbInited = false; // já populou as conexões detectadas?
+      const dbUrlEl = document.getElementById('dbUrl');
+      const dbPickEl = document.getElementById('dbPick');
+      const dbStatusEl = document.getElementById('dbStatus');
+      async function dbInit() {
+        if (dbInited) return;
+        dbInited = true;
+        const found = await window.api.dbDetect();
+        dbPickEl.innerHTML = '';
+        if (found.length) {
+          found.forEach((d) => {
+            const o = document.createElement('option');
+            o.value = d.url;
+            o.textContent = d.from + ' · ' + d.masked;
+            dbPickEl.appendChild(o);
+          });
+          dbUrlEl.value = found[0].url;
+          dbPickEl.style.display = '';
+          dbStatusEl.textContent = found.length + ' conexão(ões) no .env';
+        } else {
+          dbPickEl.style.display = 'none';
+          dbStatusEl.textContent = 'cole uma URL ou defina DATABASE_URL no .env';
+        }
+      }
+      dbPickEl.addEventListener('change', () => (dbUrlEl.value = dbPickEl.value));
+      document.getElementById('dbConnBtn').onclick = async () => {
+        const r = await window.api.dbConnect(dbUrlEl.value.trim());
+        if (r && r.error) {
+          dbStatusEl.textContent = '⚠ ' + r.error;
+          return;
+        }
+        dbReady = true;
+        dbStatusEl.textContent = '✓ ' + r.kind + ' · ' + r.label;
+        document.getElementById('dbMain').hidden = false;
+        dbLoadTables();
+      };
+      document.getElementById('dbDisc').onclick = async () => {
+        await window.api.dbDisconnect();
+        dbReady = false;
+        document.getElementById('dbMain').hidden = true;
+        dbStatusEl.textContent = 'desconectado';
+      };
+      async function dbLoadTables() {
+        const tables = await window.api.dbTables();
+        const box = document.getElementById('dbTables');
+        box.innerHTML = '';
+        tables.forEach((t) => {
+          const d = document.createElement('div');
+          d.className = 'dbt';
+          d.textContent = t;
+          d.title = 'clique: SELECT * · duplo: só o nome';
+          d.onclick = () => {
+            document.getElementById('dbSql').value = 'SELECT * FROM ' + t + ' LIMIT 100';
+            dbRunQuery();
+          };
+          box.appendChild(d);
+        });
+        if (!tables.length) box.innerHTML = '<div class="dbt" style="cursor:default;color:#667">sem tabelas</div>';
+      }
+      function dbRenderResult(r) {
+        const box = document.getElementById('dbResult');
+        const info = document.getElementById('dbResInfo');
+        if (r.error) {
+          box.innerHTML = '<div class="dberr">' + esc(r.error) + '</div>';
+          info.textContent = '';
+          return;
+        }
+        if (!r.columns || !r.columns.length) {
+          box.innerHTML = '<div class="dbmsg">✓ OK' + (r.rowCount != null ? ' · ' + r.rowCount + ' linha(s) afetada(s)' : '') + '</div>';
+          info.textContent = '';
+          return;
+        }
+        const th = r.columns.map((c) => '<th>' + esc(c) + '</th>').join('');
+        const trs = r.rows
+          .map((row) => '<tr>' + r.columns.map((c) => '<td title="' + esc(fmtCell(row[c])) + '">' + esc(fmtCell(row[c])) + '</td>').join('') + '</tr>')
+          .join('');
+        box.innerHTML = '<table><thead><tr>' + th + '</tr></thead><tbody>' + trs + '</tbody></table>';
+        info.textContent = r.rows.length + ' linha(s)' + (r.truncated ? ' (1000 primeiras)' : '');
+      }
+      function fmtCell(v) {
+        if (v == null) return 'NULL';
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      }
+      async function dbRunQuery() {
+        const sql = document.getElementById('dbSql').value.trim();
+        if (!sql) return;
+        document.getElementById('dbResInfo').textContent = '⏳ rodando…';
+        dbRenderResult(await window.api.dbQuery(sql));
+      }
+      document.getElementById('dbRun').onclick = dbRunQuery;
+      document.getElementById('dbSql').addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          dbRunQuery();
+        }
+      });
+      document.getElementById('dbAi').onclick = async () => {
+        const q = await askName('O que você quer saber? (a Lumi escreve o SQL)', '');
+        if (!q) return;
+        document.getElementById('dbResInfo').textContent = '✦ pensando no SQL…';
+        const r = await window.api.dbAiSql(q);
+        if (r && r.error) return dbRenderResult({ error: r.error });
+        document.getElementById('dbSql').value = r.sql; // mostra o SQL — você confere e roda
+        document.getElementById('dbResInfo').textContent = '✦ revise e clique ▶ Rodar';
+      };
+
+      // ============================================================
+      //  Painel .env: lista mascarada, revelar, editar, salvar
+      // ============================================================
+      const envOv = document.getElementById('envOv');
+      const envFileEl = document.getElementById('envFile');
+      const envListEl = document.getElementById('envList');
+      let envRevealed = false;
+      async function openEnv() {
+        const files = await window.api.envList();
+        if (!files.length) return toast('⚠ nenhum .env no workspace', false);
+        envFileEl.innerHTML = '';
+        files.forEach((f) => {
+          const o = document.createElement('option');
+          o.value = o.textContent = f;
+          envFileEl.appendChild(o);
+        });
+        envRevealed = false;
+        await envLoad();
+        envOv.hidden = false;
+      }
+      async function envLoad() {
+        const r = await window.api.envRead(envFileEl.value);
+        envListEl.innerHTML = '';
+        if (r && r.error) return (envListEl.innerHTML = '<div style="padding:14px;color:#ff9b9b">' + esc(r.error) + '</div>');
+        (r.vars || []).forEach((v) => {
+          const row = document.createElement('div');
+          row.className = 'envrow';
+          const k = document.createElement('span');
+          k.className = 'ek';
+          k.textContent = v.key;
+          k.title = v.key;
+          const inp = document.createElement('input');
+          inp.className = 'ev';
+          inp.type = envRevealed ? 'text' : 'password';
+          inp.value = v.value;
+          inp.dataset.key = v.key;
+          row.appendChild(k);
+          row.appendChild(inp);
+          envListEl.appendChild(row);
+        });
+        if (!(r.vars || []).length) envListEl.innerHTML = '<div style="padding:14px;color:#667">arquivo vazio</div>';
+      }
+      envFileEl.addEventListener('change', envLoad);
+      document.getElementById('envReveal').onclick = () => {
+        envRevealed = !envRevealed;
+        envListEl.querySelectorAll('.ev').forEach((i) => (i.type = envRevealed ? 'text' : 'password'));
+      };
+      document.getElementById('envSave').onclick = async () => {
+        const vars = [...envListEl.querySelectorAll('.ev')].map((i) => ({ key: i.dataset.key, value: i.value }));
+        const r = await window.api.envSave(envFileEl.value, vars);
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        toast('✓ ' + envFileEl.value + ' salvo');
+        envOv.hidden = true;
+      };
+      document.getElementById('envClose').onclick = () => (envOv.hidden = true);
+      envOv.addEventListener('mousedown', (e) => {
+        if (e.target === envOv) envOv.hidden = true;
+      });
 
       // túnel público disponível? (cloudflared/ngrok — checado 1x)
       let tunnelTool = null;
@@ -2719,6 +2966,8 @@
         help: MNI('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'),
         trash: MNI('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
         plus: MNI('<path d="M5 12h14"/><path d="M12 5v14"/>'),
+        db: MNI('<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>'),
+        gear: MNI('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/>'),
       };
 
       const MENUS = [
@@ -2770,6 +3019,8 @@
             { label: 'Controle de fontes (git)', icon: GLYPH.git('currentColor'), hint: 'Ctrl+Shift+G', fn: () => setSideMode(sideMode === 'git' ? 'files' : 'git') },
             { label: 'Live Server (preview ao vivo)', icon: MI.plug, fn: () => liveBtn.click() },
             { label: 'Navegador (localhost)', icon: MI.reveal, fn: () => openBrowserTab('') },
+            { label: 'Banco de dados', icon: MI.db, fn: () => { showPanel(true); setPanelTab('db'); } },
+            { label: 'Variáveis (.env)', icon: MI.gear, fn: openEnv },
             '-',
             // toggles do editor (✓ = ligado; persistem entre sessões)
             { label: (edPrefs.wrap ? '✓ ' : ' ') + 'Quebra de linha', fn: () => { edPrefs.wrap = !edPrefs.wrap; applyEditorPrefs(); } },
