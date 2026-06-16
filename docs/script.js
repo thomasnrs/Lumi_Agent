@@ -46,3 +46,21 @@ const statIO = new IntersectionObserver((entries) => {
   });
 }, { threshold: 0.6 });
 document.querySelectorAll('.stat b[data-count]').forEach(el => statIO.observe(el));
+
+// ---- copiar o pix copia-e-cola ----
+const pixCopy = document.getElementById('pixCopy');
+pixCopy?.addEventListener('click', async () => {
+  const code = document.getElementById('pixCode')?.textContent.trim() || '';
+  try {
+    await navigator.clipboard.writeText(code);
+  } catch (e) {
+    // fallback p/ navegadores sem clipboard API (ou http)
+    const t = document.createElement('textarea');
+    t.value = code; document.body.appendChild(t); t.select();
+    document.execCommand('copy'); t.remove();
+  }
+  const old = pixCopy.textContent;
+  pixCopy.textContent = 'Copiado!';
+  pixCopy.classList.add('copied');
+  setTimeout(() => { pixCopy.textContent = old; pixCopy.classList.remove('copied'); }, 1800);
+});

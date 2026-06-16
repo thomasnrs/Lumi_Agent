@@ -10,6 +10,7 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 **e programa como uma engenheira sênior.**
 
 [![Site oficial](https://img.shields.io/badge/site-lumi-7AA2FF?style=flat&logo=githubpages&logoColor=white)](https://thomasnrs.github.io/Lumi_Agent/)
+[![Apoiar](https://img.shields.io/badge/apoiar-PIX-32BCAD?style=flat&logo=pix&logoColor=white)](https://thomasnrs.github.io/Lumi_Agent/#apoie)
 ![Electron](https://img.shields.io/badge/Electron-31-47848F?logo=electron&logoColor=white)
 ![Three.js](https://img.shields.io/badge/Three.js-VRM-049EF4?logo=threedotjs&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)
@@ -226,6 +227,17 @@ src/
 - A pasta remota (📡 SSH) requer `sshfs` (Linux: `sudo apt install sshfs` · Windows: SSHFS-Win + WinFsp).
 - Monaco e MCP baixam dependências na primeira execução (internet necessária uma vez).
 - Consumo de ~600–900 MB de RAM é majoritariamente overhead do Chromium — é o preço do Electron.
+
+## ☕ Apoie o projeto
+
+A Lumi é **gratuita e open source**, feita por uma pessoa só à base de café e madrugada. Se ela te ajudou (ou só te fez companhia), **pague um café pro dev** — PIX de valor livre, sem intermediário comendo nada:
+
+- **PIX (chave aleatória):** `bb5192f9-5567-4fd0-9143-478b496e63c9`
+- Ou **[apoie pelo site](https://thomasnrs.github.io/Lumi_Agent/#apoie)** — com QR Code e *copia e cola* prontinhos.
+
+> Sem pressão: uma ⭐ no repositório também ajuda demais. 💜
+
+---
 
 ## 🗺️ Roadmap
 
