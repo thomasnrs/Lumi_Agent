@@ -87,6 +87,8 @@ section{position:relative}
 .lead{font-size:1.22rem;color:var(--muted);margin:22px 0 30px;max-width:34ch}
 .lead strong{color:var(--text);font-weight:600}
 .hero-cta{display:flex;gap:14px;flex-wrap:wrap}
+.dl-hint{font-size:.84rem;color:var(--muted-2);margin-top:13px}
+.dl-hint code{font-size:.82em}
 .badges{display:flex;flex-wrap:wrap;gap:10px;margin-top:34px}
 .badge{font-size:.82rem;padding:6px 13px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--muted)}
 

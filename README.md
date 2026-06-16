@@ -11,6 +11,7 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 
 [![Site oficial](https://img.shields.io/badge/site-lumi-7AA2FF?style=flat&logo=githubpages&logoColor=white)](https://thomasnrs.github.io/Lumi_Agent/)
 [![Apoiar](https://img.shields.io/badge/apoiar-PIX-32BCAD?style=flat&logo=pix&logoColor=white)](https://thomasnrs.github.io/Lumi_Agent/#apoie)
+[![Baixar](https://img.shields.io/github/v/release/thomasnrs/Lumi_Agent?style=flat&label=baixar&logo=windows&logoColor=white&color=0078D6)](https://github.com/thomasnrs/Lumi_Agent/releases/latest)
 ![Electron](https://img.shields.io/badge/Electron-31-47848F?logo=electron&logoColor=white)
 ![Three.js](https://img.shields.io/badge/Three.js-VRM-049EF4?logo=threedotjs&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)
