@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lumi — Sua companheira de I.A. na área de trabalho</title>
+<meta name="description" content="Lumi é um avatar 3D que vive no seu desktop: conversa, vê, fala, ouve, lembra — e programa como uma engenheira sênior. Harness de I.A. completo, multi-provedor, BYOK." />
+
+<!-- Open Graph / social -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Lumi — Sua companheira de I.A. na área de trabalho" />
+<meta property="og:description" content="Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra… e programa como uma engenheira sênior." />
+<meta property="og:image" content="assets/screenshot.png" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ambient background -->
+<div class="bg" aria-hidden="true">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+  <div class="grid-overlay"></div>
+</div>
+
+<!-- NAV -->
+<header class="nav" id="nav">
+  <div class="nav-inner">
+    <a href="#top" class="brand">
+      <img src="assets/logo.svg" alt="" width="34" height="34" />
+      <span>Lumi</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#destaques">Destaques</a>
+      <a href="#ferramentas">Ferramentas</a>
+      <a href="#dev">Modo dev</a>
+      <a href="#workspace">Workspace</a>
+      <a href="#rodar">Como rodar</a>
+    </nav>
+    <a class="btn btn-ghost nav-cta" href="https://github.com/thomasnrs/Lumi_Agent" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17.3 4.6 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5z"/></svg>
+      GitHub
+    </a>
+    <button class="nav-burger" id="burger" aria-label="Abrir menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-text reveal">
+    <div class="pill"><span class="dot"></span> Avatar 3D + harness de I.A. completo</div>
+    <h1>Conheça a <span class="grad">Lumi</span></h1>
+    <p class="lead">Sua companheira de I.A. na área de trabalho. Um avatar 3D que vive no seu desktop — <strong>conversa, vê, fala, ouve, lembra…</strong> e programa como uma engenheira sênior.</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="https://github.com/thomasnrs/Lumi_Agent" target="_blank" rel="noopener">Ver no GitHub →</a>
+      <a class="btn btn-ghost" href="#rodar">Como rodar</a>
+    </div>
+    <div class="badges">
+      <span class="badge">⚡ Electron 31</span>
+      <span class="badge">🧊 Three.js · VRM</span>
+      <span class="badge">🪟 Windows 10/11</span>
+      <span class="badge">🐧 Linux X11</span>
+      <span class="badge">🔑 BYOK multi-provedor</span>
+    </div>
+  </div>
+
+  <div class="hero-shot reveal">
+    <div class="shot-frame">
+      <div class="shot-bar"><span></span><span></span><span></span></div>
+      <img src="assets/screenshot.png" alt="Lumi em ação: workspace com editor de código, avatar 3D no centro, chat lateral e terminal" loading="eager" />
+    </div>
+    <div class="shot-caption">Workspace estilo VS Code · avatar VRM · chat · terminal — tudo num app só</div>
+  </div>
+</section>
+
+<!-- STATS -->
+<section class="stats reveal">
+  <div class="stat"><b data-count="19">19</b><span>provedores de I.A.</span></div>
+  <div class="stat"><b data-count="40">~40</b><span>ferramentas nativas</span></div>
+  <div class="stat"><b data-count="200">200</b><span>passos por turno</span></div>
+  <div class="stat"><b data-count="9">9</b><span>temas prontos</span></div>
+</section>
+
+<!-- INTRO -->
+<section class="intro reveal">
+  <p>
+    <strong>Lumi</strong> é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo,
+    com um <span class="hl">harness de I.A. completo</span> integrado — chat multi-provedor, agente com ~40 ferramentas, multi-agentes
+    paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até pastas remotas via SSH),
+    voz, visão e memória que você enxerga e controla.
+  </p>
+  <p class="muted">
+    Inspirada no <em>Desktop Mate</em> (Steam), construída do zero com a I.A. no centro. Já vem montadinha: a avatar
+    <strong>Cerberia</strong> e as animações estão no repositório (troque por qualquer <code>.vrm</code> quando quiser).
+    As chaves de I.A. são suas — <strong>BYOK</strong>; provedores grátis e proxies locais sem chave também funcionam.
+  </p>
+</section>
+
+<!-- DESTAQUES -->
+<section id="destaques" class="section">
+  <div class="section-head reveal">
+    <span class="kicker">✨ Destaques</span>
+    <h2>Tudo que ela faz</h2>
+    <p>Uma companheira de verdade — e uma engenheira de software dentro do mesmo app.</p>
+  </div>
+
+  <div class="cards">
+    <article class="card reveal">
+      <div class="card-ic">🧍</div>
+      <h3>Avatar vivo</h3>
+      <p>Janela transparente sempre no topo, click-through inteligente, olhos que seguem o cursor, animações <code>.vrma</code>, emoções faciais reais (entende português) e senta na barra de tarefas.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🧠</div>
+      <h3>I.A. multi-provedor</h3>
+      <p>19 provedores pré-cadastrados (OpenAI, Anthropic, Gemini, Grok, Groq, DeepSeek, Mistral, OpenRouter, Ollama local…). Streaming, thinking, visão e fallback automático de modelo.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🛠️</div>
+      <h3>Agente de verdade</h3>
+      <p>~40 ferramentas nativas com sistema de permissões em cards bonitos (permitir / sempre / recusar), turnos longos até 200 passos com compactação de contexto e checkpoints com desfazer.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🤖</div>
+      <h3>Multi-agentes</h3>
+      <p>Uma orquestradora delega a uma equipe (Programador, Designer, Testador…) que trabalha em paralelo — e você acompanha a narração de cada um ao vivo no chat.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🖥️</div>
+      <h3>Workspace VS Code</h3>
+      <p>Editor Monaco com abas, git completo, Live Server e navegador embutidos, aba Docker, terminal PTY real (CMD, Git Bash, WSL, SSH, venv), tarefas, túnel público e pastas remotas via SSH.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🗣️</div>
+      <h3>Voz completa</h3>
+      <p>TTS grátis (Edge), Gemini, XTTS no seu servidor ou ElevenLabs — com lip-sync real. STT Whisper-compatível direto pelo microfone.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">💚</div>
+      <h3>Companheira proativa</h3>
+      <p>Lembretes falados, saudações, noção de hora ("vai dormir não? 👀"), reação ao app em foco e datas especiais (te dá parabéns 🎂) — sempre com a personalidade dela.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🔍</div>
+      <h3>Transparência total</h3>
+      <p>Uma página de memória mostra tudo que ela sabe de você (edite ou apague fato por fato) e o gastômetro acumula o custo estimado do dia no rodapé do chat.</p>
+    </article>
+    <article class="card reveal">
+      <div class="card-ic">🎨</div>
+      <h3>Design refinado</h3>
+      <p>9 temas prontos (claros, AMOLED e Sakura 🌸) + editor de tema completo, vidro acrílico nativo no Win11, barras de título customizadas e fonte própria.</p>
+    </article>
+  </div>
+</section>
+
+<!-- FERRAMENTAS -->
+<section id="ferramentas" class="section">
+  <div class="section-head reveal">
+    <span class="kicker">🧰 Tool calling</span>
+    <h2>~40 ferramentas, na mão dela</h2>
+    <p>A Lumi decide quando usar cada uma. Tudo passa pelo sistema de permissões: perguntar, permitir ou bloquear — por categoria.</p>
+  </div>
+
+  <div class="tools">
+    <div class="tool-cat reveal">
+      <h4>📂 Arquivos &amp; código</h4>
+      <ul>
+        <li><code>read_file</code> · leitura paginada</li>
+        <li><code>edit_file</code> · edição cirúrgica</li>
+        <li><code>write_file</code> / <code>append_file</code></li>
+        <li><code>grep_files</code> · busca regex</li>
+        <li><code>find_in_code</code> · "onde está X?"</li>
+        <li><code>project_overview</code> · varre a stack</li>
+        <li><code>list_dir</code> / <code>make_dir</code> / <code>delete_file</code></li>
+        <li>memória por projeto (<code>.lumi-memory.md</code>)</li>
+      </ul>
+    </div>
+    <div class="tool-cat reveal">
+      <h4>⚡ Execução</h4>
+      <ul>
+        <li><code>run_command</code> · comando rápido</li>
+        <li><code>run_in_terminal</code> · processos longos</li>
+        <li><code>read_terminal</code> / <code>list_terminals</code></li>
+        <li><code>kill_terminal</code></li>
+        <li><code>list_ssh_hosts</code> · do seu config</li>
+        <li><code>connect_remote</code> · monta pasta remota</li>
+      </ul>
+    </div>
+    <div class="tool-cat reveal">
+      <h4>🌐 Web &amp; rede</h4>
+      <ul>
+        <li><code>web_search</code> · grátis e sem chave</li>
+        <li><code>fetch_url</code> · modo leitura</li>
+        <li><code>http_request</code> · testa APIs</li>
+        <li><code>see_page</code> · enxerga o site que criou</li>
+        <li><code>open_url</code> · abre links</li>
+      </ul>
+    </div>
+    <div class="tool-cat reveal">
+      <h4>👁️ Visão &amp; mídia</h4>
+      <ul>
+        <li><code>see_screen</code> · captura e analisa a tela</li>
+        <li><code>view_image</code> · mockups e assets</li>
+        <li><code>generate_image</code> · galeria integrada</li>
+      </ul>
+    </div>
+    <div class="tool-cat reveal">
+      <h4>🖱️ Controle do PC</h4>
+      <ul>
+        <li><code>move_mouse</code> · <code>click</code> · <code>scroll</code></li>
+        <li><code>type_text</code> · <code>press_keys</code></li>
+        <li><code>focus_window</code> · <code>screen_info</code></li>
+        <li>categoria própria de permissão</li>
+      </ul>
+    </div>
+    <div class="tool-cat reveal">
+      <h4>💬 Interação &amp; memória</h4>
+      <ul>
+        <li><code>ask_user</code> · pergunta com opções</li>
+        <li><code>update_plan</code> · checklist vivo</li>
+        <li><code>set_reminder</code> · lembretes falados</li>
+        <li><code>remember_fact</code> / <code>recall_facts</code></li>
+        <li><code>delegate_to_agent</code> · paralelo</li>
+        <li>clipboard, data/hora, animações</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="mcp-note reveal">
+    <span class="mcp-badge">🔌 MCP</span>
+    <p>Plugue servidores <strong>Model Context Protocol</strong> externos (GitHub, bancos, o que quiser) — as ferramentas deles aparecem pra Lumi automaticamente.</p>
+  </div>
+</section>
+
+<!-- DEV MODE -->
+<section id="dev" class="section split">
+  <div class="split-text reveal">
+    <span class="kicker">🦾 Estilo Claude Code</span>
+    <h2>O modo dev</h2>
+    <ul class="feature-list">
+      <li><strong>Modo arquiteto:</strong> aponte um workspace e ela trabalha com memória própria e detecção de stack (Node, Python, Go, Rust, C#, Java…).</li>
+      <li><strong>Regras do repositório:</strong> se há <code>CLAUDE.md</code>, <code>AGENTS.md</code> ou <code>.cursorrules</code>, ela segue à risca.</li>
+      <li><strong>Verificação automática:</strong> roda lint/test/build após editar e corrige sozinha se falhar (até 3 tentativas).</li>
+      <li><strong>Checkpoints:</strong> cada turno que altera arquivos vira ponto de restauração — botão ↩ desfazer no chat.</li>
+      <li><strong>Turnos de maratona:</strong> teto de passos (4–200) com compactação de contexto e retomada do ponto exato.</li>
+      <li><strong>Steering &amp; Stop:</strong> redirecione no meio da tarefa ou pare na hora — mantendo o progresso.</li>
+      <li><strong>@menções e /comandos:</strong> anexe arquivos, faça fork da conversa, busque, capture a tela.</li>
+    </ul>
+  </div>
+  <div class="split-visual reveal">
+    <div class="chat-mock">
+      <div class="cm-row cm-user">deixa esse título maior e centraliza</div>
+      <div class="cm-row cm-ai">
+        <span class="cm-plan">📋 Plano — 2/3</span>
+        <span class="cm-tool">🔧 edit_file · styles.css <i class="diff">+4 −1</i></span>
+        <span class="cm-tool">🔧 see_page · localhost:5173</span>
+        <span class="cm-txt">Pronto! Aumentei pra 3rem e centralizei. Quer que eu suba o commit? 💜</span>
+      </div>
+      <div class="cm-perm">
+        <span>Permitir <code>edit_file</code>?</span>
+        <div class="cm-btns"><b>Permitir</b><b>Sempre</b><b class="no">Recusar</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WORKSPACE -->
+<section id="workspace" class="section">
+  <div class="section-head reveal">
+    <span class="kicker">🖥️ Mini VS Code com a Lumi dentro</span>
+    <h2>O workspace</h2>
+    <p>Tudo que você espera de um editor moderno — com a I.A. integrada em cada painel.</p>
+  </div>
+
+  <div class="ws-grid">
+    <div class="ws-card reveal"><h4>🔀 Controle de fontes</h4><p>Staged/unstaged, diff em abas, push/pull inteligente, branches, histórico, resolver conflitos, blame e stash. E ela <strong>escreve a mensagem do commit</strong> e <strong>revisa o diff</strong> antes.</p></div>
+    <div class="ws-card reveal"><h4>⚡ Live Server</h4><p>Preview ao vivo com recarga ao salvar (inclusive quando ela edita). Clique num elemento e ele vira contexto pronto no chat: "deixa esse título maior".</p></div>
+    <div class="ws-card reveal"><h4>🌐 Navegador embutido</h4><p>Acesse o localhost dos seus dev servers numa aba — com 🎯 apontar e um badge de erros do console que manda tudo pra Lumi corrigir.</p></div>
+    <div class="ws-card reveal"><h4>🐳 Docker integrado</h4><p>Containers ao vivo (iniciar/parar/logs/shell), barra docker-compose — e ela sabe se Docker/WSL estão disponíveis.</p></div>
+    <div class="ws-card reveal"><h4>📡 Pasta remota (SSH)</h4><p>Monte um diretório do servidor via SSHFS e o workspace inteiro — editor, git, busca e a própria Lumi — trabalha nele como se fosse local.</p></div>
+    <div class="ws-card reveal"><h4>🧰 Tarefas &amp; túnel</h4><p>Scripts do <code>package.json</code>/<code>Makefile</code> viram menu de 1 clique; expor porta cria um túnel público (cloudflared/ngrok) na hora.</p></div>
+    <div class="ws-card reveal"><h4>🐙 GitHub (gh CLI)</h4><p>Status do CI da branch, PRs abertos e ✦PR — ela escreve título e descrição olhando seus commits e abre o Pull Request.</p></div>
+    <div class="ws-card reveal"><h4>⌨️ Editor profissional</h4><p>Ctrl+P fuzzy, sticky scroll, formatar, símbolos, zoom, ícones por tecnologia, múltiplos terminais PTY e painéis redimensionáveis que persistem.</p></div>
+  </div>
+</section>
+
+<!-- COMO RODAR -->
+<section id="rodar" class="section">
+  <div class="section-head reveal">
+    <span class="kicker">🚀 Como rodar</span>
+    <h2>Começa em ~2 minutos</h2>
+    <p>Na primeira execução, o assistente de boas-vindas configura provedor de I.A., avatar e voz pra você.</p>
+  </div>
+
+  <div class="run-grid">
+    <div class="code-card reveal">
+      <div class="code-head">Desenvolvimento</div>
+      <pre><code><span class="c">npm</span> install
+<span class="c">npm</span> start          <span class="cm"># builda o renderer e abre o Electron</span></code></pre>
+    </div>
+    <div class="code-card reveal">
+      <div class="code-head">Produção</div>
+      <pre><code><span class="c">npm</span> run dist            <span class="cm"># instalador NSIS (Windows)</span>
+<span class="c">npm</span> run dist -- --linux <span class="cm"># AppImage + deb</span>
+<span class="c">npm</span> run pack            <span class="cm"># build rápido, sem instalador</span></code></pre>
+    </div>
+  </div>
+
+  <div class="run-steps reveal">
+    <div class="step"><b>1</b><p>A avatar <strong>Cerberia já vem no repositório</strong>. Pra trocar, coloque outro <code>.vrm</code> em <code>assets/</code> (grátis no VRoid Hub).</p></div>
+    <div class="step"><b>2</b><p>As animações <code>.vrma</code> também já vêm — é só substituir os arquivos em <code>animations/</code>.</p></div>
+    <div class="step"><b>3</b><p>Configurações completas na engrenagem ⚙: provedor, modelo, chave, voz, mic, permissões, tema.</p></div>
+  </div>
+
+  <div class="release-note reveal">
+    <span>📦</span>
+    <p>Empurrar uma tag <code>v*</code> dispara o CI (GitHub Actions): builda instalador Windows + AppImage/deb e publica nos
+      <a href="https://github.com/thomasnrs/Lumi_Agent/releases" target="_blank" rel="noopener">Releases</a>.
+      O app instalado <strong>se atualiza sozinho</strong> (electron-updater).</p>
+  </div>
+</section>
+
+<!-- CTA FINAL -->
+<section class="cta reveal">
+  <img src="assets/logo.svg" alt="" width="64" height="64" />
+  <h2>Pronta pra viver no seu desktop</h2>
+  <p>Open source, BYOK, sua máquina. As únicas saídas são as chamadas aos provedores que <strong>você</strong> configurou.</p>
+  <div class="hero-cta">
+    <a class="btn btn-primary" href="https://github.com/thomasnrs/Lumi_Agent" target="_blank" rel="noopener">Ver no GitHub →</a>
+    <a class="btn btn-ghost" href="https://github.com/thomasnrs/Lumi_Agent/releases" target="_blank" rel="noopener">Baixar nos Releases</a>
+  </div>
+  <div class="roadmap">
+    <span>✅ Avatar vivo</span><span>✅ Multi-provedor</span><span>✅ Voz + lip-sync</span><span>✅ Agente + multi-agentes</span><span>✅ Workspace completo</span><span>✅ Auto-update</span><span>🔜 i18n (EN)</span><span>🎯 Steam</span>
+  </div>
+</section>
+
+</main>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="footer-inner">
+    <a href="#top" class="brand"><img src="assets/logo.svg" alt="" width="28" height="28" /><span>Lumi</span></a>
+    <p>Feito com 💜 por <a href="https://github.com/thomasnrs" target="_blank" rel="noopener">@thomasnrs</a> — com a ajuda da própria Lumi.</p>
+    <div class="footer-links">
+      <a href="https://github.com/thomasnrs/Lumi_Agent" target="_blank" rel="noopener">Repositório</a>
+      <a href="https://github.com/thomasnrs/Lumi_Agent/releases" target="_blank" rel="noopener">Releases</a>
+    </div>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
