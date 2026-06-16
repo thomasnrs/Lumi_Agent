@@ -9,6 +9,7 @@
 Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 **e programa como uma engenheira sênior.**
 
+[![Site oficial](https://img.shields.io/badge/site-lumi-7AA2FF?style=flat&logo=githubpages&logoColor=white)](https://thomasnrs.github.io/Lumi_Agent/)
 ![Electron](https://img.shields.io/badge/Electron-31-47848F?logo=electron&logoColor=white)
 ![Three.js](https://img.shields.io/badge/Three.js-VRM-049EF4?logo=threedotjs&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)
@@ -17,7 +18,13 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 
 <br><br>
 
-<img src="assets/brand/screenshot.png" width="760" alt="Lumi em ação: workspace com editor, avatar 3D, chat e terminal" />
+<a href="https://thomasnrs.github.io/Lumi_Agent/"><img src="assets/brand/screenshot.png" width="760" alt="Lumi em ação: workspace com editor, avatar 3D, chat e terminal" /></a>
+
+<br><br>
+
+### 🌐 &nbsp;[**Conheça a Lumi no site oficial &nbsp;→**](https://thomasnrs.github.io/Lumi_Agent/)
+
+<sub>Tour completo, bonitão e explicadinho das funcionalidades — feito pra você ver tudo num lugar só.</sub>
 
 </div>
 
@@ -227,6 +234,8 @@ src/
 ---
 
 <div align="center">
+
+**[🌐 Site oficial](https://thomasnrs.github.io/Lumi_Agent/)** · **[⬇ Releases](https://github.com/thomasnrs/Lumi_Agent/releases)**
 
 Feito com 💜 por [@thomasnrs](https://github.com/thomasnrs) — com a ajuda da própria Lumi.
 
