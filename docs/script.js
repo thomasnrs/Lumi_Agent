@@ -59,8 +59,9 @@ pixCopy?.addEventListener('click', async () => {
     t.value = code; document.body.appendChild(t); t.select();
     document.execCommand('copy'); t.remove();
   }
-  const old = pixCopy.textContent;
-  pixCopy.textContent = 'Copiado!';
+  const lbl = pixCopy.querySelector('.lbl');
+  const old = lbl.textContent;
+  lbl.textContent = 'Copiado!';
   pixCopy.classList.add('copied');
-  setTimeout(() => { pixCopy.textContent = old; pixCopy.classList.remove('copied'); }, 1800);
+  setTimeout(() => { lbl.textContent = old; pixCopy.classList.remove('copied'); }, 1800);
 });
