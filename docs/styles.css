@@ -222,6 +222,28 @@ code{background:rgba(138,63,252,.15);color:var(--violet-bright);padding:1px 7px;
 .footer-links a{color:var(--muted)}
 .footer-links a:hover{color:var(--text)}
 
+/* ============ ícones inline (no lugar de emojis) ============ */
+.kicker{display:inline-flex;align-items:center;gap:8px}
+.kicker svg{width:16px;height:16px}
+.card-ic svg{width:28px;height:28px;color:var(--violet-bright)}
+.tool-cat h4{display:flex;align-items:center;gap:9px}
+.tool-cat h4 svg{width:18px;height:18px;color:var(--violet-bright);flex-shrink:0}
+.badge{display:inline-flex;align-items:center;gap:7px}
+.badge svg{width:14px;height:14px;color:var(--violet-bright)}
+.ws-card h4{display:flex;align-items:center;gap:9px}
+.ws-card h4 svg{width:18px;height:18px;color:var(--violet-bright);flex-shrink:0}
+.mcp-badge{display:inline-flex;align-items:center;gap:8px}
+.mcp-badge svg{width:20px;height:20px;color:var(--violet-bright)}
+.release-note .ric{flex-shrink:0;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;
+  background:var(--grad-soft);border:1px solid var(--border-2)}
+.release-note .ric svg{width:20px;height:20px;color:var(--violet-bright)}
+.cm-plan{display:inline-flex;align-items:center;gap:6px}
+.cm-plan svg{width:13px;height:13px}
+.cm-tool svg{width:13px;height:13px;flex-shrink:0;color:var(--violet-bright)}
+.roadmap span{display:inline-flex;align-items:center;gap:6px}
+.roadmap span svg{width:13px;height:13px}
+.roadmap .ok svg{color:#4ade80}
+
 /* ============ reveal animation ============ */
 .reveal{opacity:0;transform:translateY(28px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
 .reveal.in{opacity:1;transform:none}
