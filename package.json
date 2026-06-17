@@ -1,6 +1,6 @@
 {
   "name": "ai-desktop-mate",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Lumi - AI-powered desktop companion (3D VRM avatar)",
   "main": "src/main/main.js",
   "scripts": {
