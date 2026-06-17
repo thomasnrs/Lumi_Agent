@@ -210,6 +210,11 @@ contextBridge.exposeInMainWorld('api', {
   // lista de modelos do endpoint + voz (TTS) + transcricao (STT)
   listModels: (cfg) => ipcRenderer.invoke('models:list', cfg),
   getModels: (opts) => ipcRenderer.invoke('models:get', opts), // com cache por provedor
+  // seletor agrupado (favoritos + perfis/provedores com modelos cacheados)
+  modelsCatalog: () => ipcRenderer.invoke('models:catalog'),
+  modelsRefresh: (preset) => ipcRenderer.invoke('models:refresh', { preset }),
+  modelsSelect: (preset, model) => ipcRenderer.invoke('models:select', { preset, model }),
+  modelsFavorite: (preset, model) => ipcRenderer.invoke('models:favorite', { preset, model }),
   speak: (text, override) => ipcRenderer.invoke('tts:speak', { text, override }),
   transcribe: (audioB64, mime) => ipcRenderer.invoke('stt:transcribe', { audioB64, mime }),
 

@@ -251,6 +251,7 @@ const DEFAULT_CONFIG = {
   acrylic: true, // efeito vidro nativo do Windows 11 nas janelas (se disponivel)
   sounds: true, // sons sutis do chat (enviar/receber) - toggle no painel rapido
   modelsCache: {}, // cache da lista de modelos por provedor (evita refazer a busca)
+  favorites: [], // modelos favoritos: [{ preset: <nome do perfil|null>, model }] — sobem no topo do seletor
   toolsEnabled: true, // ferramentas/agente (requer modelo compativel)
   memoryEnabled: true, // memoria persistente (fatos no contexto + historico em disco)
   architectMode: false, // modo arquiteto (codigo) com memoria por workspace
@@ -7024,10 +7025,24 @@ function savePresets(p) {
   fs.writeFileSync(presetsPath(), JSON.stringify(p, null, 2));
 }
 ipcMain.handle('presets:list', () => Object.keys(loadPresets()));
-ipcMain.handle('presets:save', (_e, { name, config }) => {
+ipcMain.handle('presets:save', async (_e, { name, config }) => {
   const p = loadPresets();
   p[name] = config;
   savePresets(p);
+  // já cacheia os modelos desse provedor na 1ª vez (best-effort) — o seletor agrupado nasce populado
+  try {
+    const key = modelKey(config);
+    const cur = loadConfig();
+    if (!Array.isArray((cur.modelsCache || {})[key]) || !cur.modelsCache[key].length) {
+      const models = await listModels({ ...cur, ...config });
+      const c = loadConfig();
+      c.modelsCache = c.modelsCache || {};
+      c.modelsCache[key] = models;
+      saveConfig(c);
+    }
+  } catch (e) {
+    /* sem rede / chave inválida: fica pro ↻ buscar depois */
+  }
   return true;
 });
 ipcMain.handle('presets:load', (_e, name) => loadPresets()[name] || null);
@@ -7059,6 +7074,107 @@ ipcMain.handle('models:get', async (_e, opts) => {
   } catch (e) {
     return { models: cache[key] || [], cached: !!(cache[key] && cache[key].length), error: String((e && e.message) || e) };
   }
+});
+
+// chave do cache de modelos por provedor (mesma forma do models:get)
+function modelKey(c) {
+  return (c.baseUrl || '') + '|' + (c.provider || '');
+}
+
+// catálogo p/ o seletor agrupado do chat: favoritos + cada perfil salvo (provedor) com seus modelos cacheados
+ipcMain.handle('models:catalog', () => {
+  const cfg = loadConfig();
+  const presets = loadPresets();
+  const cache = cfg.modelsCache || {};
+  const favs = Array.isArray(cfg.favorites) ? cfg.favorites : [];
+  const activeKey = modelKey(cfg);
+  const groups = Object.keys(presets).map((name) => {
+    const p = presets[name] || {};
+    const key = modelKey(p);
+    return {
+      name,
+      provider: p.provider || 'openai',
+      baseUrl: p.baseUrl || '',
+      key,
+      models: Array.isArray(cache[key]) ? cache[key] : [],
+      active: key === activeKey,
+    };
+  });
+  // config ativa sem perfil salvo correspondente → grupo "Atual" pra não esconder os modelos em uso
+  if (!groups.some((g) => g.active)) {
+    groups.unshift({
+      name: 'Atual (sem perfil)',
+      provider: cfg.provider || 'openai',
+      baseUrl: cfg.baseUrl || '',
+      key: activeKey,
+      models: Array.isArray(cache[activeKey]) ? cache[activeKey] : [],
+      active: true,
+      unsaved: true,
+    });
+  }
+  const favorites = favs.map((f) => ({
+    preset: f.preset || null,
+    model: f.model,
+    exists: !f.preset || presets[f.preset] != null,
+  }));
+  return { current: { model: cfg.model || '', key: activeKey }, groups, favorites };
+});
+
+// busca + cacheia os modelos de UM perfil (ou da config ativa se preset vazio)
+ipcMain.handle('models:refresh', async (_e, opts) => {
+  const presets = loadPresets();
+  const preset = opts && opts.preset;
+  const target = preset && presets[preset] ? { ...loadConfig(), ...presets[preset] } : loadConfig();
+  const key = modelKey(target);
+  try {
+    const models = await listModels(target);
+    const c = loadConfig();
+    c.modelsCache = c.modelsCache || {};
+    c.modelsCache[key] = models;
+    saveConfig(c);
+    return { key, models };
+  } catch (e) {
+    const c = loadConfig();
+    return { key, models: (c.modelsCache || {})[key] || [], error: String((e && e.message) || e) };
+  }
+});
+
+// seleciona modelo (e troca de provedor junto, se vier de um perfil): aplica baseUrl/apiKey/provider + model
+ipcMain.handle('models:select', (_e, opts) => {
+  const presets = loadPresets();
+  const c = loadConfig();
+  const preset = opts && opts.preset;
+  const model = opts && opts.model;
+  let next;
+  if (preset && presets[preset]) {
+    const p = presets[preset];
+    next = {
+      ...c,
+      provider: p.provider || c.provider,
+      baseUrl: p.baseUrl || c.baseUrl,
+      apiKey: p.apiKey != null ? p.apiKey : c.apiKey,
+      model: model || p.model || c.model,
+    };
+  } else {
+    next = { ...c, model: model || c.model };
+  }
+  saveConfig(next);
+  broadcast('config:changed');
+  return { ok: true, model: next.model, provider: next.provider, baseUrl: next.baseUrl };
+});
+
+// favorita/desfavorita um (perfil, modelo)
+ipcMain.handle('models:favorite', (_e, opts) => {
+  const c = loadConfig();
+  const favs = Array.isArray(c.favorites) ? c.favorites : [];
+  const preset = (opts && opts.preset) || null;
+  const model = opts && opts.model;
+  const i = favs.findIndex((f) => (f.preset || null) === preset && f.model === model);
+  if (i >= 0) favs.splice(i, 1);
+  else favs.push({ preset, model });
+  c.favorites = favs;
+  saveConfig(c);
+  return { favorites: favs };
 });
 
 // ---- IPC: voz (TTS) ----

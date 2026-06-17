@@ -989,7 +989,7 @@
         position: fixed;
         left: 10px;
         bottom: 64px;
-        width: 300px;
+        width: 332px;
         max-width: calc(100vw - 20px);
         background: color-mix(in srgb, var(--surface) 94%, transparent);
         backdrop-filter: blur(16px);
@@ -1031,7 +1031,7 @@
         font-size: 13px;
       }
       .mphead button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); }
-      #mpList { max-height: 260px; overflow-y: auto; padding: 5px; }
+      #mpList { max-height: 340px; overflow-y: auto; padding: 5px; }
       .mprow {
         display: flex;
         align-items: center;
@@ -1050,6 +1050,26 @@
       .mprow.cur { background: color-mix(in srgb, var(--accent) 20%, transparent); }
       .mprow.cur .mpcheck { visibility: visible; }
       .mpempty { padding: 14px; text-align: center; color: #778; font-size: 12px; }
+      /* seletor agrupado: favoritos + provedores (perfis) colapsáveis */
+      .mpsec { padding: 9px 9px 3px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #f5c451; font-weight: 700; }
+      .mpgroup { margin-top: 1px; }
+      .mpgrouphd {
+        display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 7px; cursor: pointer;
+        font-size: 12px; color: #aeb6c2; user-select: none;
+      }
+      .mpgrouphd:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+      .mpgrouphd .cv { flex: 0 0 auto; width: 11px; color: #889; transition: transform 0.12s; display: inline-block; }
+      .mpgrouphd.collapsed .cv { transform: rotate(-90deg); }
+      .mpgrouphd .gname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+      .mpgrouphd .gactive { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; flex: 0 0 auto; box-shadow: 0 0 6px #4ade80; }
+      .mpgrouphd .gcount { font-size: 10px; color: #99a; background: color-mix(in srgb, var(--accent) 13%, transparent); border-radius: 8px; padding: 1px 7px; flex: 0 0 auto; }
+      .mpgrouphd .grefresh { flex: 0 0 auto; width: 20px; height: 20px; border: 0; background: transparent; color: #889; cursor: pointer; border-radius: 5px; font-size: 12px; line-height: 1; }
+      .mpgrouphd .grefresh:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+      .mprow .mpstar { flex: 0 0 auto; width: 16px; text-align: center; color: #5a5f70; cursor: pointer; font-size: 13px; }
+      .mprow .mpstar:hover { color: #f5c451; }
+      .mprow .mpstar.on { color: #f5c451; }
+      .mprow.indent { padding-left: 14px; }
+      .mprow .mpprov { flex: 0 0 auto; font-size: 9.5px; color: #778; background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 6px; padding: 1px 6px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
       /* segmentado de permissão: ? / ✓ / ✕ */
       .seg3 {
         display: flex;
@@ -2114,61 +2134,185 @@
           qPerms.appendChild(row);
         });
       }
-      // ---------- picker de modelo (botão na barra do input) ----------
+      // ---------- picker de modelo agrupado (favoritos + provedores colapsáveis) ----------
       const modelBtn = document.getElementById('modelBtn');
       const modelPop = document.getElementById('modelPop');
       const mpFilter = document.getElementById('mpFilter');
       const mpList = document.getElementById('mpList');
-      let mpModels = [];
-      let mpCurrent = '';
+      const modelLabel = document.getElementById('modelLabel');
+      let mpCat = null; // catálogo { current, groups, favorites }
+      let mpCurModel = '';
+      // estado de aberto/fechado dos grupos (persiste)
+      function mpLoadCollapsed() {
+        try { return new Set(JSON.parse(localStorage.getItem('lumiMpCollapsed') || '[]')); } catch (e) { return new Set(); }
+      }
+      let mpCollapsed = mpLoadCollapsed();
+      function mpSaveCollapsed() {
+        try { localStorage.setItem('lumiMpCollapsed', JSON.stringify([...mpCollapsed])); } catch (e) {}
+      }
+
+      function mpSetLabel(model, preset) {
+        modelBtn.title = 'Modelo: ' + model + (preset ? ' · ' + preset : '') + ' (clique pra trocar)';
+        modelLabel.textContent = model;
+      }
+      async function mpSelect(presetName, model) {
+        await window.api.modelsSelect(presetName, model);
+        mpCurModel = model;
+        mpSetLabel(model, presetName);
+        toast('🧠 ' + model + (presetName ? ' · ' + presetName : ''));
+        modelPop.hidden = true;
+      }
+      function mpIsFav(presetName, model) {
+        return (mpCat && mpCat.favorites || []).some((f) => (f.preset || null) === (presetName || null) && f.model === model);
+      }
+      // monta uma linha de modelo (com estrela, nome, [provedor], check)
+      function mpModelRow(model, presetName, opts) {
+        opts = opts || {};
+        const row = document.createElement('div');
+        row.className = 'mprow' + (opts.cur ? ' cur' : '') + (opts.indent ? ' indent' : '');
+        row.title = model + (presetName ? ' · ' + presetName : '');
+        const star = document.createElement('span');
+        const fav = mpIsFav(presetName, model);
+        star.className = 'mpstar' + (fav ? ' on' : '');
+        star.textContent = fav ? '★' : '☆';
+        star.title = fav ? 'Tirar dos favoritos' : 'Favoritar';
+        star.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const r = await window.api.modelsFavorite(presetName, model);
+          if (r && r.favorites) mpCat.favorites = r.favorites.map((f) => ({ ...f, exists: true }));
+          renderModelPop();
+        });
+        const name = document.createElement('span');
+        name.className = 'mpname';
+        name.textContent = model;
+        row.appendChild(star);
+        row.appendChild(name);
+        if (opts.provLabel) {
+          const pv = document.createElement('span');
+          pv.className = 'mpprov';
+          pv.textContent = opts.provLabel;
+          row.appendChild(pv);
+        }
+        const chk = document.createElement('span');
+        chk.className = 'mpcheck';
+        chk.textContent = '✓';
+        row.appendChild(chk);
+        row.addEventListener('click', () => mpSelect(presetName, model));
+        return row;
+      }
+
       function renderModelPop() {
         const q = mpFilter.value.trim().toLowerCase();
-        const list = mpModels.filter((m) => !q || m.toLowerCase().includes(q));
+        const cat = mpCat || { groups: [], favorites: [], current: {} };
+        const match = (m) => !q || m.toLowerCase().includes(q);
         mpList.innerHTML = '';
-        if (!list.length) {
-          mpList.innerHTML = '<div class="mpempty">' + (mpModels.length ? 'Nada com esse filtro.' : 'Sem lista — clica no ↻ pra buscar do provedor.') + '</div>';
-          return;
+
+        // FAVORITOS no topo
+        const favs = (cat.favorites || []).filter((f) => f.exists !== false && match(f.model));
+        if (favs.length) {
+          const h = document.createElement('div');
+          h.className = 'mpsec';
+          h.textContent = '★ Favoritos';
+          mpList.appendChild(h);
+          favs.forEach((f) =>
+            mpList.appendChild(mpModelRow(f.model, f.preset, { provLabel: f.preset || 'atual', cur: f.model === mpCurModel }))
+          );
         }
-        list.slice(0, 200).forEach((m) => {
-          const row = document.createElement('div');
-          row.className = 'mprow' + (m === mpCurrent ? ' cur' : '');
-          row.innerHTML = '<span class="mpname"></span><span class="mpcheck">✓</span>';
-          row.firstChild.textContent = m;
-          row.title = m;
-          row.addEventListener('click', async () => {
-            mpCurrent = m;
-            await window.api.setConfig({ model: m });
-            modelBtn.title = 'Modelo: ' + m + ' (clique pra trocar)';
-            modelLabel.textContent = m;
-            toast('🧠 Modelo: ' + m);
-            modelPop.hidden = true;
+
+        // GRUPOS = perfis salvos (provedores)
+        (cat.groups || []).forEach((g) => {
+          const visible = g.models.filter(match);
+          if (q && !visible.length) return; // com filtro, esconde grupo sem match
+          const collapsed = q ? false : mpCollapsed.has(g.name); // filtrar força expandir
+          const wrap = document.createElement('div');
+          wrap.className = 'mpgroup';
+          const hd = document.createElement('div');
+          hd.className = 'mpgrouphd' + (collapsed ? ' collapsed' : '');
+          hd.innerHTML =
+            '<span class="cv">▾</span><span class="gname"></span>' +
+            (g.active ? '<span class="gactive" title="provedor em uso"></span>' : '') +
+            '<span class="gcount">' + g.models.length + '</span>' +
+            '<button class="grefresh" title="Atualizar modelos deste provedor">↻</button>';
+          hd.querySelector('.gname').textContent = g.name;
+          hd.addEventListener('click', (e) => {
+            if (e.target.closest('.grefresh')) return;
+            e.stopPropagation(); // o re-render abaixo destaca o nó clicado; sem isso o clique-fora fecharia o picker
+            if (mpCollapsed.has(g.name)) mpCollapsed.delete(g.name);
+            else mpCollapsed.add(g.name);
+            mpSaveCollapsed();
+            renderModelPop();
           });
-          mpList.appendChild(row);
+          hd.querySelector('.grefresh').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            e.currentTarget.textContent = '…';
+            const r = await window.api.modelsRefresh(g.unsaved ? '' : g.name);
+            if (r && r.models) g.models = r.models;
+            if (r && r.error) toast('⚠ ' + String(r.error).slice(0, 90), false);
+            mpCollapsed.delete(g.name); // abre pra mostrar o que veio
+            mpSaveCollapsed();
+            renderModelPop();
+          });
+          wrap.appendChild(hd);
+          if (!collapsed) {
+            const body = document.createElement('div');
+            body.className = 'mpgbody';
+            if (!visible.length) {
+              body.innerHTML = '<div class="mpempty">Sem lista ainda — clique no ↻ pra buscar do provedor.</div>';
+            } else {
+              visible.slice(0, 300).forEach((m) =>
+                body.appendChild(mpModelRow(m, g.unsaved ? null : g.name, { indent: true, cur: g.active && m === mpCurModel }))
+              );
+            }
+            wrap.appendChild(body);
+          }
+          mpList.appendChild(wrap);
         });
+
+        if (!mpList.children.length) {
+          mpList.innerHTML =
+            '<div class="mpempty">' +
+            (q ? 'Nada com esse filtro.' : 'Nenhum provedor salvo. Configure em ⚙ e salve um perfil.') +
+            '</div>';
+        }
       }
-      async function openModelPop(force) {
-        const c = await window.api.getConfig();
-        mpCurrent = c.model || '';
-        const r = await window.api.getModels({ force: !!force });
-        mpModels = (r && r.models) || [];
-        if (!mpModels.length && mpCurrent) mpModels = [mpCurrent];
-        renderModelPop();
-        // ancora logo acima do card de input (que cresce com o texto)
+
+      function positionPop() {
         const barRect = document.getElementById('bar').getBoundingClientRect();
         modelPop.style.bottom = window.innerHeight - barRect.top + 6 + 'px';
+      }
+      async function openModelPop() {
+        mpCat = await window.api.modelsCatalog();
+        mpCurModel = (mpCat.current && mpCat.current.model) || '';
+        positionPop();
         modelPop.hidden = false;
+        // cacheia 1x: se o provedor ATIVO ainda não tem modelos, busca agora
+        const active = (mpCat.groups || []).find((g) => g.active);
+        if (active && !active.models.length) {
+          mpList.innerHTML = '<div class="mpempty">Carregando modelos…</div>';
+          const r = await window.api.modelsRefresh(active.unsaved ? '' : active.name);
+          if (r && r.models) active.models = r.models;
+        }
+        renderModelPop();
+        positionPop();
         mpFilter.focus();
         mpFilter.select();
       }
-      modelBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (modelPop.hidden) openModelPop(false);
+      function toggleModelPop() {
+        if (modelPop.hidden) openModelPop();
         else modelPop.hidden = true;
-      });
+      }
+      modelBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleModelPop(); });
+      modelLabel.addEventListener('click', (e) => { e.stopPropagation(); toggleModelPop(); });
+      // ↻ do cabeçalho: atualiza o provedor ativo
       document.getElementById('mpRefresh').addEventListener('click', async (e) => {
         e.stopPropagation();
-        mpList.innerHTML = '<div class="mpempty">Buscando modelos…</div>';
-        await openModelPop(true);
+        const active = mpCat && (mpCat.groups || []).find((g) => g.active);
+        e.currentTarget.textContent = '…';
+        const r = await window.api.modelsRefresh(active && !active.unsaved ? active.name : '');
+        if (active && r && r.models) active.models = r.models;
+        e.currentTarget.textContent = '↻';
+        if (r && r.error) toast('⚠ ' + String(r.error).slice(0, 90), false);
+        renderModelPop();
       });
       mpFilter.addEventListener('input', renderModelPop);
       mpFilter.addEventListener('keydown', (e) => {
@@ -2181,26 +2325,14 @@
       document.addEventListener('click', (e) => {
         if (!modelPop.hidden && !modelPop.contains(e.target) && e.target !== modelBtn) modelPop.hidden = true;
       });
-      const modelLabel = document.getElementById('modelLabel');
-      modelLabel.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (modelPop.hidden) openModelPop(false);
-        else modelPop.hidden = true;
-      });
-      window.api.getConfig().then((c) => {
-        if (c.model) {
-          modelBtn.title = 'Modelo: ' + c.model + ' (clique pra trocar)';
-          modelLabel.textContent = c.model;
-        }
-      });
-      // mudou o modelo em OUTRA janela (⚙ configurações, ajustes rápidos…) → o seletor acompanha
+      window.api.getConfig().then((c) => { if (c.model) mpSetLabel(c.model); });
+      // mudou o modelo em OUTRA janela (⚙ configs, ajustes rápidos…) → o seletor acompanha
       if (window.api.onConfigChanged)
         window.api.onConfigChanged(async () => {
           const c = await window.api.getConfig();
           if (c.model && modelLabel.textContent !== c.model) {
-            modelBtn.title = 'Modelo: ' + c.model + ' (clique pra trocar)';
-            modelLabel.textContent = c.model;
-            mpCurrent = c.model;
+            mpSetLabel(c.model);
+            mpCurModel = c.model;
           }
         });
 
