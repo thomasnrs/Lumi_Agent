@@ -22,7 +22,8 @@
     "publish": {
       "provider": "github",
       "owner": "thomasnrs",
-      "repo": "Lumi_Agent"
+      "repo": "Lumi_Agent",
+      "releaseType": "release"
     },
     "directories": {
       "output": "release",
@@ -72,7 +73,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Lumi"
+      "shortcutName": "Lumi",
+      "artifactName": "Lumi-Setup-${version}.${ext}"
     },
     "linux": {
       "target": [
