@@ -271,6 +271,11 @@ const DEFAULT_CONFIG = {
   reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
   watchServer: false, // opt-in: vigia o servidor remoto montado (disco cheio / serviço caído) e avisa
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
+  contextWindow: 128000,
+  compactAtPct: 80,
+  responseReserveTokens: 8192,
+  recentLiteralTokens: 24000,
+  codeBudgetPct: 35,
   includeActiveTab: true, // anexa o arquivo ativo do editor a cada mensagem do chat (chip liga/desliga)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
@@ -482,6 +487,132 @@ function convertToAnthropic(messages) {
   return { system, msgs: out };
 }
 
+// ---- Fallback: tool calls em TEXTO (modelos sem function-calling nativo) ----
+// Modelos menores/locais (qwen, llama via Ollama/LM Studio…) costumam cuspir o JSON
+// da ferramenta no TEXTO da resposta em vez de usar o campo tool_calls da API.
+// Estas funções detectam esses JSONs e os convertem em toolCalls de verdade —
+// só rodam quando NÃO veio tool_call nativo, então não afetam os modelos normais.
+
+// extrai objetos {...} de nível raiz, balanceando chaves e ignorando aspas/escape
+function extractBalancedObjects(text) {
+  const objs = [];
+  let depth = 0,
+    start = -1,
+    inStr = false,
+    esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          objs.push(text.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+  }
+  return objs;
+}
+
+// normaliza um objeto parseado pra { name, arguments } se bater com uma ferramenta conhecida
+function normToolObj(o, names) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  // formato OpenAI aninhado: { function: { name, arguments } }
+  if (o.function && typeof o.function === 'object') {
+    let args = o.function.arguments;
+    if (typeof args === 'string') {
+      try {
+        args = JSON.parse(args);
+      } catch (e) {
+        args = {};
+      }
+    }
+    return names.has(o.function.name) ? { name: o.function.name, arguments: args || {} } : null;
+  }
+  const name = o.name || o.tool || o.tool_name || o.action || o.function_name;
+  if (!name || !names.has(name)) return null;
+  let args = o.arguments != null ? o.arguments : o.parameters != null ? o.parameters : o.args != null ? o.args : o.input != null ? o.input : o.params;
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args);
+    } catch (e) {
+      args = {};
+    }
+  }
+  return { name, arguments: args && typeof args === 'object' ? args : {} };
+}
+
+// parseia uma string JSON candidata e devolve [{name, arguments}] das ferramentas válidas
+function tryParseToolObj(jsonStr, names) {
+  let v;
+  try {
+    v = JSON.parse(jsonStr);
+  } catch (e) {
+    return [];
+  }
+  const out = [];
+  const consider = (x) => {
+    const n = normToolObj(x, names);
+    if (n) out.push(n);
+  };
+  if (Array.isArray(v)) v.forEach(consider);
+  else if (v && Array.isArray(v.tool_calls)) v.tool_calls.forEach(consider);
+  else consider(v);
+  return out;
+}
+
+// varre o texto por tool calls em JSON (fenced ```json, <tool_call>…</tool_call> ou objeto solto)
+function harvestInlineToolCalls(text, tools) {
+  if (!text || !text.includes('{')) return { toolCalls: [], text: text || '' };
+  const names = new Set((tools || []).map((t) => (t.function && t.function.name) || t.name).filter(Boolean));
+  if (!names.size) return { toolCalls: [], text };
+  const candidates = [];
+  let m;
+  const fence = /```(?:json|tool_call|tool)?\s*([\s\S]*?)```/gi;
+  while ((m = fence.exec(text))) candidates.push({ raw: m[0], json: m[1].trim() });
+  const tagRe = /<tool_call>\s*([\s\S]*?)<\/tool_call>/gi;
+  while ((m = tagRe.exec(text))) candidates.push({ raw: m[0], json: m[1].trim() });
+  extractBalancedObjects(text).forEach((obj) => candidates.push({ raw: obj, json: obj }));
+
+  const found = [];
+  let clean = text;
+  for (const c of candidates) {
+    const parsed = tryParseToolObj(c.json, names);
+    if (parsed.length) {
+      parsed.forEach((p) => found.push(p));
+      clean = clean.split(c.raw).join(''); // remove o bloco do texto visível
+    }
+  }
+  const toolCalls = found.map((p, i) => ({
+    id: 'inline_' + Date.now() + '_' + i,
+    name: p.name,
+    arguments: JSON.stringify(p.arguments || {}),
+  }));
+  return { toolCalls, text: clean.trim() };
+}
+
+// fecha uma rodada: se NÃO veio tool_call nativo, tenta achar tool calls em texto
+function finishTurn(text, toolCalls, usage, t0, tools) {
+  if (!toolCalls.length) {
+    const inline = harvestInlineToolCalls(text, tools);
+    if (inline.toolCalls.length) {
+      return { text: inline.text, toolCalls: inline.toolCalls, usage, ms: Date.now() - t0, inlineTools: true };
+    }
+  }
+  return { text, toolCalls, usage, ms: Date.now() - t0 };
+}
+
 // Uma "rodada" na API Anthropic COM FERRAMENTAS (tool use) — espelho do openaiTurn:
 // streaming SSE, tool_use montado via input_json_delta, e devolve o MESMO contrato
 // { text, toolCalls:[{id,name,arguments:<string JSON>}], usage, ms, aborted } pra
@@ -549,7 +680,7 @@ async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
     }
     throw e;
   }
-  return { text, toolCalls: toolCalls.filter(Boolean), usage, ms: Date.now() - t0 };
+  return finishTurn(text, toolCalls.filter(Boolean), usage, t0, tools);
 }
 
 // ============================================================
@@ -644,27 +775,118 @@ function readRepoRules(ws) {
 // Compactação INTERNA do turno: quando as mensagens do turno crescem demais, os
 // tool-results e argumentos ANTIGOS encolhem (os recentes ficam intactos) —
 // é o que permite turnos longos (teto configurável) sem estourar o contexto.
-function compactTurnMessages(messages) {
-  const KEEP = 12; // últimas mensagens ficam intactas
-  let size = 0;
-  for (const m of messages) {
-    size += typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length;
-    if (m.tool_calls) size += JSON.stringify(m.tool_calls).length;
+function estimateTokens(v) {
+  let s = '';
+  try {
+    s = typeof v === 'string' ? v : JSON.stringify(v || '');
+  } catch (e) {
+    s = String(v || '');
   }
-  if (size < 160000) return; // ~40k tokens: ainda confortável
-  const end = Math.max(1, messages.length - KEEP);
+  return Math.ceil(s.length / 3.6);
+}
+function contextLimits(cfg) {
+  const window = Math.min(2000000, Math.max(8192, parseInt(cfg.contextWindow, 10) || 128000));
+  const compactPct = Math.min(95, Math.max(50, parseInt(cfg.compactAtPct, 10) || 80));
+  const reserve = Math.min(Math.floor(window * 0.45), Math.max(1024, parseInt(cfg.responseReserveTokens, 10) || 8192));
+  const trigger = Math.floor((window * compactPct) / 100);
+  const promptBudget = Math.max(4096, trigger - reserve);
+  return {
+    window,
+    compactPct,
+    reserve,
+    promptBudget,
+    recentLiteral: Math.min(Math.floor(promptBudget * 0.75), Math.max(4000, parseInt(cfg.recentLiteralTokens, 10) || 24000)),
+  };
+}
+function promptTokenEstimate(messages, tools) {
+  return estimateTokens(messages) + estimateTokens(tools || []);
+}
+function liveStatsTracker(cfg, messages, tools, handlers) {
+  const started = Date.now();
+  const lim = contextLimits(cfg);
+  const estimatedCtx = promptTokenEstimate(messages, tools);
+  let generatedChars = 0;
+  let lastEmit = 0;
+  const emit = (usage, force, phase) => {
+    const now = Date.now();
+    if (!force && now - lastEmit < 220) return;
+    lastEmit = now;
+    const out = (usage && usage.completion_tokens) || Math.ceil(generatedChars / 3.6);
+    const ctx = (usage && usage.prompt_tokens) || estimatedCtx;
+    const secs = Math.max(0.2, (now - started) / 1000);
+    broadcast('chat:stats', {
+      tps: Math.round((out / secs) * 10) / 10,
+      out,
+      ctx,
+      total: (usage && usage.total_tokens) || ctx + out,
+      exact: !!usage,
+      live: phase !== 'done',
+      phase: phase || 'gerando',
+      window: lim.window,
+      pct: Math.min(999, Math.round((ctx / lim.window) * 100)),
+    });
+  };
+  emit(null, true, 'conectando');
+  return {
+    onToken(t) {
+      generatedChars += String(t || '').length;
+      handlers.onToken(t);
+      emit(null, false, 'respondendo');
+    },
+    onThink(t) {
+      generatedChars += String(t || '').length;
+      handlers.onThink(t);
+      emit(null, false, 'raciocinando');
+    },
+    finish(usage) {
+      emit(usage, true, 'done');
+    },
+    fail() {
+      emit(null, true, 'interrompido');
+    },
+  };
+}
+function compactTurnMessages(messages, cfg, tools) {
+  const lim = contextLimits(cfg);
+  if (promptTokenEstimate(messages, tools) < lim.promptBudget) return false;
+  let protectedTokens = 0;
+  let protectedStart = messages.length;
+  for (let i = messages.length - 1; i >= 1; i--) {
+    protectedTokens += estimateTokens(messages[i]);
+    protectedStart = i;
+    if (protectedTokens > lim.recentLiteral) break;
+  }
+  const end = Math.max(1, protectedStart);
   for (let i = 1; i < end; i++) {
     const m = messages[i];
     if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 700) {
-      m.content = m.content.slice(0, 500) + ' …[resultado antigo compactado para caber no contexto]';
+      m.content = m.content.slice(0, 500) + ' …[resultado antigo compactado; releia ou rode a ferramenta se precisar]';
     } else if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
       m.tool_calls.forEach((tc) => {
         if (tc.function && tc.function.arguments && tc.function.arguments.length > 900) {
-          tc.function.arguments = tc.function.arguments.slice(0, 600) + ' …[argumentos compactados]';
+          tc.function.arguments = JSON.stringify({ _compactado: true, preview: tc.function.arguments.slice(0, 600) });
         }
       });
     }
   }
+  if (promptTokenEstimate(messages, tools) > lim.promptBudget) {
+    for (let i = 1; i < end; i++) {
+      const m = messages[i];
+      if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 220) {
+        m.content = m.content.slice(0, 160) + ' …[compactado]';
+      }
+      if (m.role === 'assistant') {
+        if (typeof m.content === 'string' && m.content.length > 1000) m.content = m.content.slice(0, 700) + ' …[narração antiga compactada]';
+        if (Array.isArray(m.tool_calls)) {
+          m.tool_calls.forEach((tc) => {
+            if (tc.function && tc.function.arguments && tc.function.arguments.length > 300)
+              tc.function.arguments = JSON.stringify({ _compactado: true, preview: tc.function.arguments.slice(0, 180) });
+          });
+        }
+      }
+    }
+  }
+  return true;
 }
 
 // Detecta a stack do projeto (pelos arquivos-chave) + sugere um comando de verificação
@@ -979,11 +1201,20 @@ function buildSystemPrompt(cfg) {
   if (convSummary) {
     sp += '\n\n# Resumo da conversa até aqui (contexto anterior já compactado):\n' + convSummary;
   }
+  const diary = worklogPrompt(cfg);
+  if (diary) {
+    sp +=
+      '\n\n# Diário técnico recente\n' +
+      'Use este registro para não repetir tentativas que falharam, lembrar arquivos tocados e confirmar o que já foi verificado. ' +
+      'Quando o código atual divergir do diário, o arquivo atual é a fonte de verdade.\n' +
+      diary;
+  }
   // MODO ARQUITETO: injeta a memoria do projeto (contexto que sobrevive a chats novos)
   if (cfg.architectMode && cfg.workspace) {
     let mem = '';
     try {
-      mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8');
+      const memChars = Math.min(64000, Math.max(12000, Math.floor(contextLimits(cfg).window * 0.1 * 3.6)));
+      mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8').slice(0, memChars);
     } catch (e) {
       mem = '(memória do projeto ainda vazia — crie uma com update_project_memory)';
     }
@@ -2512,17 +2743,23 @@ const TOOLS = {
     run: async ({ query }) => {
       const cfg = loadConfig();
       if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
-      const q = String(query || '').trim();
+      const q = String(query || '').trim().slice(0, 200);
       if (!q) return { error: 'consulta vazia' };
-      const tree = [];
-      await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
       const ql = q.toLowerCase();
-      const byName = tree.filter((p) => p.toLowerCase().includes(ql)).slice(0, 30);
+      const byName = [];
       // busca no CONTEÚDO (cap por tempo/quantidade, pula pastas pesadas)
       const hits = [];
       const deadline = Date.now() + 6000;
+      let filesRead = 0;
+      let bytesRead = 0;
+      let limited = false;
+      const MAX_FILES = 1200;
+      const MAX_BYTES = 32 * 1024 * 1024;
       const walk = async (dir, depth) => {
-        if (hits.length >= 40 || depth > 10 || Date.now() > deadline) return;
+        if (hits.length >= 40 || depth > 10 || Date.now() > deadline || filesRead >= MAX_FILES || bytesRead >= MAX_BYTES) {
+          limited = true;
+          return;
+        }
         let ents = [];
         try {
           ents = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -2530,21 +2767,28 @@ const TOOLS = {
           return;
         }
         for (const e of ents) {
-          if (hits.length >= 40 || Date.now() > deadline) return;
+          if (hits.length >= 40 || Date.now() > deadline || filesRead >= MAX_FILES || bytesRead >= MAX_BYTES) {
+            limited = true;
+            return;
+          }
           if (WS_HEAVY.has(e.name) || WS_IGNORE.has(e.name)) continue;
           const full = path.join(dir, e.name);
           if (e.isDirectory()) {
             await walk(full, depth + 1);
             continue;
           }
+          const rel = path.relative(cfg.workspace, full).replace(/\\/g, '/');
+          if (byName.length < 30 && rel.toLowerCase().includes(ql)) byName.push(rel);
           try {
             const st = await fs.promises.stat(full);
             if (st.size > 800000) continue;
+            filesRead++;
+            bytesRead += st.size;
             const txt = await fs.promises.readFile(full, 'utf8');
             if (txt.includes('\0')) continue;
             const lines = txt.split('\n');
             for (let i = 0; i < lines.length && hits.length < 40; i++) {
-              if (lines[i].toLowerCase().includes(ql)) hits.push({ file: path.relative(cfg.workspace, full).replace(/\\/g, '/'), line: i + 1, text: lines[i].trim().slice(0, 160) });
+              if (lines[i].toLowerCase().includes(ql)) hits.push({ file: rel, line: i + 1, text: lines[i].trim().slice(0, 160) });
             }
           } catch (e2) {
             /* ok */
@@ -2552,7 +2796,12 @@ const TOOLS = {
         }
       };
       await walk(cfg.workspace, 0);
-      return { query: q, files_matching_name: byName, content_matches: hits };
+      return {
+        query: q,
+        files_matching_name: byName,
+        content_matches: hits,
+        truncated: limited ? 'busca limitada para proteger memória/tempo; refine a consulta se necessário' : undefined,
+      };
     },
   },
   read_clipboard: {
@@ -2973,7 +3222,7 @@ const TOOLS = {
         }
         for (const name of names) {
           if (matches.length >= 120) return;
-          if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
+          if (WS_HEAVY.has(name) || WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
           const full = path.join(dir, name);
           let st;
           try {
@@ -3511,6 +3760,7 @@ const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'dele
 let currentCp = null; // {id, ts, files: Map<rel, conteúdo|null>} do turno em andamento
 let checkpoints = []; // pilha dos últimos turnos com edições (memória da sessão, máx 10)
 let cpSeq = 0;
+const CHECKPOINT_TURN_BYTES = 4 * 1024 * 1024;
 function captureForCheckpoint(name, a) {
   if (!currentCp || !['write_file', 'edit_file', 'append_file', 'delete_file'].includes(name)) return;
   const rel = a && a.path;
@@ -3518,8 +3768,10 @@ function captureForCheckpoint(name, a) {
   try {
     const abs = resolvePath(rel);
     if (fs.existsSync(abs)) {
-      if (fs.statSync(abs).size > 2 * 1024 * 1024) return; // grande demais pra snapshot
+      const size = fs.statSync(abs).size;
+      if (size > 2 * 1024 * 1024 || currentCp.bytes + size > CHECKPOINT_TURN_BYTES) return;
       currentCp.files.set(rel, fs.readFileSync(abs, 'utf8'));
+      currentCp.bytes += size;
     } else currentCp.files.set(rel, null); // não existia → desfazer = apagar
   } catch (e) {
     /* snapshot é melhor-esforço */
@@ -3561,29 +3813,48 @@ async function runTool(name, args) {
   const mt = mcpTools.find((t) => t.fn === name);
   if (mt) {
     const ok = await checkPermission('mcp', `usar ${mt.toolName} (servidor ${mt.server})`);
-    if (!ok) return { error: 'permissão negada pelo usuário (mcp)' };
+    if (!ok) {
+      const denied = { error: 'permissão negada pelo usuário (mcp)' };
+      recordToolTrace(name, a, denied);
+      return denied;
+    }
     try {
       const res = await mcpClients[mt.server].callTool({ name: mt.toolName, arguments: a });
       const text = (res.content || [])
         .map((c) => (c.type === 'text' ? c.text : `[${c.type}]`))
         .join('\n');
-      return { content: truncate(text, 8000), isError: !!res.isError };
+      const out = { content: truncate(text, 8000), isError: !!res.isError };
+      recordToolTrace(name, a, out);
+      return out;
     } catch (e) {
-      return { error: String((e && e.message) || e) };
+      const out = { error: String((e && e.message) || e) };
+      recordToolTrace(name, a, out);
+      return out;
     }
   }
   // ferramenta nativa
   const t = TOOLS[name];
-  if (!t) return { error: 'ferramenta desconhecida: ' + name };
+  if (!t) {
+    const out = { error: 'ferramenta desconhecida: ' + name };
+    recordToolTrace(name, a, out);
+    return out;
+  }
   const ok = await checkPermission(t.category, t.summary ? t.summary(a) : null);
-  if (!ok) return { error: `permissão negada pelo usuário (${t.category})` };
+  if (!ok) {
+    const out = { error: `permissão negada pelo usuário (${t.category})` };
+    recordToolTrace(name, a, out);
+    return out;
+  }
   try {
     captureForCheckpoint(name, a); // snapshot do estado original (pro "↩ desfazer")
     const res = await t.run(a);
     if (WRITE_TOOLS.includes(name) && !(res && res.error)) editedSinceTurn = true; // p/ verificação automática
+    recordToolTrace(name, a, res);
     return res;
   } catch (e) {
-    return { error: String((e && e.message) || e) };
+    const out = { error: String((e && e.message) || e) };
+    recordToolTrace(name, a, out);
+    return out;
   }
 }
 
@@ -3605,12 +3876,15 @@ async function maybeAutoVerify(cfg, messages) {
   }
   broadcast('tool:animation', r.ok ? 'happy' : 'sad'); // avatar comemora/lamenta a verificação
   broadcast('chat:tool-result', { name: 'run_command', args: { command: cmd }, result: { ok: r.ok, output: r.output }, agent: '🔁 auto-verificação' });
+  if (currentTurnLog) currentTurnLog.verification.push({ command: cmd, ok: r.ok, summary: compactText(r.output, 300) });
   if (r.ok) return false; // passou -> nada a corrigir
   broadcast('chat:newbubble'); // separa a próxima resposta (a correção) num balão novo
-  messages.push({
+  const verificationMessage = {
     role: 'user',
     content: `[verificação automática] O comando \`${cmd}\` FALHOU. Saída:\n${r.output}\n\nCorrija a CAUSA RAIZ no código e ajuste o necessário. Depois eu rodo a verificação de novo.`,
-  });
+  };
+  messages.push(verificationMessage);
+  if (pendingTurnTranscript) pendingTurnTranscript.messages.push(cloneContextMessage(verificationMessage));
   return true;
 }
 
@@ -3709,7 +3983,7 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
   }
   if (buf && !inThink) { text += buf; onToken(buf); } // descarrega o resto
 
-  return { text, toolCalls: toolCalls.filter(Boolean), usage, ms: Date.now() - t0 };
+  return finishTurn(text, toolCalls.filter(Boolean), usage, t0, tools);
 }
 
 // Loop do agente (OpenAI-compativel): chama ferramentas ate produzir a resposta final
@@ -3810,7 +4084,8 @@ function subAgentSystemPrompt(cfg, agent) {
     if (isCoder) sp += '\n\n' + CODING_GUIDE;
     let mem = '';
     try {
-      mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8');
+      const memChars = Math.min(64000, Math.max(12000, Math.floor(contextLimits(cfg).window * 0.1 * 3.6)));
+      mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8').slice(0, memChars);
     } catch (e) {
       mem = '(memória do projeto ainda vazia)';
     }
@@ -3829,6 +4104,8 @@ function subAgentSystemPrompt(cfg, agent) {
   if (convSummary) {
     sp += `\n\n# Contexto da conversa principal (resumo):\n${convSummary}`;
   }
+  const diary = worklogPrompt(cfg);
+  if (diary) sp += `\n\n# Diário técnico recente (não repita erros já conhecidos)\n${diary}`;
   // últimas mensagens da conversa principal (o que está rolando agora)
   const recent = sanitizeForSave(history)
     .slice(-6)
@@ -3862,7 +4139,7 @@ async function runSubAgent(cfg, agent, task, label) {
   const onTok = (tk) => broadcast('chat:agent-token', { agent: who, t: tk }); // narração ao vivo no chat
   for (let step = 0; step < MAX_STEPS; step++) {
     if (chatAbort && chatAbort.signal.aborted) break; // botão Stop para os subagentes também
-    compactTurnMessages(messages); // subagente em tarefa longa também compacta
+    compactTurnMessages(messages, sub, tools); // subagente em tarefa longa também compacta
     let turn;
     try {
       turn = await turnFn(sub, messages, tools, onTok, () => {});
@@ -3922,7 +4199,12 @@ async function runAgent(cfg) {
   editedSinceTurn = false; // reseta o rastreio de edições (verificação automática)
   const onToken = (t) => broadcast('chat:token', t);
   const onThink = (t) => broadcast('chat:thinking', t);
-  const messages = [{ role: 'system', content: buildSystemPrompt(cfg) }, ...history];
+  const currentUser = history[history.length - 1];
+  pendingTurnTranscript = {
+    historyTailCount: currentUser && currentUser.role === 'user' ? 1 : 0,
+    messages: currentUser && currentUser.role === 'user' ? [cloneContextMessage(currentUser)] : [],
+  };
+  const messages = [{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()];
   let tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
   let full = '';
   let verifyAttempts = 0;
@@ -3934,18 +4216,23 @@ async function runAgent(cfg) {
   let finished = false;
   for (let step = 0; step < MAX_STEPS; step++) {
     if (chatAbort && chatAbort.signal.aborted) break; // botão Stop
-    compactTurnMessages(messages); // turno longo? encolhe os tool-results antigos
+    compactTurnMessages(messages, runCfg, tools); // turno longo? encolhe os tool-results antigos
     // STEERING: mensagens enviadas durante o processamento entram como turno do usuário
     if (steerQueue.length) {
       for (const s of steerQueue.splice(0)) {
-        messages.push({ role: 'user', content: s.content });
+        const steering = { role: 'user', content: s.content };
+        messages.push(steering);
+        pendingTurnTranscript.messages.push(cloneContextMessage(steering));
+        pendingTurnTranscript.historyTailCount++;
         editedSinceTurn = false; // a verificação considera só as edições após o novo pedido
       }
     }
     let turn;
+    let live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
     try {
-      turn = await turnFn(runCfg, messages, tools, onToken, onThink);
+      turn = await turnFn(runCfg, messages, tools, live.onToken, live.onThink);
     } catch (e) {
+      live.fail();
       if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
       // FALLBACK: modelo principal falhou → tenta o reserva (mantendo as ferramentas)
       if (!usedFallback && cfg.fallbackModel && cfg.fallbackModel.trim()) {
@@ -3957,14 +4244,16 @@ async function runAgent(cfg) {
       }
       if (tools.length) {
         tools = []; // modelo pode nao suportar ferramentas -> tenta sem
-        turn = await turnFn(runCfg, messages, tools, onToken, onThink);
+        live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
+        turn = await turnFn(runCfg, messages, tools, live.onToken, live.onThink);
       } else {
         throw e;
       }
     }
+    live.finish(turn.usage);
     recordUsage(runCfg, turn.usage); // gastômetro: cada passo conta (o contexto re-enviado é cobrado)
     if (turn.toolCalls.length) {
-      messages.push({
+      const assistantTools = {
         role: 'assistant',
         content: turn.text || null,
         tool_calls: turn.toolCalls.map((tc) => ({
@@ -3972,6 +4261,21 @@ async function runAgent(cfg) {
           type: 'function',
           function: { name: tc.name, arguments: tc.arguments },
         })),
+      };
+      messages.push(assistantTools);
+      pendingTurnTranscript.messages.push(cloneContextMessage(assistantTools));
+      const toolLim = contextLimits(runCfg);
+      const toolCtx = (turn.usage && turn.usage.prompt_tokens) || promptTokenEstimate(messages, tools);
+      broadcast('chat:stats', {
+        tps: 0,
+        out: (turn.usage && turn.usage.completion_tokens) || 0,
+        ctx: toolCtx,
+        total: (turn.usage && turn.usage.total_tokens) || toolCtx,
+        exact: !!turn.usage,
+        live: true,
+        phase: `executando ${turn.toolCalls.length} ferramenta(s)`,
+        window: toolLim.window,
+        pct: Math.min(999, Math.round((toolCtx / toolLim.window) * 100)),
       });
       // separa delegações (podem rodar EM PARALELO) das demais ferramentas
       // (arquivos/comando/tela continuam sequenciais — ordem e efeitos colaterais importam)
@@ -3991,7 +4295,9 @@ async function runAgent(cfg) {
         if (result && result._image) {
           // imagem (tela/página/arquivo) -> responde a tool e injeta como visão
           const note = result._imageNote || 'Esta é a captura da minha tela agora:';
-          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, note: 'Imagem anexada como visão.' }) });
+          const toolMessage = { role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, note: 'Imagem anexada como visão.' }) };
+          messages.push(toolMessage);
+          pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
           messages.push({
             role: 'user',
             content: [
@@ -4006,7 +4312,9 @@ async function runAgent(cfg) {
             result && result.images
               ? { ok: true, generated: result.images.length, note: 'Imagem gerada e exibida ao usuário.' }
               : result;
-          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(forModel) });
+          const toolMessage = { role: 'tool', tool_call_id: tc.id, content: JSON.stringify(forModel) };
+          messages.push(toolMessage);
+          pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
         }
       }
 
@@ -4028,7 +4336,9 @@ async function runAgent(cfg) {
         );
         // devolve os resultados ao modelo (cada um casado pelo seu tool_call_id)
         for (const { id, result } of dres) {
-          messages.push({ role: 'tool', tool_call_id: id, content: JSON.stringify(result) });
+          const toolMessage = { role: 'tool', tool_call_id: id, content: JSON.stringify(result) };
+          messages.push(toolMessage);
+          pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
         }
       }
       continue; // volta pro modelo com os resultados
@@ -4045,12 +4355,17 @@ async function runAgent(cfg) {
     const out = (turn.usage && turn.usage.completion_tokens) || est(full);
     const ctx = (turn.usage && turn.usage.prompt_tokens) || est(JSON.stringify(messages));
     const secs = Math.max(0.001, (turn.ms || 1) / 1000);
+    const lim = contextLimits(runCfg);
     broadcast('chat:stats', {
       tps: Math.round(out / secs),
       out,
       ctx,
       total: (turn.usage && turn.usage.total_tokens) || out + ctx,
       exact: !!turn.usage,
+      live: false,
+      phase: 'concluído',
+      window: lim.window,
+      pct: Math.min(999, Math.round((ctx / lim.window) * 100)),
     });
     finished = true;
     break;
@@ -4362,6 +4677,151 @@ async function synthesize(cfg, text) {
 // Historico da conversa + resumo (gestao de contexto)
 let history = [];
 let convSummary = '';
+let worklog = [];
+let currentTurnLog = null;
+let lastTurnContext = null; // último turno técnico completo (tool_calls + results), reinjetado no prompt seguinte
+let pendingTurnTranscript = null;
+
+function cloneContextMessage(m) {
+  if (!m || typeof m !== 'object') return m;
+  try {
+    const copy = JSON.parse(JSON.stringify(m));
+    if (Array.isArray(copy.content)) {
+      copy.content = copy.content.map((p) => {
+        if (p && p.type === 'image_url' && p.image_url && /^data:/i.test(p.image_url.url || '')) {
+          return { type: 'text', text: '[imagem do turno anterior — recapture/reabra se precisar analisar novamente]' };
+        }
+        return p;
+      });
+    }
+    if (typeof copy.content === 'string' && copy.content.length > 64000)
+      copy.content = copy.content.slice(0, 64000) + ' …[resultado preservado parcialmente]';
+    if (Array.isArray(copy.tool_calls)) {
+      copy.tool_calls.forEach((tc) => {
+        if (tc && tc.function && typeof tc.function.arguments === 'string' && tc.function.arguments.length > 32000) {
+          tc.function.arguments = JSON.stringify({ _preservadoParcialmente: true, preview: tc.function.arguments.slice(0, 30000) });
+        }
+      });
+    }
+    return copy;
+  } catch (e) {
+    return null;
+  }
+}
+function contextMessagesForTurn() {
+  if (!lastTurnContext || !Array.isArray(lastTurnContext.messages)) return history.map(cloneContextMessage).filter(Boolean);
+  const anchor = parseInt(lastTurnContext.anchor, 10);
+  const tailCount = Math.max(0, parseInt(lastTurnContext.historyTailCount, 10) || 0);
+  const start = anchor - tailCount;
+  if (start < 0 || anchor > history.length) {
+    lastTurnContext = null;
+    return history.map(cloneContextMessage).filter(Boolean);
+  }
+  return [
+    ...history.slice(0, start).map(cloneContextMessage).filter(Boolean),
+    ...lastTurnContext.messages.map(cloneContextMessage).filter(Boolean),
+    ...history.slice(anchor).map(cloneContextMessage).filter(Boolean),
+  ];
+}
+function finalizeLastTurnContext(finalText) {
+  if (!pendingTurnTranscript || !pendingTurnTranscript.messages.length) {
+    pendingTurnTranscript = null;
+    return;
+  }
+  if (finalText && String(finalText).trim()) pendingTurnTranscript.messages.push({ role: 'assistant', content: String(finalText) });
+  lastTurnContext = {
+    anchor: history.length,
+    historyTailCount: pendingTurnTranscript.historyTailCount,
+    messages: pendingTurnTranscript.messages.map(cloneContextMessage).filter(Boolean),
+    at: new Date().toISOString(),
+  };
+  pendingTurnTranscript = null;
+}
+
+function compactText(v, max) {
+  let s = '';
+  try {
+    s = typeof v === 'string' ? v : JSON.stringify(v || '');
+  } catch (e) {
+    s = String(v || '');
+  }
+  s = s
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, '[chave]')
+    .replace(/((?:api[_-]?key|token|password|senha)\s*[:=]\s*)[^\s,;]+/gi, '$1[oculto]');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.length > max ? s.slice(0, max) + '…' : s;
+}
+function toolTraceSummary(name, args, result) {
+  if (result && result.error) return compactText(result.error, 280);
+  if (name === 'read_file') return compactText((result && result.showing) || args.path || 'arquivo lido', 220);
+  if (name === 'grep_files' || name === 'find_in_code')
+    return `${(result && (result.total || (result.matches && result.matches.length) || (result.content_matches && result.content_matches.length))) || 0} resultado(s)`;
+  if (name === 'edit_file' || name === 'write_file' || name === 'append_file') return compactText(args.path || 'arquivo alterado', 220);
+  if (name === 'run_command') return compactText((result && (result.output || result.error)) || 'comando executado', 280);
+  if (name === 'delegate_to_agent') return compactText((result && (result.result || result.error)) || args.task || 'delegação', 280);
+  return compactText(result, 280);
+}
+function recordToolTrace(name, args, result) {
+  if (!currentTurnLog) return;
+  const status = result && (result.error || result.isError || result.ok === false || Number(result.status) >= 400) ? 'failed' : 'success';
+  currentTurnLog.tools.push({
+    tool: name,
+    status,
+    target: compactText((args && (args.path || args.query || args.pattern || args.command || args.url || args.agent)) || '', 180),
+    summary: toolTraceSummary(name, args || {}, result),
+  });
+  if (currentTurnLog.tools.length > 40) currentTurnLog.tools.shift();
+  const p = args && args.path;
+  if (p && ['read_file', 'view_image'].includes(name)) currentTurnLog.filesRead.add(String(p));
+  if (p && WRITE_TOOLS.includes(name) && status === 'success') currentTurnLog.filesChanged.add(String(p));
+}
+function beginTurnLog() {
+  const last = [...history].reverse().find((m) => m.role === 'user');
+  const raw = last && (typeof last.content === 'string' ? last.content : (last.content || []).filter((p) => p.type === 'text').map((p) => p.text).join(' '));
+  currentTurnLog = {
+    at: new Date().toISOString(),
+    goal: compactText(String(raw || '').split(FILES_SENTINEL)[0], 500),
+    tools: [],
+    filesRead: new Set(),
+    filesChanged: new Set(),
+    verification: [],
+  };
+}
+function finishTurnLog(outcome, status) {
+  if (!currentTurnLog) return;
+  if (!currentTurnLog.tools.length && !currentTurnLog.verification.length && !currentTurnLog.filesChanged.size) {
+    currentTurnLog = null;
+    return;
+  }
+  const entry = {
+    at: currentTurnLog.at,
+    goal: currentTurnLog.goal,
+    status: status || 'completed',
+    filesRead: [...currentTurnLog.filesRead].slice(0, 40),
+    filesChanged: [...currentTurnLog.filesChanged].slice(0, 40),
+    tools: currentTurnLog.tools,
+    verification: currentTurnLog.verification.slice(-6),
+    outcome: compactText(outcome, 700),
+  };
+  worklog.push(entry);
+  if (worklog.length > 60) worklog = worklog.slice(-60);
+  currentTurnLog = null;
+}
+function worklogPrompt(cfg) {
+  if (!worklog.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
+  const recent = worklog.slice(-10).map((e) => {
+    const tools = (e.tools || []).map((t) => `${t.status === 'success' ? '✓' : '✗'} ${t.tool}${t.target ? ` (${t.target})` : ''}: ${t.summary}`).join('\n');
+    return [
+      `## ${String(e.at || '').slice(0, 16).replace('T', ' ')} — ${e.goal || 'turno técnico'} [${e.status || 'completed'}]`,
+      e.filesChanged && e.filesChanged.length ? `Arquivos alterados: ${e.filesChanged.join(', ')}` : '',
+      e.verification && e.verification.length ? `Verificações: ${e.verification.map((v) => `${v.ok ? '✓' : '✗'} ${v.command}`).join('; ')}` : '',
+      tools,
+      e.outcome ? `Resultado: ${e.outcome}` : '',
+    ].filter(Boolean).join('\n');
+  }).join('\n\n');
+  const maxChars = Math.min(32000, Math.max(6000, Math.floor(contextLimits(cfg).window * 0.06 * 3.6)));
+  return recent.length > maxChars ? recent.slice(recent.length - maxChars) : recent;
+}
 
 function summaryPath() {
   return path.join(app.getPath('userData'), 'summary.txt');
@@ -4407,34 +4867,52 @@ async function llmComplete(cfg, messages) {
 
 // Quando o historico cresce, resume as mensagens antigas (contexto "infinito")
 async function maybeSummarize(cfg) {
-  const KEEP = 12;
-  if (history.length <= 20) return;
-  const cut = history.length - KEEP;
+  if (history.length <= 4) return;
+  const lim = contextLimits(cfg);
+  const tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
+  const projected = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], tools);
+  if (projected < lim.promptBudget) return;
+  let keptTokens = 0;
+  let keepFrom = history.length;
+  for (let i = history.length - 1; i >= 0; i--) {
+    keptTokens += estimateTokens(history[i]);
+    keepFrom = i;
+    if (keptTokens > lim.recentLiteral && history.length - i >= 4) break;
+  }
+  const cut = Math.max(1, keepFrom);
   const toSum = history.slice(0, cut);
   const rest = history.slice(cut);
+  if (!toSum.length || !rest.length) return;
+  const sourceChars = Math.min(120000, Math.max(12000, lim.promptBudget * 2));
   const text = toSum
     .map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : '[conteúdo multimídia]'}`)
     .join('\n')
-    .slice(0, 12000);
+    .slice(0, sourceChars);
   try {
     const summary = await llmComplete(cfg, [
       {
         role: 'system',
         content:
-          'Você resume conversas preservando fatos, nomes, decisões, preferências e contexto técnico importante. Conciso, completo, em português.',
+          'Você compacta conversas preservando: objetivo atual, decisões, requisitos, fatos, preferências, arquivos/áreas do código citados e pendências. Não copie saídas brutas de ferramentas; priorize conclusões técnicas e o estado do trabalho. Conciso, completo, em português.',
       },
       { role: 'user', content: `Resumo anterior:\n${convSummary || '(nenhum)'}\n\nIncorpore estas mensagens ao resumo:\n${text}` },
     ]);
     if (summary && summary.trim()) {
       convSummary = summary.trim();
       history = rest;
+      if (lastTurnContext) {
+        const shiftedAnchor = Number(lastTurnContext.anchor) - cut;
+        const shiftedStart = shiftedAnchor - Number(lastTurnContext.historyTailCount || 0);
+        if (shiftedStart >= 0) lastTurnContext.anchor = shiftedAnchor;
+        else lastTurnContext = null;
+      }
       // as msgs resumidas saem do CONTEXTO mas vão pro arquivo morto (a UI continua mostrando tudo)
       chatArchive = chatArchive.concat(sanitizeForSave(toSum)).slice(-300);
       // realinha a linha do tempo: as msgs antigas saíram, então desloca os anchors
       chatEvents = chatEvents.map((e) => ({ ...e, a: e.a - cut })).filter((e) => e.a >= 0);
       saveSummary();
       saveHistory();
-      broadcast('chat:compacted', { kept: rest.length });
+      broadcast('chat:compacted', { kept: rest.length, beforeTokens: projected, budgetTokens: lim.promptBudget });
     }
   } catch (e) {
     /* se falhar, mantem o historico como esta */
@@ -4493,6 +4971,8 @@ function saveCurrentChat() {
       history: sanitizeForSave(history),
       events: chatEvents, // linha do tempo (tools/agentes/diffs/horários) — sobrevive ao reiniciar
       archive: chatArchive, // mensagens antigas compactadas (só pra exibição)
+      worklog,
+      lastTurnContext,
     };
     fs.writeFileSync(chatFile(currentChatId), JSON.stringify(data));
   } catch (e) {
@@ -4534,6 +5014,9 @@ function loadChatInto(id) {
     convSummary = j.summary || '';
     chatEvents = Array.isArray(j.events) ? j.events : [];
     chatArchive = Array.isArray(j.archive) ? j.archive : [];
+    worklog = Array.isArray(j.worklog) ? j.worklog.slice(-60) : [];
+    lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
+    pendingTurnTranscript = null;
     currentChatId = j.id || id;
     return true;
   } catch (e) {
@@ -4551,11 +5034,14 @@ function setCurrentChatId(id) {
   }
 }
 // começa um chat novo (opcionalmente semeado com um resumo) e o torna atual
-function newChat(seedSummary) {
+function newChat(seedSummary, seedWorklog) {
   history = [];
   convSummary = seedSummary || '';
   chatEvents = [];
   chatArchive = [];
+  worklog = Array.isArray(seedWorklog) ? seedWorklog.slice(-12) : [];
+  lastTurnContext = null;
+  pendingTurnTranscript = null;
   setCurrentChatId(genChatId());
   saveCurrentChat();
   return currentChatId;
@@ -4606,6 +5092,9 @@ function initChats() {
   if (loadConfig().memoryEnabled === false) {
     history = [];
     convSummary = '';
+    worklog = [];
+    lastTurnContext = null;
+    pendingTurnTranscript = null;
     currentChatId = '';
     return;
   }
@@ -4643,7 +5132,7 @@ async function summarizeAll(cfg) {
     {
       role: 'system',
       content:
-        'Você resume conversas preservando fatos, nomes, decisões, preferências e contexto técnico importante. Conciso, completo, em português.',
+        'Você compacta conversas preservando: objetivo atual, decisões, requisitos, fatos, preferências, arquivos/áreas do código citados e pendências. Não copie saídas brutas de ferramentas; priorize conclusões técnicas e o estado do trabalho. Conciso, completo, em português.',
     },
     {
       role: 'user',
@@ -4664,8 +5153,9 @@ async function forkConversation() {
   } catch (e) {
     /* se o resumo falhar, segue com o resumo atual */
   }
+  const technicalSeed = worklog.slice(-12);
   saveCurrentChat(); // o chat original continua salvo (na sua própria conversa)
-  newChat(seed); // novo chat, leve, carregando o resumo
+  newChat(seed, technicalSeed); // novo chat, leve, com resumo + diário técnico recente
   broadcast('chat:reload');
   broadcast('chat:forked', { hasSummary: !!convSummary, archived: true });
   return { ok: true, hasSummary: !!convSummary };
@@ -5675,8 +6165,12 @@ async function walkWorkspace(dir, base, out, depth, deadline) {
     if (out.length > 3000 || Date.now() > deadline) return;
     if (WS_IGNORE.has(ent.name)) continue;
     const full = path.join(dir, ent.name);
-    if (ent.isDirectory()) await walkWorkspace(full, base, out, depth + 1, deadline);
-    else out.push(path.relative(base, full).replace(/\\/g, '/'));
+    if (ent.isDirectory()) {
+      // Heavy folders stay visible in the lazy tree, but are excluded from
+      // flat scans used by mentions, project overview and AI code search.
+      if (WS_HEAVY.has(ent.name)) continue;
+      await walkWorkspace(full, base, out, depth + 1, deadline);
+    } else out.push(path.relative(base, full).replace(/\\/g, '/'));
   }
 }
 // garante que o caminho relativo nao escapa do workspace
@@ -5815,7 +6309,7 @@ ipcMain.handle('workspace:search', async (_e, query) => {
     for (const ent of entries) {
       if (results.length >= MAXR || Date.now() > deadline) return;
       const name = ent.name;
-      if (WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
+      if (WS_HEAVY.has(name) || WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
       const full = path.join(dir, name);
       if (ent.isDirectory()) {
         await walk(full, depth + 1);
@@ -7242,6 +7736,8 @@ const FILES_SENTINEL = '\n\n===ARQUIVOS-MENCIONADOS===\n';
 async function expandMentions(text) {
   const cfg = loadConfig();
   if (!text || !cfg.workspace) return { text: text || '', files: [] };
+  const codePct = Math.min(70, Math.max(5, parseInt(cfg.codeBudgetPct, 10) || 35));
+  let codeCharsLeft = Math.max(16000, Math.floor((contextLimits(cfg).window * codePct * 3.6) / 100));
   let tree = [];
   try {
     await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
@@ -7269,13 +7765,20 @@ async function expandMentions(text) {
       } catch (e) {
         continue;
       }
-      blocks.push('📎 ' + p + ':\n```\n' + truncate(content, 16000) + '\n```');
+      if (codeCharsLeft <= 0) break;
+      const take = Math.min(64000, codeCharsLeft);
+      const excerpt = truncate(content, take);
+      blocks.push('📎 ' + p + ':\n```\n' + excerpt + '\n```');
+      codeCharsLeft -= excerpt.length;
       used.push(p);
     } else {
       const prefix = p.replace(/\/+$/, '') + '/';
       const inDir = tree.filter((f) => f.startsWith(prefix));
       if (inDir.length) {
-        blocks.push('📁 ' + p + '/ — arquivos:\n' + inDir.slice(0, 200).join('\n'));
+        const listing = inDir.slice(0, 200).join('\n').slice(0, codeCharsLeft);
+        if (!listing) break;
+        blocks.push('📁 ' + p + '/ — arquivos:\n' + listing);
+        codeCharsLeft -= listing.length;
         used.push(p);
       }
     }
@@ -7318,9 +7821,26 @@ ipcMain.on('chat:send', async (_e, payload) => {
 async function runChatTurn(cfg, popUserOnError) {
   agentRunning = true;
   chatAbort = new AbortController();
-  currentCp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map() }; // checkpoint deste turno
+  currentCp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map(), bytes: 0 }; // checkpoint deste turno
+  beginTurnLog();
   let full = '';
+  let turnLogStatus = 'completed';
   try {
+    const initialTools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
+    const initialLim = contextLimits(cfg);
+    const initialCtx = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], initialTools);
+    broadcast('chat:stats', {
+      tps: 0,
+      out: 0,
+      ctx: initialCtx,
+      total: initialCtx,
+      exact: false,
+      live: true,
+      phase: 'preparando contexto',
+      window: initialLim.window,
+      pct: Math.min(999, Math.round((initialCtx / initialLim.window) * 100)),
+    });
+    await maybeSummarize(cfg); // garante o orçamento antes da primeira chamada do turno
     // loop do agente com ferramentas — runAgent escolhe o adaptador (OpenAI-compatível ou Anthropic)
     full = await runAgent(cfg);
     // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] OU a forma curta [feliz]
@@ -7340,16 +7860,23 @@ async function runChatTurn(cfg, popUserOnError) {
     if (e2) broadcast('tool:animation', e2); // mesmo canal do play_animation → avatar reage
     // turno só-ferramenta pode terminar sem texto — não salva balão vazio no histórico
     if (full && full.trim()) history.push({ role: 'assistant', content: full });
+    if (pendingTurnTranscript) pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
+    finalizeLastTurnContext(full);
     await maybeSummarize(cfg); // gestao de contexto: resume o antigo se crescer demais
     saveHistory(); // memoria persistente
     broadcast('chat:done');
   } catch (err) {
     if (chatAbort && chatAbort.signal.aborted) {
+      turnLogStatus = 'stopped';
       // parado pelo usuário: salva o que já saiu (não é erro)
       if (full && full.trim()) history.push({ role: 'assistant', content: full });
+      if (pendingTurnTranscript) pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
+      finalizeLastTurnContext(full);
       saveHistory();
       broadcast('chat:done');
     } else {
+      turnLogStatus = 'failed';
+      pendingTurnTranscript = null;
       if (popUserOnError) history.pop(); // remove a mensagem do usuario que falhou (no regen não há)
       // descarta eventos do turno que falhou (anchors apontariam pra msgs que não existem mais)
       chatEvents = chatEvents.filter((e) => (e.t === 'mts' ? e.a < history.length : e.a <= history.length));
@@ -7357,6 +7884,8 @@ async function runChatTurn(cfg, popUserOnError) {
       broadcast('tool:animation', 'sad'); // o avatar sente o erro 💔
     }
   } finally {
+    finishTurnLog(full, turnLogStatus);
+    saveHistory();
     // fecha o checkpoint do turno: se editou arquivos, vira um ponto de restauração
     if (currentCp && currentCp.files.size) {
       checkpoints.push(currentCp);
@@ -7375,6 +7904,8 @@ ipcMain.on('chat:regen', async () => {
   if (agentRunning) return; // não regenera no meio de um turno
   if (!history.length || history[history.length - 1].role !== 'assistant') return;
   history.pop();
+  lastTurnContext = null; // o transcript correspondia à resposta que acabou de ser descartada
+  pendingTurnTranscript = null;
   // remove os eventos do turno descartado (as ferramentas/horário daquela resposta)
   chatEvents = chatEvents.filter((e) => e.a < history.length);
   broadcast('chat:reload'); // a UI re-renderiza sem a última resposta

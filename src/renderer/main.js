@@ -1072,6 +1072,11 @@ const proactivityEl = document.getElementById('proactivity');
 const reactAppsEl = document.getElementById('reactApps');
 const watchServerEl = document.getElementById('watchServer');
 const maxStepsEl = document.getElementById('maxSteps');
+const contextWindowEl = document.getElementById('contextWindow');
+const compactAtPctEl = document.getElementById('compactAtPct');
+const responseReserveTokensEl = document.getElementById('responseReserveTokens');
+const recentLiteralTokensEl = document.getElementById('recentLiteralTokens');
+const codeBudgetPctEl = document.getElementById('codeBudgetPct');
 const clearFactsBtn = document.getElementById('clearFacts');
 const permEls = {
   read: document.getElementById('permRead'),
@@ -1419,6 +1424,11 @@ async function openSettings() {
   reactAppsEl.checked = !!c.reactApps;
   watchServerEl.checked = !!c.watchServer;
   maxStepsEl.value = c.maxSteps || 48;
+  contextWindowEl.value = c.contextWindow || 128000;
+  compactAtPctEl.value = c.compactAtPct || 80;
+  responseReserveTokensEl.value = c.responseReserveTokens || 8192;
+  recentLiteralTokensEl.value = c.recentLiteralTokens || 24000;
+  codeBudgetPctEl.value = c.codeBudgetPct || 35;
   const perms = c.perms || {};
   permEls.read.value = perms.read || 'ask';
   permEls.write.value = perms.write || 'ask';
@@ -1567,6 +1577,11 @@ function readForm() {
     reactApps: reactAppsEl.checked,
     watchServer: watchServerEl.checked,
     maxSteps: Math.min(200, Math.max(4, parseInt(maxStepsEl.value, 10) || 48)),
+    contextWindow: Math.min(2000000, Math.max(8192, parseInt(contextWindowEl.value, 10) || 128000)),
+    compactAtPct: Math.min(95, Math.max(50, parseInt(compactAtPctEl.value, 10) || 80)),
+    responseReserveTokens: Math.min(200000, Math.max(1024, parseInt(responseReserveTokensEl.value, 10) || 8192)),
+    recentLiteralTokens: Math.min(500000, Math.max(4000, parseInt(recentLiteralTokensEl.value, 10) || 24000)),
+    codeBudgetPct: Math.min(70, Math.max(5, parseInt(codeBudgetPctEl.value, 10) || 35)),
     perms: {
       read: permEls.read.value,
       write: permEls.write.value,

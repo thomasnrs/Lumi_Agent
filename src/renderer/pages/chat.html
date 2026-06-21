@@ -29,6 +29,19 @@
         flex-direction: column;
         gap: 8px;
       }
+      .history-pager {
+        align-self: center;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--surface) 88%, transparent);
+        color: #aeb7c6;
+        padding: 6px 12px;
+        font: 600 11px/1 "Segoe UI", sans-serif;
+        cursor: pointer;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+      }
+      .history-pager:hover { border-color: var(--accent); color: var(--text); }
+      .history-pager small { opacity: 0.65; font-weight: 400; margin-left: 4px; }
       .msg {
         max-width: 85%;
         padding: 8px 11px;
@@ -1195,12 +1208,29 @@
         font-size: 13px;
       }
       #stats {
-        padding: 0 12px;
-        font-size: 10px;
-        color: #6a7a85;
+        padding: 2px 12px 3px;
+        font-size: 10.5px;
+        color: #8495a3;
         text-align: right;
-        min-height: 14px;
+        min-height: 18px;
+        font-variant-numeric: tabular-nums;
+        transition: color .18s ease, opacity .18s ease;
       }
+      #stats.live {
+        color: color-mix(in srgb, var(--accent) 72%, #b7c4ce);
+      }
+      #stats.live::before {
+        content: '';
+        display: inline-block;
+        width: 5px;
+        height: 5px;
+        margin-right: 5px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 75%, transparent);
+        animation: statsPulse 1.2s ease-in-out infinite;
+      }
+      @keyframes statsPulse { 50% { opacity: .35; transform: scale(.75); } }
       /* aprovação de ação (card acima do input — substitui o popup nativo) */
       #permArea { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; }
       #permArea:not(:empty) { padding-bottom: 6px; }
@@ -1341,6 +1371,11 @@
       let curRaw = '';
       let curThinking = null;
       let curThinkingDet = null;
+      const HISTORY_PAGE = 60;
+      const HISTORY_STEP = 45;
+      let historyRows = [];
+      let historyPageStart = 0;
+      let historyLastPlan = null;
 
       function addThinking(t) {
         if (!curThinking) {
@@ -1357,7 +1392,7 @@
           d.appendChild(curThinkingDet);
           msgs.appendChild(d);
         }
-        curThinking.textContent += t;
+        curThinking.textContent = (curThinking.textContent + t).slice(-24000);
         scrollBottom();
       }
       function collapseThinking() {
@@ -1520,9 +1555,24 @@
         if (autoScroll) msgs.scrollTop = msgs.scrollHeight;
         else toBottomBtn.hidden = false; // chegou conteúdo novo enquanto você lia acima
       }
+      let historyShiftTimer = null;
       msgs.addEventListener('scroll', () => {
         autoScroll = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
         if (autoScroll) toBottomBtn.hidden = true;
+        if (historyShiftTimer) return;
+        const older = msgs.querySelector('.history-pager.older');
+        const newer = msgs.querySelector('.history-pager.newer');
+        const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 8;
+        const canScroll = msgs.scrollHeight > msgs.clientHeight + 20;
+        if (canScroll && ((older && msgs.scrollTop < 8) || (newer && nearBottom))) {
+          historyShiftTimer = setTimeout(() => {
+            historyShiftTimer = null;
+            const target = msgs.scrollTop < 8
+              ? msgs.querySelector('.history-pager.older')
+              : msgs.querySelector('.history-pager.newer');
+            if (target) target.click();
+          }, 80);
+        }
       });
 
       // ---------- grupo de atividade: ações consecutivas viram um card colapsável ----------
@@ -1634,7 +1684,7 @@
       let sMatches = [];
       let sCur = -1;
       function runSearch() {
-        sMatches.forEach((m) => m.classList.remove('smatch', 'scur'));
+        msgs.querySelectorAll('.smatch,.scur').forEach((m) => m.classList.remove('smatch', 'scur'));
         sMatches = [];
         sCur = -1;
         const q = searchInput.value.trim().toLowerCase();
@@ -1644,24 +1694,37 @@
           return;
         }
         msgs.classList.add('searching');
-        sMatches = [...msgs.querySelectorAll('.msg')].filter((m) => m.textContent.toLowerCase().includes(q));
-        sMatches.forEach((m) => m.classList.add('smatch'));
+        sMatches = historyRows
+          .map((row, i) => ({ i, text: historyRowText(row) }))
+          .filter((x) => x.text.includes(q))
+          .map((x) => x.i);
         if (sMatches.length) gotoMatch(sMatches.length - 1); // começa da mais recente
         else searchCount.textContent = '0';
       }
       function gotoMatch(i) {
         if (!sMatches.length) return;
-        if (sCur >= 0 && sMatches[sCur]) sMatches[sCur].classList.remove('scur');
+        const old = msgs.querySelector('.scur');
+        if (old) old.classList.remove('scur');
         sCur = ((i % sMatches.length) + sMatches.length) % sMatches.length;
-        const el = sMatches[sCur];
-        el.classList.add('scur');
-        el.scrollIntoView({ block: 'center' });
+        const rowIndex = sMatches[sCur];
+        if (rowIndex < historyPageStart || rowIndex >= historyPageStart + HISTORY_PAGE) {
+          showHistoryPage(Math.max(0, rowIndex - Math.floor(HISTORY_PAGE / 2)), false);
+        }
+        const q = searchInput.value.trim().toLowerCase();
+        msgs.querySelectorAll('[data-history-row]').forEach((el) => {
+          if (historyRowText(historyRows[Number(el.dataset.historyRow)]).includes(q)) el.classList.add('smatch');
+        });
+        const el = msgs.querySelector('[data-history-row="' + rowIndex + '"]');
+        if (el) {
+          el.classList.add('scur');
+          el.scrollIntoView({ block: 'center' });
+        }
         searchCount.textContent = sCur + 1 + '/' + sMatches.length;
       }
       function closeSearch() {
         searchBar.hidden = true;
         searchInput.value = '';
-        sMatches.forEach((m) => m.classList.remove('smatch', 'scur'));
+        msgs.querySelectorAll('.smatch,.scur').forEach((m) => m.classList.remove('smatch', 'scur'));
         sMatches = [];
         msgs.classList.remove('searching');
         searchCount.textContent = '';
@@ -1739,6 +1802,7 @@
         addActions(d, 'user', main); // copiar / editar e reenviar
         msgs.appendChild(d);
         scrollBottom();
+        return d;
       }
       function addAssistant(text, ts) {
         clearEmpty();
@@ -1854,7 +1918,7 @@
           txt = String(r);
         }
         // preview completo (a caixa já é rolável); só corta em casos absurdos
-        if (txt.length > 200000) txt = txt.slice(0, 200000) + '\n…[cortado — muito grande]';
+        if (txt.length > 24000) txt = txt.slice(0, 24000) + '\n…[preview cortado para proteger a memória]';
         const d = document.createElement('div');
         d.className = 'msg tool';
         const det = document.createElement('details');
@@ -1891,7 +1955,7 @@
       const chatListEl = document.getElementById('chatList');
       const clItems = document.getElementById('clItems');
 
-      function renderHistory(h) {
+      function renderHistoryLegacy(h) {
         msgs.innerHTML = '';
         typingEl = null; // o innerHTML='' removeu os pontinhos, se existiam
         curAct = null; // idem pro grupo de ações
@@ -1961,6 +2025,114 @@
           msgs.appendChild(e);
         }
       }
+      function historyRowText(row) {
+        if (!row || row.kind !== 'message') return '';
+        const c = extractUser(row.message.content);
+        return (row.message.role === 'assistant' ? String(row.message.content || '') : c.text || '').toLowerCase();
+      }
+
+      function renderHistoryEvent(e) {
+        const d = e.d || {};
+        if (e.t === 'tool') addTool(d);
+        else if (e.t === 'result') addToolResult(d);
+        else if (e.t === 'diff') addDiff(d);
+        else if (e.t === 'note') note(d.text || '');
+        else if (e.t === 'ask') renderAskCard(d, false);
+        else if (e.t === 'askdone') lockAskCard(d.id, d.answer);
+        else if (e.t === 'agent') {
+          const x = document.createElement('div');
+          x.className = 'msg tool';
+          if (d.phase === 'start') {
+            x.style.borderLeft = '2px solid var(--accent)';
+            x.textContent = '🤖 ' + (d.name || 'agente') + (d.task ? ' — ' + d.task : '');
+          } else {
+            x.style.borderLeft = '2px solid #7ee0a0';
+            x.textContent = '✓ ' + (d.name || 'agente') + ' concluiu';
+          }
+          msgs.appendChild(x);
+        }
+      }
+
+      function addHistoryPager(kind, count) {
+        const b = document.createElement('button');
+        b.className = 'history-pager ' + kind;
+        b.innerHTML =
+          (kind === 'older' ? '↑ Carregar anteriores' : '↓ Voltar às recentes') +
+          '<small>' + count + ' ocultos</small>';
+        b.addEventListener('click', () => {
+          const next = kind === 'older'
+            ? Math.max(0, historyPageStart - HISTORY_STEP)
+            : Math.min(Math.max(0, historyRows.length - HISTORY_PAGE), historyPageStart + HISTORY_STEP);
+          showHistoryPage(next, kind === 'newer' && next + HISTORY_PAGE >= historyRows.length);
+        });
+        msgs.appendChild(b);
+      }
+
+      function showHistoryPage(start, stickBottom) {
+        const maxStart = Math.max(0, historyRows.length - HISTORY_PAGE);
+        historyPageStart = Math.max(0, Math.min(Number(start) || 0, maxStart));
+        const end = Math.min(historyRows.length, historyPageStart + HISTORY_PAGE);
+        msgs.innerHTML = '';
+        typingEl = null;
+        curAct = null;
+        curAssistant = null;
+        curThinking = null;
+        curThinkingDet = null;
+        autoScroll = !!stickBottom;
+
+        if (historyPageStart > 0) addHistoryPager('older', historyPageStart);
+        for (let i = historyPageStart; i < end; i++) {
+          const row = historyRows[i];
+          if (row.kind === 'event') {
+            renderHistoryEvent(row.event);
+            continue;
+          }
+          const m = row.message;
+          let el = null;
+          if (m.role === 'assistant') {
+            if (!m.content || !String(m.content).trim()) continue;
+            el = addAssistant(m.content, row.ts);
+            if (!row.ts) enhanceCode(el);
+          } else {
+            const c = extractUser(m.content);
+            if ((c.text && c.text.trim()) || c.images.length) el = addUser(c.text, c.images, false, row.ts);
+          }
+          if (el) el.dataset.historyRow = i;
+        }
+        closeActivity();
+        if (end < historyRows.length) addHistoryPager('newer', historyRows.length - end);
+        renderPlan(historyLastPlan);
+        updateRegen();
+        if (!historyRows.length) {
+          const e = document.createElement('div');
+          e.id = 'empty';
+          e.textContent = 'Comece a conversar 👇';
+          msgs.appendChild(e);
+        }
+        if (stickBottom) requestAnimationFrame(() => (msgs.scrollTop = msgs.scrollHeight));
+        else requestAnimationFrame(() => (msgs.scrollTop = historyPageStart > 0 ? 38 : 0));
+      }
+
+      function renderHistory(h) {
+        const list = Array.isArray(h) ? h : (h && h.messages) || [];
+        const events = (!Array.isArray(h) && h && h.events) || [];
+        const archive = (!Array.isArray(h) && h && h.archive) || [];
+        const times = new Map();
+        historyLastPlan = null;
+        events.forEach((e) => {
+          if (e.t === 'mts') times.set(e.a, e.ts);
+          else if (e.t === 'plan' && Array.isArray(e.d)) historyLastPlan = e.d;
+        });
+        historyRows = archive.map((message) => ({ kind: 'message', message, ts: null }));
+        for (let i = 0; i <= list.length; i++) {
+          events.forEach((e) => {
+            if (e.t !== 'mts' && e.t !== 'plan' && e.a === i) historyRows.push({ kind: 'event', event: e });
+          });
+          if (i < list.length) historyRows.push({ kind: 'message', message: list[i], ts: times.get(i) });
+        }
+        showHistoryPage(Math.max(0, historyRows.length - HISTORY_PAGE), true);
+      }
+
       function refreshTitle() {
         window.api.chatsCurrent().then((c) => (chatTitleEl.textContent = (c && c.title) || 'Conversa'));
       }
@@ -2439,18 +2611,28 @@
       // rodapé = stats do turno + gastômetro do dia (os dois chegam por canais separados)
       let statsTxt = '';
       let spendTxt = '';
+      let statsTitle = '';
+      let spendTitle = '';
       function renderStats() {
         statsEl.textContent = statsTxt + (spendTxt ? (statsTxt ? '  ·  ' : '') + spendTxt : '');
+        statsEl.title = [statsTitle, spendTitle].filter(Boolean).join('\n');
       }
       window.api.onStats((s) => {
         const aprox = s.exact ? '' : '~';
-        statsTxt = `⚡ ${s.tps} tok/s  ·  🧠 contexto ${aprox}${fmtK(s.ctx)}  ·  saída ${aprox}${fmtK(s.out)} tok`;
+        const capacity = s.window ? `/${fmtK(s.window)}${s.pct != null ? ` (${s.pct}%)` : ''}` : '';
+        const phase = s.live && s.phase ? `${s.phase}  ·  ` : '';
+        statsTxt = `${phase}⚡ ${s.tps} tok/s  ·  🧠 ${aprox}${fmtK(s.ctx)}${capacity}  ·  saída ${aprox}${fmtK(s.out)} tok`;
+        statsTitle =
+          `${s.live ? 'Atualizando ao vivo' : 'Última medição'} · ${s.phase || 'resposta'}\n` +
+          `Contexto: ${s.ctx || 0}${s.window ? ` de ${s.window} tokens (${s.pct || 0}%)` : ''}\n` +
+          `Saída: ${s.out || 0} tokens${s.exact ? ' · valores informados pelo provedor' : ' · estimativa local'}`;
+        statsEl.classList.toggle('live', !!s.live);
         renderStats();
       });
       function setSpend(u) {
         if (!u || (!u.usd && !u.in && !u.out)) return;
         spendTxt = u.usd > 0 ? '💸 hoje ~US$ ' + u.usd.toFixed(u.usd < 0.1 ? 3 : 2) : '💸 hoje ' + fmtK(u.in + u.out) + ' tok';
-        statsEl.title =
+        spendTitle =
           'gasto estimado de hoje (preço de tabela dos modelos) · entrada ' + fmtK(u.in) + ' · saída ' + fmtK(u.out) +
           (u.unknown ? ' · inclui modelo sem preço conhecido (contado só em tokens)' : '');
         renderStats();
@@ -2508,6 +2690,7 @@
         curThinkingDet = null;
         setProcessing(false);
         refreshTitle(); // a 1ª mensagem define o nome da conversa
+        if (autoScroll) window.api.getHistory().then(renderHistory);
       });
       window.api.onStopped(() => {
         hideTyping();

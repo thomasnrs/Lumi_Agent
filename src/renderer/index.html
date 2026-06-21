@@ -517,6 +517,33 @@
           <input id="maxSteps" type="number" min="4" max="200" step="1" placeholder="48" />
           <p class="hint">Quanto FÔLEGO ela tem numa tarefa: cada passo = uma rodada de ferramentas. Proxy local/modelo barato? Suba (100+). API paga? Modere. Ao bater o teto ela avisa e você diz "continua".</p>
 
+          <div style="margin:14px 0 10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--surface,#24242f) 78%,transparent)">
+            <div style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent,#7aa2ff);margin-bottom:9px">Orçamento de contexto</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 10px">
+              <div>
+                <label style="margin-top:0">Janela do modelo</label>
+                <input id="contextWindow" type="number" min="8192" max="2000000" step="1024" placeholder="128000" />
+              </div>
+              <div>
+                <label style="margin-top:0">Compactar em (%)</label>
+                <input id="compactAtPct" type="number" min="50" max="95" step="1" placeholder="80" />
+              </div>
+              <div>
+                <label>Reserva para resposta</label>
+                <input id="responseReserveTokens" type="number" min="1024" max="200000" step="1024" placeholder="8192" />
+              </div>
+              <div>
+                <label>Histórico literal</label>
+                <input id="recentLiteralTokens" type="number" min="4000" max="500000" step="1000" placeholder="24000" />
+              </div>
+              <div style="grid-column:1 / -1">
+                <label>Orçamento para código anexado (%)</label>
+                <input id="codeBudgetPct" type="number" min="5" max="70" step="5" placeholder="35" />
+              </div>
+            </div>
+            <p class="hint" style="margin-bottom:0">A compactação considera prompt, memórias, histórico e ferramentas. O código atual é relido do workspace; o diário técnico guarda decisões, arquivos e resultados resumidos.</p>
+          </div>
+
           <label>Proatividade (ela falar por conta própria)</label>
           <select id="proactivity">
             <option value="off">Desligada — só fala quando falada</option>
