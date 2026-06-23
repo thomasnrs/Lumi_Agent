@@ -52,6 +52,7 @@
         width: auto;
       }
       input,
+      select,
       textarea,
       input[type='text'] {
         width: 100%;
@@ -124,6 +125,13 @@
 
       <label class="toggle"><input id="enabled" type="checkbox" /> Ativar modo arquiteto</label>
 
+      <label>Motor do chat no modo código</label>
+      <select id="codeEngine">
+        <option value="native">Lumi nativa (provedor das Configurações)</option>
+        <option value="claude-code">Claude Code (assinatura Pro/Max)</option>
+      </select>
+      <div id="claudeStatus" class="hint"></div>
+
       <label>Workspace (pasta do projeto)</label>
       <div class="row">
         <input id="workspace" type="text" placeholder="Nenhuma pasta escolhida" readonly />
@@ -151,6 +159,8 @@
       const workspaceEl = $('workspace');
       const memoryEl = $('memory');
       const msgEl = $('msg');
+      const codeEngineEl = $('codeEngine');
+      const claudeStatusEl = $('claudeStatus');
 
       async function loadMemory() {
         memoryEl.value = await window.api.getWorkspaceMemory();
@@ -161,16 +171,26 @@
 
       window.api.getConfig().then((c) => {
         enabledEl.checked = !!c.architectMode;
+        codeEngineEl.value = c.codeEngine || 'native';
         workspaceEl.value = c.workspace || '';
         autoVerifyEl.checked = !!c.autoVerify;
         verifyCommandEl.value = c.verifyCommand || '';
         loadMemory();
+        window.api.claudeCodeStatus().then((s) => {
+          claudeStatusEl.textContent = s && s.loggedIn
+            ? `✦ Claude Code conectado à conta ${s.subscriptionType || 'Claude.ai'}${s.email ? ' · ' + s.email : ''}.`
+            : 'Claude Code ainda não autenticado — entre pela janela de Configurações.';
+        });
       });
 
       // ativar/desativar salva na hora
       enabledEl.addEventListener('change', async () => {
         await window.api.setConfig({ architectMode: enabledEl.checked });
         msgEl.textContent = enabledEl.checked ? 'Modo arquiteto ativado.' : 'Modo arquiteto desativado.';
+      });
+      codeEngineEl.addEventListener('change', async () => {
+        await window.api.setConfig({ codeEngine: codeEngineEl.value });
+        msgEl.textContent = codeEngineEl.value === 'claude-code' ? 'Claude Code assumirá os próximos turnos de código. ✦' : 'Motor nativo da Lumi selecionado.';
       });
       autoVerifyEl.addEventListener('change', async () => {
         await window.api.setConfig({ autoVerify: autoVerifyEl.checked });

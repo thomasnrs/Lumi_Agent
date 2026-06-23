@@ -496,6 +496,7 @@
           <select id="provider">
             <option value="openai">OpenAI-compatível (OpenAI, OpenRouter, Qwen, Groq, local...)</option>
             <option value="anthropic">Anthropic (Claude)</option>
+            <option value="opencode">OpenCode Zen / Go (roteamento automático por modelo)</option>
           </select>
 
           <label>Base URL</label>
@@ -512,6 +513,49 @@
           </div>
           <label>Modelo reserva (fallback — usado se o principal falhar no meio do turno)</label>
           <input id="fallbackModel" type="text" placeholder="opcional, ex.: gpt-4o-mini" autocomplete="off" />
+
+          <div style="margin:14px 0 10px;padding:12px;border:1px solid color-mix(in srgb,var(--accent,#7aa2ff) 35%,var(--border));border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent,#7aa2ff) 10%,var(--surface,#24242f)),color-mix(in srgb,var(--surface,#24242f) 90%,transparent))">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+              <div style="font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--accent,#7aa2ff)">✦ Motor do Modo Código</div>
+              <span id="claudeCodeStatus" style="font-size:11px;color:#9aa">verificando…</span>
+            </div>
+            <select id="codeEngine">
+              <option value="native">Lumi nativa — usa o provedor configurado acima</option>
+              <option value="claude-code">Claude Code — usa minha assinatura Pro/Max</option>
+            </select>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 10px;margin-top:9px">
+              <div>
+                <label style="margin-top:0">Modelo Claude Code</label>
+                <select id="claudeCodeModel">
+                  <option value="sonnet">Sonnet — equilibrado</option>
+                  <option value="opus">Opus — máxima capacidade</option>
+                  <option value="haiku">Haiku — rápido</option>
+                </select>
+              </div>
+              <div>
+                <label style="margin-top:0">Permissões</label>
+                <select id="claudeCodePermissionMode">
+                  <option value="default">Normal — perguntar quando necessário</option>
+                  <option value="acceptEdits">Aceitar edições automaticamente</option>
+                  <option value="plan">Planejar — somente leitura</option>
+                </select>
+              </div>
+              <div style="grid-column:1 / -1">
+                <label>Esforço de raciocínio</label>
+                <select id="claudeCodeEffort">
+                  <option value="medium">Médio</option>
+                  <option value="high">Alto</option>
+                  <option value="xhigh">Muito alto</option>
+                  <option value="max">Máximo</option>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button id="claudeCodeLogin" type="button" style="flex:1">Entrar com Claude Max</button>
+              <button id="claudeCodeLogout" type="button" style="flex:0 0 auto">Sair</button>
+            </div>
+            <p class="hint" style="margin-bottom:0">Ativo quando o Modo Arquiteto estiver ligado. O Claude Code mantém a própria sessão, lê <code>CLAUDE.md</code>, usa skills/MCP e não precisa de API key.</p>
+          </div>
 
           <label>Passos por turno (chamadas de ferramenta antes de parar)</label>
           <input id="maxSteps" type="number" min="4" max="200" step="1" placeholder="48" />

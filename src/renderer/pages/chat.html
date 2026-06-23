@@ -2314,6 +2314,7 @@
       const modelLabel = document.getElementById('modelLabel');
       let mpCat = null; // catálogo { current, groups, favorites }
       let mpCurModel = '';
+      let usingClaudeCode = false;
       // estado de aberto/fechado dos grupos (persiste)
       function mpLoadCollapsed() {
         try { return new Set(JSON.parse(localStorage.getItem('lumiMpCollapsed') || '[]')); } catch (e) { return new Set(); }
@@ -2453,6 +2454,10 @@
         modelPop.style.bottom = window.innerHeight - barRect.top + 6 + 'px';
       }
       async function openModelPop() {
+        if (usingClaudeCode) {
+          toast('✦ Modelo controlado pelo Modo Claude Code nas Configurações');
+          return;
+        }
         mpCat = await window.api.modelsCatalog();
         mpCurModel = (mpCat.current && mpCat.current.model) || '';
         positionPop();
@@ -2497,13 +2502,18 @@
       document.addEventListener('click', (e) => {
         if (!modelPop.hidden && !modelPop.contains(e.target) && e.target !== modelBtn) modelPop.hidden = true;
       });
-      window.api.getConfig().then((c) => { if (c.model) mpSetLabel(c.model); });
+      function syncEngineLabel(c) {
+        usingClaudeCode = c.architectMode === true && c.codeEngine === 'claude-code';
+        const label = usingClaudeCode ? `Claude Code · ${c.claudeCodeModel || 'sonnet'}` : c.model;
+        if (label) mpSetLabel(label);
+      }
+      window.api.getConfig().then(syncEngineLabel);
       // mudou o modelo em OUTRA janela (⚙ configs, ajustes rápidos…) → o seletor acompanha
       if (window.api.onConfigChanged)
         window.api.onConfigChanged(async () => {
           const c = await window.api.getConfig();
-          if (c.model && modelLabel.textContent !== c.model) {
-            mpSetLabel(c.model);
+          syncEngineLabel(c);
+          if (!usingClaudeCode && c.model) {
             mpCurModel = c.model;
           }
         });
@@ -2642,7 +2652,10 @@
       window.api.onCompacted((info) => {
         const d = document.createElement('div');
         d.className = 'msg tool';
-        d.textContent = `🗜️ contexto compactado (resumi o histórico antigo, mantendo ${info.kept} mensagens)`;
+        d.textContent =
+          info && info.engine === 'claude-code'
+            ? `🗜️ Claude Code compactou a sessão${info.beforeTokens ? ' (' + fmtK(info.beforeTokens) + ' tokens antes)' : ''}`
+            : `🗜️ contexto compactado (resumi o histórico antigo, mantendo ${info.kept} mensagens)`;
         msgs.appendChild(d);
         scrollBottom();
       });

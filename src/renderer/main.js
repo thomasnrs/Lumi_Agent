@@ -1068,6 +1068,13 @@ const searchProviderEl = document.getElementById('searchProvider');
 const searchApiKeyEl = document.getElementById('searchApiKey');
 const searxUrlEl = document.getElementById('searxUrl');
 const fallbackModelEl = document.getElementById('fallbackModel');
+const codeEngineEl = document.getElementById('codeEngine');
+const claudeCodeModelEl = document.getElementById('claudeCodeModel');
+const claudeCodePermissionModeEl = document.getElementById('claudeCodePermissionMode');
+const claudeCodeEffortEl = document.getElementById('claudeCodeEffort');
+const claudeCodeStatusEl = document.getElementById('claudeCodeStatus');
+const claudeCodeLoginBtn = document.getElementById('claudeCodeLogin');
+const claudeCodeLogoutBtn = document.getElementById('claudeCodeLogout');
 const proactivityEl = document.getElementById('proactivity');
 const reactAppsEl = document.getElementById('reactApps');
 const watchServerEl = document.getElementById('watchServer');
@@ -1123,6 +1130,8 @@ function applySink() {
 // cobre quase todos; Anthropic tem adaptador próprio). Escolher um preenche
 // Tipo de API + Base URL + um modelo inicial (troque pelo 🔄 que lista os reais).
 const PRESETS = {
+  'OpenCode Zen ✦': { provider: 'opencode', baseUrl: 'https://opencode.ai/zen/v1', model: 'deepseek-v4-flash-free' },
+  'OpenCode Go': { provider: 'opencode', baseUrl: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4-flash' },
   OpenAI: { provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini' },
   'Anthropic (Claude)': { provider: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-opus-4-8' },
   'Google Gemini 🆓': { provider: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
@@ -1420,6 +1429,10 @@ async function openSettings() {
   searchApiKeyEl.value = c.searchApiKey || '';
   searxUrlEl.value = c.searxUrl || '';
   fallbackModelEl.value = c.fallbackModel || '';
+  codeEngineEl.value = c.codeEngine || 'native';
+  claudeCodeModelEl.value = c.claudeCodeModel || 'sonnet';
+  claudeCodePermissionModeEl.value = c.claudeCodePermissionMode || 'default';
+  claudeCodeEffortEl.value = c.claudeCodeEffort || 'high';
   proactivityEl.value = c.proactivity || 'normal';
   reactAppsEl.checked = !!c.reactApps;
   watchServerEl.checked = !!c.watchServer;
@@ -1460,6 +1473,7 @@ async function openSettings() {
   loadAudioDevices(c.audioInput || '', c.audioOutput || ''); // lista mics/saidas
   refreshProfiles(); // atualiza a lista de perfis salvos
   profileMsgEl.textContent = '';
+  refreshClaudeCodeStatus();
 }
 gear.addEventListener('click', () => window.api.openSettingsWindow()); // janela dedicada (redimensionável)
 
@@ -1470,6 +1484,44 @@ presetSel.addEventListener('change', () => {
     baseUrlEl.value = p.baseUrl;
     modelEl.value = p.model;
   }
+});
+
+async function refreshClaudeCodeStatus() {
+  claudeCodeStatusEl.textContent = 'verificando…';
+  try {
+    const s = await window.api.claudeCodeStatus();
+    if (!s.installed) {
+      claudeCodeStatusEl.textContent = 'não instalado';
+      claudeCodeStatusEl.style.color = '#ff9b9b';
+      return;
+    }
+    if (s.loggedIn) {
+      const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
+      claudeCodeStatusEl.textContent = `conectado · ${plan}${s.email ? ' · ' + s.email : ''}`;
+      claudeCodeStatusEl.style.color = '#82d9a5';
+    } else {
+      claudeCodeStatusEl.textContent = 'aguardando login';
+      claudeCodeStatusEl.style.color = '#ffc978';
+    }
+  } catch (e) {
+    claudeCodeStatusEl.textContent = 'erro ao verificar';
+    claudeCodeStatusEl.style.color = '#ff9b9b';
+  }
+}
+claudeCodeLoginBtn.addEventListener('click', async () => {
+  claudeCodeStatusEl.textContent = 'abrindo login…';
+  const r = await window.api.claudeCodeLogin();
+  if (r && r.error) {
+    claudeCodeStatusEl.textContent = r.error;
+    claudeCodeStatusEl.style.color = '#ff9b9b';
+    return;
+  }
+  claudeCodeStatusEl.textContent = 'conclua o login no navegador/terminal';
+  setTimeout(refreshClaudeCodeStatus, 5000);
+});
+claudeCodeLogoutBtn.addEventListener('click', async () => {
+  await window.api.claudeCodeLogout();
+  refreshClaudeCodeStatus();
 });
 tempEl.addEventListener('input', () => (tempValEl.textContent = tempEl.value));
 
@@ -1573,6 +1625,10 @@ function readForm() {
     searchApiKey: searchApiKeyEl.value.trim(),
     searxUrl: searxUrlEl.value.trim(),
     fallbackModel: fallbackModelEl.value.trim(),
+    codeEngine: codeEngineEl.value,
+    claudeCodeModel: claudeCodeModelEl.value,
+    claudeCodePermissionMode: claudeCodePermissionModeEl.value,
+    claudeCodeEffort: claudeCodeEffortEl.value,
     proactivity: proactivityEl.value,
     reactApps: reactAppsEl.checked,
     watchServer: watchServerEl.checked,

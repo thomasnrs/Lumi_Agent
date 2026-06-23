@@ -192,6 +192,9 @@ contextBridge.exposeInMainWorld('api', {
   setConfig: (cfg) => ipcRenderer.invoke('config:set', cfg),
   onConfigChanged: (cb) => ipcRenderer.on('config:changed', () => cb()),
   openSettingsWindow: () => ipcRenderer.send('settings:open-window'),
+  claudeCodeStatus: () => ipcRenderer.invoke('claude-code:status'),
+  claudeCodeLogin: () => ipcRenderer.invoke('claude-code:login'),
+  claudeCodeLogout: () => ipcRenderer.invoke('claude-code:logout'),
 
   // MCP
   mcpConnect: () => ipcRenderer.invoke('mcp:connect'),

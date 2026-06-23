@@ -879,6 +879,7 @@
       const previewMeta = document.getElementById('previewMeta');
       let editor = null;
       let diffEditor = null; // editor de diff do painel git (criado junto com o Monaco)
+      let emptyModel = null; // modelo neutro reutilizável; nunca descarta o modelo ainda ligado ao editor
       let current = null;
       let isImage = false;
       let treeData = [];
@@ -1160,7 +1161,10 @@
         webrootEl.hidden = true;
         webrootEl.style.display = 'none';
         editorEl.style.display = 'block';
-        if (editor) editor.setModel(monaco.editor.createModel('', 'plaintext'));
+        if (editor) {
+          if (!emptyModel || emptyModel.isDisposed()) emptyModel = monaco.editor.createModel('', 'plaintext');
+          editor.setModel(emptyModel);
+        }
         renderTabs();
         updateStatus();
       }
@@ -1211,25 +1215,44 @@
         updateGitGutter(); // barrinhas de linhas alteradas
         window.api.setEditorActive(t.image || t.diff || t.live || t.web ? '' : p); // o chat mostra/anexa o arquivo ativo
       }
-      function closeTab(p, force) {
-        const i = openTabs.findIndex((t) => t.path === p);
-        if (i < 0) return;
-        const t = openTabs[i];
-        if (!force && t.dirty && !confirm('"' + baseName(p) + '" tem alterações não salvas. Fechar mesmo assim?')) return;
-        if (t.model) t.model.dispose();
-        if (t.orig) t.orig.dispose(); // lado "original" das abas de diff
+      function disposeTab(t) {
+        if (!t) return;
+        // Monaco não tolera bem dispose() do modelo que ainda está anexado ao editor.
+        if (editor && t.model && editor.getModel() === t.model) {
+          if (!emptyModel || emptyModel.isDisposed()) emptyModel = monaco.editor.createModel('', 'plaintext');
+          editor.setModel(emptyModel);
+        }
+        if (diffEditor && t.diff) {
+          const dm = diffEditor.getModel();
+          if (dm && (dm.original === t.orig || dm.modified === t.model)) diffEditor.setModel(null);
+        }
+        if (t.model && t.model !== emptyModel && !t.model.isDisposed()) t.model.dispose();
+        if (t.orig && !t.orig.isDisposed()) t.orig.dispose(); // lado "original" das abas de diff
         if (t.live) stopLiveServer(); // fechar a aba desliga o servidor
         if (t.web) {
           try {
             wb.src = 'about:blank'; // libera a página carregada
           } catch (e) {}
         }
+      }
+      function closeTab(p, force, deferActivate) {
+        const i = openTabs.findIndex((t) => t.path === p);
+        if (i < 0) return;
+        const t = openTabs[i];
+        if (!force && t.dirty && !confirm('"' + baseName(p) + '" tem alterações não salvas. Fechar mesmo assim?')) return;
+        const wasActive = active === p;
+        if (wasActive) {
+          active = null;
+          current = null;
+          window.api.setEditorActive('');
+        }
+        disposeTab(t);
         openTabs.splice(i, 1);
-        if (active === p) {
+        if (wasActive && !deferActivate) {
           const next = openTabs[i] || openTabs[i - 1];
           if (next) activate(next.path);
           else showNothing();
-        } else renderTabs();
+        } else if (!deferActivate) renderTabs();
       }
 
       async function openFile(rel) {
@@ -1379,10 +1402,20 @@
         const r = await window.api.deleteWorkspaceEntry(node.path);
         if (r && r.error) return toast('⚠ ' + r.error, false);
         // fecha as abas dos arquivos apagados (sem perguntar — já eram)
-        openTabs
+        const removed = openTabs
           .filter((t) => t.path === node.path || t.path.startsWith(node.path + '/'))
-          .map((t) => t.path)
-          .forEach((p) => closeTab(p, true));
+          .map((t) => t.path);
+        const activeRemoved = removed.includes(active);
+        removed.forEach((p) => closeTab(p, true, true));
+        if (activeRemoved) {
+          const next = openTabs[0];
+          if (next) activate(next.path);
+          else showNothing();
+        } else {
+          renderTabs();
+          drawTree();
+          updateStatus();
+        }
         await loadTree();
       }
 
@@ -3736,9 +3769,9 @@
         require.config({ paths: { vs: CDN + '/vs' } });
         require(['vs/editor/editor.main'], () => {
           defineLumiTheme();
+          emptyModel = monaco.editor.createModel('', 'plaintext');
           editor = monaco.editor.create(editorEl, {
-            value: '',
-            language: 'plaintext',
+            model: emptyModel,
             theme: 'lumi',
             automaticLayout: true,
             fontSize: 13,

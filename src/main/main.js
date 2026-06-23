@@ -233,7 +233,7 @@ function broadcast(channel, ...args) {
 //  Configuracao (BYOK - o usuario traz a propria chave)
 // ============================================================
 const DEFAULT_CONFIG = {
-  provider: 'openai', // 'openai' (compativel) ou 'anthropic'
+  provider: 'openai', // 'openai' (compativel), 'anthropic' ou 'opencode' (Zen/Go com roteamento automatico)
   baseUrl: 'https://api.openai.com/v1',
   apiKey: '',
   model: 'gpt-4o-mini',
@@ -255,6 +255,10 @@ const DEFAULT_CONFIG = {
   toolsEnabled: true, // ferramentas/agente (requer modelo compativel)
   memoryEnabled: true, // memoria persistente (fatos no contexto + historico em disco)
   architectMode: false, // modo arquiteto (codigo) com memoria por workspace
+  codeEngine: 'native', // 'native' | 'claude-code' — no Modo Arquiteto, Claude Code pode assumir o chat
+  claudeCodeModel: 'sonnet', // alias do Claude Code: sonnet | opus | haiku (ou id completo)
+  claudeCodePermissionMode: 'default', // default | acceptEdits | plan
+  claudeCodeEffort: 'high', // low | medium | high | xhigh | max
   workspace: '', // pasta do projeto atual
   selectedVrm: '', // personagem escolhido (nome do .vrm em assets/; vazio = o primeiro)
   autoVerify: false, // após editar arquivos, roda o comando de verificação e corrige se falhar
@@ -621,7 +625,7 @@ async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
   const t0 = Date.now();
   const base = (cfg.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
   const { system, msgs } = convertToAnthropic(messages);
-  const body = { model: cfg.model, max_tokens: 8192, messages: msgs, stream: true };
+  const body = { model: requestModel(cfg), max_tokens: 8192, messages: msgs, stream: true };
   if (system) body.system = system;
   if (tools && tools.length) {
     // formato Anthropic: {name, description, input_schema} (sem o wrapper "function")
@@ -681,6 +685,309 @@ async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
     throw e;
   }
   return finishTurn(text, toolCalls.filter(Boolean), usage, t0, tools);
+}
+
+// ---- OpenCode Zen / Go ----------------------------------------------------
+// O gateway do OpenCode publica vários protocolos sob a mesma Base URL:
+// GPT -> Responses API; Claude/Qwen (e alguns modelos Go) -> Anthropic;
+// Gemini -> Google GenerateContent; modelos abertos restantes -> Chat Completions.
+// O usuário escolhe só o modelo e a Lumi roteia para o protocolo certo.
+function openCodeProtocol(model, baseUrl) {
+  const m = String(model || '').toLowerCase().replace(/^opencode(?:-go)?\//, '');
+  if (/^gpt-/.test(m)) return 'responses';
+  if (/^gemini-/.test(m)) return 'gemini';
+  if (/^(claude-|qwen)/.test(m)) return 'anthropic';
+  if (/\/zen\/go(?:\/|$)/i.test(String(baseUrl || '')) && /^minimax-m(?:3|2\.7|2\.5)$/.test(m)) return 'anthropic';
+  return 'openai';
+}
+
+function requestModel(cfg) {
+  const model = String(cfg.model || '');
+  return cfg.provider === 'opencode' ? model.replace(/^opencode(?:-go)?\//i, '') : model;
+}
+
+function turnAdapter(cfg) {
+  if (cfg.provider === 'anthropic') return anthropicTurn;
+  if (cfg.provider === 'opencode') {
+    const protocol = openCodeProtocol(cfg.model, cfg.baseUrl);
+    if (protocol === 'responses') return responsesTurn;
+    if (protocol === 'gemini') return geminiTurn;
+    if (protocol === 'anthropic') return anthropicTurn;
+  }
+  return openaiTurn;
+}
+
+function convertToResponses(messages) {
+  let instructions = '';
+  const input = [];
+  const messageContent = (role, content) => {
+    if (typeof content === 'string') return content;
+    const parts = [];
+    for (const p of content || []) {
+      if (p.type === 'image_url' && role === 'user') {
+        parts.push({ type: 'input_image', image_url: p.image_url && p.image_url.url });
+      } else if (p.text) {
+        parts.push({ type: role === 'assistant' ? 'output_text' : 'input_text', text: p.text });
+      }
+    }
+    return parts;
+  };
+  for (const m of messages) {
+    if (m.role === 'system') {
+      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+      if (text) instructions += (instructions ? '\n\n' : '') + text;
+      continue;
+    }
+    if (m.role === 'tool') {
+      input.push({
+        type: 'function_call_output',
+        call_id: m.tool_call_id,
+        output: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+      });
+      continue;
+    }
+    if (m.role === 'assistant' && Array.isArray(m._responsesItems) && m._responsesItems.length) {
+      input.push(...m._responsesItems);
+      continue;
+    }
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      if (typeof m.content === 'string' && m.content.trim()) input.push({ role: 'assistant', content: m.content });
+      for (const tc of m.tool_calls) {
+        input.push({
+          type: 'function_call',
+          call_id: tc.id,
+          name: (tc.function && tc.function.name) || 'tool',
+          arguments: (tc.function && tc.function.arguments) || '{}',
+        });
+      }
+      continue;
+    }
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    input.push({ role, content: messageContent(role, m.content) });
+  }
+  return { instructions, input };
+}
+
+async function responsesTurn(cfg, messages, tools, onToken, onThink) {
+  const t0 = Date.now();
+  const base = (cfg.baseUrl || 'https://opencode.ai/zen/v1').replace(/\/$/, '');
+  const { instructions, input } = convertToResponses(messages);
+  const body = { model: requestModel(cfg), input, stream: true };
+  if (instructions) body.instructions = instructions;
+  if (tools && tools.length) {
+    body.tools = tools.map((t) => ({
+      type: 'function',
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+      strict: false,
+    }));
+  }
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  const res = await fetch(base + '/responses', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: chatAbort ? chatAbort.signal : undefined,
+  });
+  if (!res.ok) throw new Error(`OpenCode Responses HTTP ${res.status}: ${await res.text()}`);
+
+  let text = '';
+  let usage = null;
+  const calls = new Map();
+  let responseItems = [];
+  const callFor = (j) => {
+    const item = j.item || {};
+    const key = j.item_id || item.id || item.call_id || String(j.output_index || calls.size);
+    let tc = calls.get(key);
+    if (!tc) {
+      tc = { id: item.call_id || item.id || 'oc_' + Date.now() + '_' + calls.size, name: item.name || '', arguments: '' };
+      calls.set(key, tc);
+    }
+    return tc;
+  };
+  try {
+    await readSSE(res, (data) => {
+      if (!data || data === '[DONE]') return;
+      let j;
+      try {
+        j = JSON.parse(data);
+      } catch (e) {
+        return;
+      }
+      if (j.type === 'response.output_text.delta' && j.delta) {
+        text += j.delta;
+        onToken(j.delta);
+      } else if ((j.type === 'response.reasoning_text.delta' || j.type === 'response.reasoning_summary_text.delta') && j.delta && onThink) {
+        onThink(j.delta);
+      } else if (j.type === 'response.output_item.added' && j.item && j.item.type === 'function_call') {
+        const tc = callFor(j);
+        tc.name = j.item.name || tc.name;
+        tc.arguments = j.item.arguments || tc.arguments;
+      } else if (j.type === 'response.function_call_arguments.delta') {
+        callFor(j).arguments += j.delta || '';
+      } else if (j.type === 'response.output_item.done' && j.item && j.item.type === 'function_call') {
+        const tc = callFor(j);
+        tc.name = j.item.name || tc.name;
+        if (j.item.arguments) tc.arguments = j.item.arguments;
+        responseItems.push(j.item);
+      } else if (j.type === 'response.output_item.done' && j.item) {
+        responseItems.push(j.item);
+      } else if (j.type === 'response.completed' && j.response && j.response.usage) {
+        const u = j.response.usage;
+        if (!responseItems.length && Array.isArray(j.response.output)) responseItems = j.response.output;
+        usage = {
+          prompt_tokens: u.input_tokens || 0,
+          completion_tokens: u.output_tokens || 0,
+          total_tokens: u.total_tokens || (u.input_tokens || 0) + (u.output_tokens || 0),
+        };
+      } else if (j.type === 'error') {
+        throw new Error((j.error && j.error.message) || j.message || 'erro no stream Responses');
+      }
+    });
+  } catch (e) {
+    if (chatAbort && chatAbort.signal.aborted) {
+      return { text, toolCalls: [...calls.values()], usage, responseItems, ms: Date.now() - t0, aborted: true };
+    }
+    throw e;
+  }
+  const out = finishTurn(text, [...calls.values()].filter((tc) => tc.name), usage, t0, tools);
+  out.responseItems = responseItems;
+  return out;
+}
+
+function convertToGemini(messages) {
+  let system = '';
+  const contents = [];
+  const toolNames = new Map();
+  const push = (role, parts) => {
+    if (!parts.length) return;
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) last.parts.push(...parts);
+    else contents.push({ role, parts });
+  };
+  for (const m of messages) {
+    if (m.role === 'system') {
+      if (typeof m.content === 'string') system += (system ? '\n\n' : '') + m.content;
+      continue;
+    }
+    if (m.role === 'tool') {
+      let response = m.content;
+      try {
+        response = JSON.parse(m.content);
+      } catch (e) {
+        response = { result: m.content };
+      }
+      if (!response || typeof response !== 'object' || Array.isArray(response)) response = { result: response };
+      push('user', [{ functionResponse: { id: m.tool_call_id, name: toolNames.get(m.tool_call_id) || 'tool', response } }]);
+      continue;
+    }
+    const parts = [];
+    if (typeof m.content === 'string') {
+      if (m.content) parts.push({ text: m.content });
+    } else {
+      for (const p of m.content || []) {
+        if (p.type === 'image_url') {
+          const mt = /^data:([^;]+);base64,(.*)$/.exec(p.image_url.url || '');
+          if (mt) parts.push({ inlineData: { mimeType: mt[1], data: mt[2] } });
+        } else if (p.text) parts.push({ text: p.text });
+      }
+    }
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        let args = {};
+        try {
+          args = JSON.parse((tc.function && tc.function.arguments) || '{}');
+        } catch (e) {
+          /* argumentos antigos compactados */
+        }
+        const name = (tc.function && tc.function.name) || 'tool';
+        toolNames.set(tc.id, name);
+        parts.push({ functionCall: { id: tc.id, name, args } });
+      }
+    }
+    push(m.role === 'assistant' ? 'model' : 'user', parts);
+  }
+  return { system, contents };
+}
+
+async function geminiTurn(cfg, messages, tools, onToken, onThink) {
+  const t0 = Date.now();
+  const base = (cfg.baseUrl || 'https://opencode.ai/zen/v1').replace(/\/$/, '');
+  const model = requestModel(cfg);
+  const { system, contents } = convertToGemini(messages);
+  const body = { contents };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+  if (tools && tools.length) {
+    body.tools = [{
+      functionDeclarations: tools.map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+        parameters: t.function.parameters,
+      })),
+    }];
+  }
+  if (cfg.temperature != null) body.generationConfig = { temperature: Number(cfg.temperature) };
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.apiKey) headers['x-goog-api-key'] = cfg.apiKey;
+  const res = await fetch(`${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: chatAbort ? chatAbort.signal : undefined,
+  });
+  if (!res.ok) throw new Error(`OpenCode Gemini HTTP ${res.status}: ${await res.text()}`);
+
+  let text = '';
+  let usage = null;
+  const toolCalls = [];
+  const seenCalls = new Set();
+  try {
+    await readSSE(res, (data) => {
+      let j;
+      try {
+        j = JSON.parse(data);
+      } catch (e) {
+        return;
+      }
+      for (const part of (((j.candidates || [])[0] || {}).content || {}).parts || []) {
+        if (part.text) {
+          if (part.thought && onThink) onThink(part.text);
+          else {
+            text += part.text;
+            onToken(part.text);
+          }
+        }
+        if (part.functionCall) {
+          const fc = part.functionCall;
+          const sig = (fc.id || '') + '|' + fc.name + '|' + JSON.stringify(fc.args || {});
+          if (!seenCalls.has(sig)) {
+            seenCalls.add(sig);
+            toolCalls.push({
+              id: fc.id || 'gemini_' + Date.now() + '_' + toolCalls.length,
+              name: fc.name,
+              arguments: JSON.stringify(fc.args || {}),
+            });
+          }
+        }
+      }
+      if (j.usageMetadata) {
+        const u = j.usageMetadata;
+        usage = {
+          prompt_tokens: u.promptTokenCount || 0,
+          completion_tokens: u.candidatesTokenCount || 0,
+          total_tokens: u.totalTokenCount || (u.promptTokenCount || 0) + (u.candidatesTokenCount || 0),
+        };
+      }
+    });
+  } catch (e) {
+    if (chatAbort && chatAbort.signal.aborted) {
+      return { text, toolCalls, usage, ms: Date.now() - t0, aborted: true };
+    }
+    throw e;
+  }
+  return finishTurn(text, toolCalls, usage, t0, tools);
 }
 
 // ============================================================
@@ -3754,6 +4061,7 @@ let editedSinceTurn = false; // algum arquivo foi escrito neste turno? (p/ verif
 let chatAbort = null; // AbortController do turno atual (botão Stop)
 let agentRunning = false; // há um turno do agente em andamento?
 let steerQueue = []; // mensagens enviadas DURANTE o processamento (steering)
+let activeClaudeQuery = null; // Query do Agent SDK em andamento (Stop chama interrupt/close)
 const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file'];
 
 // ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
@@ -3894,7 +4202,7 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
   const endpoint = cfg.baseUrl.replace(/\/$/, '') + '/chat/completions';
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`; // chave opcional
-  const body = { model: cfg.model, messages, temperature: cfg.temperature, stream: true };
+  const body = { model: requestModel(cfg), messages, temperature: cfg.temperature, stream: true };
   if (tools && tools.length) body.tools = tools;
   const t0 = Date.now();
   const res = await fetch(endpoint, {
@@ -4031,7 +4339,7 @@ const MODEL_PRICES = [
 ];
 function priceFor(model) {
   const m = String(model || '').toLowerCase();
-  if (!m || m.includes(':free')) return [0, 0];
+  if (!m || m.includes(':free') || m.endsWith('-free') || m === 'big-pickle') return [0, 0];
   for (const [pfx, pin, pout] of MODEL_PRICES) if (m.includes(pfx)) return [pin, pout];
   return null; // desconhecido (ex.: proxy local) → só conta tokens
 }
@@ -4130,7 +4438,7 @@ async function runSubAgent(cfg, agent, task, label) {
   // tools como array (mesmo vazio) = lista exata permitida; ausente/não-array = todas
   const allow = Array.isArray(agent.tools) ? agent.tools : null;
   let tools = toolSchemas({ allow, delegate: false });
-  const turnFn = sub.provider === 'anthropic' ? anthropicTurn : openaiTurn; // Claude também faz tool use
+  const turnFn = turnAdapter(sub);
   let full = '';
   let lastText = ''; // última narração não-vazia (caso o turno final venha sem texto)
   const did = []; // ações executadas (fallback p/ quando o modelo não resume no fim)
@@ -4160,6 +4468,7 @@ async function runSubAgent(cfg, agent, task, label) {
         role: 'assistant',
         content: turn.text || null,
         tool_calls: turn.toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })),
+        _responsesItems: turn.responseItems,
       });
       for (const tc of turn.toolCalls) {
         let args = {};
@@ -4210,7 +4519,6 @@ async function runAgent(cfg) {
   let verifyAttempts = 0;
   let runCfg = cfg; // pode trocar pro modelo reserva no meio do turno (fallback)
   let usedFallback = false;
-  const turnFn = cfg.provider === 'anthropic' ? anthropicTurn : openaiTurn; // Claude faz tool use nativo
   // teto de passos CONFIGURÁVEL (⚙ → Passos por turno): proxy local aguenta muito; API paga, menos
   const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
   let finished = false;
@@ -4230,7 +4538,7 @@ async function runAgent(cfg) {
     let turn;
     let live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
     try {
-      turn = await turnFn(runCfg, messages, tools, live.onToken, live.onThink);
+      turn = await turnAdapter(runCfg)(runCfg, messages, tools, live.onToken, live.onThink);
     } catch (e) {
       live.fail();
       if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
@@ -4245,7 +4553,7 @@ async function runAgent(cfg) {
       if (tools.length) {
         tools = []; // modelo pode nao suportar ferramentas -> tenta sem
         live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
-        turn = await turnFn(runCfg, messages, tools, live.onToken, live.onThink);
+        turn = await turnAdapter(runCfg)(runCfg, messages, tools, live.onToken, live.onThink);
       } else {
         throw e;
       }
@@ -4261,6 +4569,7 @@ async function runAgent(cfg) {
           type: 'function',
           function: { name: tc.name, arguments: tc.arguments },
         })),
+        _responsesItems: turn.responseItems,
       };
       messages.push(assistantTools);
       pendingTurnTranscript.messages.push(cloneContextMessage(assistantTools));
@@ -4839,6 +5148,10 @@ function saveSummary() {
 
 // Completa uma mensagem (nao-streaming) no provedor atual — usado p/ resumir
 async function llmComplete(cfg, messages) {
+  if (cfg.provider === 'opencode') {
+    const r = await turnAdapter(cfg)(cfg, messages, [], () => {}, () => {});
+    return r.text || '';
+  }
   if (cfg.provider === 'anthropic') {
     const base = (cfg.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
@@ -4934,6 +5247,8 @@ function chatsDir() {
 //  MULTI-CHAT: várias conversas salvas (chats/<id>.json)
 // ============================================================
 let currentChatId = '';
+let claudeSessionId = '';
+let claudeSessionWorkspace = '';
 
 function chatFile(id) {
   return path.join(chatsDir(), id + '.json');
@@ -4973,6 +5288,8 @@ function saveCurrentChat() {
       archive: chatArchive, // mensagens antigas compactadas (só pra exibição)
       worklog,
       lastTurnContext,
+      claudeSessionId,
+      claudeSessionWorkspace,
     };
     fs.writeFileSync(chatFile(currentChatId), JSON.stringify(data));
   } catch (e) {
@@ -5016,6 +5333,8 @@ function loadChatInto(id) {
     chatArchive = Array.isArray(j.archive) ? j.archive : [];
     worklog = Array.isArray(j.worklog) ? j.worklog.slice(-60) : [];
     lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
+    claudeSessionId = j.claudeSessionId || '';
+    claudeSessionWorkspace = j.claudeSessionWorkspace || '';
     pendingTurnTranscript = null;
     currentChatId = j.id || id;
     return true;
@@ -5041,6 +5360,8 @@ function newChat(seedSummary, seedWorklog) {
   chatArchive = [];
   worklog = Array.isArray(seedWorklog) ? seedWorklog.slice(-12) : [];
   lastTurnContext = null;
+  claudeSessionId = '';
+  claudeSessionWorkspace = '';
   pendingTurnTranscript = null;
   setCurrentChatId(genChatId());
   saveCurrentChat();
@@ -5096,6 +5417,8 @@ function initChats() {
     lastTurnContext = null;
     pendingTurnTranscript = null;
     currentChatId = '';
+    claudeSessionId = '';
+    claudeSessionWorkspace = '';
     return;
   }
   const cfg = loadConfig();
@@ -7699,6 +8022,282 @@ ipcMain.handle('stt:transcribe', async (_e, { audioB64, mime }) => {
   return j.text || '';
 });
 
+// ============================================================
+//  CLAUDE CODE: motor opcional do Modo Arquiteto (OAuth Pro/Max)
+// ============================================================
+let claudeSdkPromise = null;
+function claudeCodePackage() {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  if (process.platform === 'win32') return `@anthropic-ai/claude-agent-sdk-win32-${arch}`;
+  if (process.platform === 'darwin') return `@anthropic-ai/claude-agent-sdk-darwin-${arch}`;
+  return `@anthropic-ai/claude-agent-sdk-linux-${arch}`;
+}
+function claudeCodeExecutable() {
+  const exe = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  let fp = path.join(app.getAppPath(), 'node_modules', ...claudeCodePackage().split('/'), exe);
+  if (app.isPackaged) fp = fp.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+  return fp;
+}
+function claudeCodeEnv() {
+  const env = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'lumi-desktop/1.0' };
+  // Este modo é explicitamente a assinatura Claude.ai. Evita uma API key do
+  // terminal ganhar prioridade e cobrar a API sem o usuário perceber.
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.ANTHROPIC_BASE_URL;
+  delete env.CLAUDE_CODE_USE_BEDROCK;
+  delete env.CLAUDE_CODE_USE_VERTEX;
+  delete env.CLAUDE_CODE_USE_FOUNDRY;
+  return env;
+}
+async function claudeSdk() {
+  if (!claudeSdkPromise) claudeSdkPromise = import('@anthropic-ai/claude-agent-sdk');
+  return claudeSdkPromise;
+}
+async function claudeCodeStatus() {
+  const exe = claudeCodeExecutable();
+  if (!fs.existsSync(exe)) return { installed: false, executable: exe };
+  try {
+    const { stdout } = await execFileAsync(exe, ['auth', 'status'], {
+      env: claudeCodeEnv(),
+      timeout: 15000,
+      windowsHide: true,
+    });
+    const info = JSON.parse(String(stdout || '{}'));
+    return { installed: true, executable: exe, ...info };
+  } catch (e) {
+    const raw = String((e && e.stdout) || (e && e.stderr) || (e && e.message) || e);
+    try {
+      return { installed: true, executable: exe, ...JSON.parse(raw) };
+    } catch (_) {
+      return { installed: true, loggedIn: false, executable: exe, error: truncate(raw, 300) };
+    }
+  }
+}
+ipcMain.handle('claude-code:status', () => claudeCodeStatus());
+ipcMain.handle('claude-code:login', () => {
+  const exe = claudeCodeExecutable();
+  if (!fs.existsSync(exe)) return { error: 'binário do Claude Code não encontrado — reinstale as dependências da Lumi' };
+  const terminal = createTerminal({ shell: exe, args: ['auth', 'login'], title: 'Claude Max — entrar', ai: false });
+  if (!(terminal && terminal.error)) openPage('workspace', 'workspace.html', 'Workspace', 1320, 720);
+  return terminal;
+});
+ipcMain.handle('claude-code:logout', async () => {
+  const exe = claudeCodeExecutable();
+  if (!fs.existsSync(exe)) return { error: 'Claude Code não encontrado' };
+  try {
+    await execFileAsync(exe, ['auth', 'logout'], { env: claudeCodeEnv(), timeout: 15000, windowsHide: true });
+    return { ok: true };
+  } catch (e) {
+    return { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) };
+  }
+});
+
+function claudeToolCategory(name) {
+  const n = String(name || '').toLowerCase();
+  if (/^(read|glob|grep|lsp|webfetchdomainfilter)$/.test(n)) return 'read';
+  if (/^(edit|write|multiedit|notebookedit)$/.test(n)) return 'write';
+  if (/^(bash|killbash|taskstop)$/.test(n)) return 'exec';
+  if (/^(webfetch|websearch)$/.test(n)) return 'network';
+  if (/^mcp__/.test(n)) return 'mcp';
+  return null;
+}
+function claudeToolSummary(name, input, title) {
+  if (title) return title;
+  const a = input || {};
+  const target = a.file_path || a.path || a.command || a.query || a.url || '';
+  return `${name}${target ? ': ' + truncate(String(target), 180) : ''}`;
+}
+function claudePromptFromContent(content) {
+  if (typeof content === 'string') return content;
+  const text = (content || []).filter((p) => p && p.type === 'text').map((p) => p.text).join('\n');
+  const images = (content || []).filter((p) => p && p.type === 'image_url').length;
+  return text + (images ? `\n\n[${images} imagem(ns) foram anexadas na interface; o Modo Claude Code ainda não encaminha imagens diretamente.]` : '');
+}
+function claudeUserPrompt() {
+  const m = [...history].reverse().find((x) => x && x.role === 'user');
+  return m ? claudePromptFromContent(m.content) : '';
+}
+function claudeUsageStats(usage, started, phase, live, generatedChars) {
+  const input = (usage && (usage.input_tokens || usage.prompt_tokens)) || 0;
+  const output = (usage && (usage.output_tokens || usage.completion_tokens)) || Math.ceil((generatedChars || 0) / 3.6);
+  const secs = Math.max(0.2, (Date.now() - started) / 1000);
+  broadcast('chat:stats', {
+    tps: Math.round((output / secs) * 10) / 10,
+    out: output,
+    ctx: input,
+    total: input + output,
+    exact: !!usage,
+    live: live !== false,
+    phase: phase || 'Claude Code',
+    window: 0,
+    pct: 0,
+    engine: 'claude-code',
+  });
+}
+function blockText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((x) => (x && x.type === 'text' ? x.text : '')).filter(Boolean).join('\n');
+}
+async function runClaudeCodeAgent(cfg, promptOverride) {
+  if (!cfg.workspace) throw new Error('Defina um workspace antes de usar o Modo Claude Code.');
+  const status = await claudeCodeStatus();
+  if (!status.installed) throw new Error('Claude Code não está incluído nesta instalação da Lumi.');
+  if (!status.loggedIn) throw new Error('Claude Code não está autenticado. Abra Configurações → Modo Claude Code → Entrar com Claude Max.');
+
+  const { query } = await claudeSdk();
+  const started = Date.now();
+  const prompt = promptOverride || claudeUserPrompt();
+  const sameWorkspace = claudeSessionId && path.resolve(claudeSessionWorkspace || '') === path.resolve(cfg.workspace);
+  const mode = ['default', 'acceptEdits', 'plan'].includes(cfg.claudeCodePermissionMode) ? cfg.claudeCodePermissionMode : 'default';
+  const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.claudeCodeEffort) ? cfg.claudeCodeEffort : 'high';
+  const options = {
+    cwd: cfg.workspace,
+    pathToClaudeCodeExecutable: claudeCodeExecutable(),
+    env: claudeCodeEnv(),
+    model: cfg.claudeCodeModel || 'sonnet',
+    permissionMode: mode,
+    effort,
+    maxTurns: Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48)),
+    includePartialMessages: true,
+    forwardSubagentText: true,
+    enableFileCheckpointing: true,
+    persistSession: true,
+    settingSources: ['user', 'project', 'local'],
+    tools: { type: 'preset', preset: 'claude_code' },
+    systemPrompt: {
+      type: 'preset',
+      preset: 'claude_code',
+      append:
+        'Você está integrado à interface da Lumi. Fale sempre no idioma do usuário, mantenha o progresso conciso e use as ferramentas para concluir a tarefa. ' +
+        'Não peça para o usuário rodar comandos que você mesma pode executar. A interface já mostra ferramentas e diffs.',
+    },
+    canUseTool: async (toolName, input, info) => {
+      const category = claudeToolCategory(toolName);
+      if (!category) return { behavior: 'allow', updatedInput: input };
+      const allowed = await checkPermission(category, claudeToolSummary(toolName, input, info && info.title));
+      return allowed
+        ? { behavior: 'allow', updatedInput: input }
+        : { behavior: 'deny', message: `O usuário negou a permissão para ${toolName}.` };
+    },
+    stderr: (data) => logd('claude-code:stderr', truncate(String(data), 1000)),
+  };
+  if (sameWorkspace) options.resume = claudeSessionId;
+
+  const q = query({ prompt, options });
+  activeClaudeQuery = q;
+  let full = '';
+  let streamed = false;
+  let finalUsage = null;
+  let generatedChars = 0;
+  let lastStatsAt = 0;
+  const toolInputs = new Map();
+  claudeUsageStats(null, started, sameWorkspace ? 'retomando sessão Claude Code' : 'iniciando Claude Code', true);
+  try {
+    for await (const msg of q) {
+      if (msg && msg.session_id) {
+        claudeSessionId = msg.session_id;
+        claudeSessionWorkspace = cfg.workspace;
+      }
+      if (msg.type === 'stream_event' && msg.event) {
+        const ev = msg.event;
+        if (ev.type === 'content_block_delta' && ev.delta) {
+          if (ev.delta.type === 'text_delta' && ev.delta.text) {
+            streamed = true;
+            full += ev.delta.text;
+            generatedChars += ev.delta.text.length;
+            broadcast('chat:token', ev.delta.text);
+            if (Date.now() - lastStatsAt > 250) {
+              lastStatsAt = Date.now();
+              claudeUsageStats(null, started, 'Claude Code respondendo', true, generatedChars);
+            }
+          } else if ((ev.delta.type === 'thinking_delta' || ev.delta.type === 'signature_delta') && ev.delta.thinking) {
+            broadcast('chat:thinking', ev.delta.thinking);
+          }
+        }
+        continue;
+      }
+      if (msg.type === 'assistant' && msg.message) {
+        for (const block of msg.message.content || []) {
+          if (block.type === 'text' && !streamed && block.text) {
+            full += block.text;
+            broadcast(msg.parent_tool_use_id ? 'chat:agent-token' : 'chat:token',
+              msg.parent_tool_use_id ? { agent: msg.subagent_type || 'Subagente Claude', t: block.text } : block.text);
+          } else if (block.type === 'tool_use') {
+            toolInputs.set(block.id, { name: block.name, input: block.input || {} });
+            broadcast('chat:tool', {
+              name: block.name,
+              args: slimVal(block.input || {}, 0),
+              agent: msg.parent_tool_use_id ? msg.subagent_type || 'Subagente Claude' : 'Claude Code',
+            });
+          }
+        }
+        continue;
+      }
+      if (msg.type === 'user' && msg.message) {
+        for (const block of Array.isArray(msg.message.content) ? msg.message.content : []) {
+          if (block.type !== 'tool_result') continue;
+          const meta = toolInputs.get(block.tool_use_id) || { name: 'tool', input: {} };
+          const result = msg.tool_use_result != null ? msg.tool_use_result : block.content;
+          broadcast('chat:tool-result', {
+            name: meta.name,
+            args: slimVal(meta.input, 0),
+            result: slimVal(result, 0),
+            agent: msg.parent_tool_use_id ? msg.subagent_type || 'Subagente Claude' : 'Claude Code',
+          });
+        }
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'init') {
+        broadcast('chat:note', { text: `✦ Claude Code ${msg.claude_code_version} · ${msg.model} · ${msg.permissionMode}` });
+      } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+        broadcast('chat:compacted', {
+          beforeTokens: msg.compact_metadata && msg.compact_metadata.pre_tokens,
+          kept: null,
+          engine: 'claude-code',
+        });
+      } else if (msg.type === 'system' && msg.subtype === 'task_progress') {
+        broadcast('chat:agent-token', { agent: msg.subagent_type || 'Claude Code', t: msg.description || '' });
+      } else if (msg.type === 'rate_limit_event' && msg.rate_limit_info && msg.rate_limit_info.status !== 'allowed') {
+        const pct = Math.round((msg.rate_limit_info.utilization || 0) * 100);
+        broadcast('chat:note', { text: `⚠ limite do Claude Max em ${pct}% (${msg.rate_limit_info.rateLimitType || 'janela atual'})` });
+      } else if (msg.type === 'result') {
+        finalUsage = msg.usage || null;
+        if ((!full || !full.trim()) && msg.subtype === 'success' && msg.result) {
+          full = msg.result;
+          broadcast('chat:token', msg.result);
+        }
+        if (msg.is_error) {
+          const detail = (msg.errors || []).join('\n') || msg.result || msg.stop_reason || 'Claude Code encerrou com erro';
+          if (/auth|401|credential/i.test(detail)) {
+            claudeSessionId = '';
+            throw new Error('A sessão do Claude Max expirou ou ficou inválida. Clique em “Entrar com Claude Max” nas Configurações para renovar o login.');
+          }
+          throw new Error(detail);
+        }
+      }
+    }
+  } finally {
+    if (activeClaudeQuery === q) activeClaudeQuery = null;
+    try {
+      q.close();
+    } catch (e) {
+      /* já encerrado */
+    }
+  }
+  claudeUsageStats(finalUsage, started, 'concluído', false, generatedChars);
+  if (!(chatAbort && chatAbort.signal.aborted) && steerQueue.length) {
+    const followup = steerQueue.splice(0).map((s) => claudePromptFromContent(s.content)).filter(Boolean).join('\n\n');
+    if (followup) {
+      broadcast('chat:newbubble');
+      const more = await runClaudeCodeAgent(cfg, followup);
+      if (more && more.trim()) full += (full.trim() ? '\n\n' : '') + more;
+    }
+  }
+  return full;
+}
+
 // ---- IPC: chat ----
 ipcMain.handle('chat:history', () => ({ messages: history, events: chatEvents, archive: chatArchive }));
 
@@ -7791,12 +8390,13 @@ ipcMain.on('chat:send', async (_e, payload) => {
   const raw = typeof payload === 'string' ? payload : payload.text || '';
   const images = (payload && payload.images) || [];
   const cfg = loadConfig();
+  const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
   let raw2 = raw;
   if (cfg.includeActiveTab !== false && activeEditorFile && !raw.includes('@' + activeEditorFile)) {
-    raw2 = raw + '\n@' + activeEditorFile;
+    raw2 = useClaudeCode ? raw + `\n\nArquivo ativo no editor: ${activeEditorFile}` : raw + '\n@' + activeEditorFile;
   }
-  const text = (await expandMentions(raw2)).text; // anexa @arquivos mencionados (workspace)
+  const text = useClaudeCode ? raw2 : (await expandMentions(raw2)).text;
   // chave de API e opcional (proxies locais podem nao exigir)
   // monta o conteudo do usuario (com imagens = visao, formato OpenAI)
   let content = text;
@@ -7840,9 +8440,13 @@ async function runChatTurn(cfg, popUserOnError) {
       window: initialLim.window,
       pct: Math.min(999, Math.round((initialCtx / initialLim.window) * 100)),
     });
-    await maybeSummarize(cfg); // garante o orçamento antes da primeira chamada do turno
-    // loop do agente com ferramentas — runAgent escolhe o adaptador (OpenAI-compatível ou Anthropic)
-    full = await runAgent(cfg);
+    if (cfg.architectMode === true && cfg.codeEngine === 'claude-code') {
+      full = await runClaudeCodeAgent(cfg);
+      broadcast('workspace:changed');
+    } else {
+      await maybeSummarize(cfg); // garante o orçamento antes da primeira chamada do turno
+      full = await runAgent(cfg);
+    }
     // EMOÇÃO PRECISA: a Lumi termina respostas com [emoção:x] OU a forma curta [feliz]
     // (ela adora encurtar) → anima o avatar; aceita PT/EN com/sem acento via normalizeEmotion
     let e2 = null;
@@ -7862,7 +8466,9 @@ async function runChatTurn(cfg, popUserOnError) {
     if (full && full.trim()) history.push({ role: 'assistant', content: full });
     if (pendingTurnTranscript) pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
     finalizeLastTurnContext(full);
-    await maybeSummarize(cfg); // gestao de contexto: resume o antigo se crescer demais
+    if (!(cfg.architectMode === true && cfg.codeEngine === 'claude-code')) {
+      await maybeSummarize(cfg); // Claude Code preserva e compacta a própria sessão
+    }
     saveHistory(); // memoria persistente
     broadcast('chat:done');
   } catch (err) {
@@ -7904,6 +8510,10 @@ ipcMain.on('chat:regen', async () => {
   if (agentRunning) return; // não regenera no meio de um turno
   if (!history.length || history[history.length - 1].role !== 'assistant') return;
   history.pop();
+  if (loadConfig().architectMode === true && loadConfig().codeEngine === 'claude-code') {
+    claudeSessionId = '';
+    claudeSessionWorkspace = '';
+  }
   lastTurnContext = null; // o transcript correspondia à resposta que acabou de ser descartada
   pendingTurnTranscript = null;
   // remove os eventos do turno descartado (as ferramentas/horário daquela resposta)
@@ -7914,6 +8524,19 @@ ipcMain.on('chat:regen', async () => {
 
 // Stop: aborta o turno atual (botão de parar)
 ipcMain.on('chat:stop', () => {
+  if (activeClaudeQuery) {
+    const q = activeClaudeQuery;
+    Promise.resolve()
+      .then(() => q.interrupt())
+      .catch(() => {})
+      .finally(() => {
+        try {
+          q.close();
+        } catch (e) {
+          /* ok */
+        }
+      });
+  }
   if (chatAbort) {
     try {
       chatAbort.abort();
