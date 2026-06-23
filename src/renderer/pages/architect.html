@@ -177,9 +177,11 @@
         verifyCommandEl.value = c.verifyCommand || '';
         loadMemory();
         window.api.claudeCodeStatus().then((s) => {
-          claudeStatusEl.textContent = s && s.loggedIn
+          claudeStatusEl.textContent = s && s.ready
             ? `✦ Claude Code conectado à conta ${s.subscriptionType || 'Claude.ai'}${s.email ? ' · ' + s.email : ''}.`
-            : 'Claude Code ainda não autenticado — entre pela janela de Configurações.';
+            : s && s.needsLogin
+              ? `Conta ${s.subscriptionType || 'Claude.ai'} detectada, mas a sessão compartilhada expirou — renove pela janela de Configurações.`
+              : 'Claude Code ainda não autenticado — entre pela janela de Configurações.';
         });
       });
 

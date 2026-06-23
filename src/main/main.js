@@ -8050,6 +8050,24 @@ function claudeCodeEnv() {
   delete env.CLAUDE_CODE_USE_FOUNDRY;
   return env;
 }
+function claudeSharedCredentialState() {
+  const fp = path.join(require('os').homedir(), '.claude', '.credentials.json');
+  try {
+    const j = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    const oauth = j && j.claudeAiOauth;
+    if (!oauth || !oauth.accessToken) return { found: false };
+    const expiresAt = Number(oauth.expiresAt) || 0;
+    return {
+      found: true,
+      expiresAt,
+      expired: !!expiresAt && expiresAt <= Date.now() + 30000,
+      renewable: !!oauth.refreshToken,
+      subscriptionType: oauth.subscriptionType || '',
+    };
+  } catch (e) {
+    return { found: false };
+  }
+}
 async function claudeSdk() {
   if (!claudeSdkPromise) claudeSdkPromise = import('@anthropic-ai/claude-agent-sdk');
   return claudeSdkPromise;
@@ -8057,6 +8075,7 @@ async function claudeSdk() {
 async function claudeCodeStatus() {
   const exe = claudeCodeExecutable();
   if (!fs.existsSync(exe)) return { installed: false, executable: exe };
+  const credential = claudeSharedCredentialState();
   try {
     const { stdout } = await execFileAsync(exe, ['auth', 'status'], {
       env: claudeCodeEnv(),
@@ -8064,13 +8083,21 @@ async function claudeCodeStatus() {
       windowsHide: true,
     });
     const info = JSON.parse(String(stdout || '{}'));
-    return { installed: true, executable: exe, ...info };
+    const ready = !!info.loggedIn && (!credential.found || !credential.expired || credential.renewable);
+    return {
+      installed: true,
+      executable: exe,
+      ...info,
+      credential,
+      ready,
+      needsLogin: !!info.loggedIn && !ready,
+    };
   } catch (e) {
     const raw = String((e && e.stdout) || (e && e.stderr) || (e && e.message) || e);
     try {
-      return { installed: true, executable: exe, ...JSON.parse(raw) };
+      return { installed: true, executable: exe, credential, ready: false, ...JSON.parse(raw) };
     } catch (_) {
-      return { installed: true, loggedIn: false, executable: exe, error: truncate(raw, 300) };
+      return { installed: true, loggedIn: false, ready: false, executable: exe, credential, error: truncate(raw, 300) };
     }
   }
 }
@@ -8144,7 +8171,13 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   if (!cfg.workspace) throw new Error('Defina um workspace antes de usar o Modo Claude Code.');
   const status = await claudeCodeStatus();
   if (!status.installed) throw new Error('Claude Code não está incluído nesta instalação da Lumi.');
-  if (!status.loggedIn) throw new Error('Claude Code não está autenticado. Abra Configurações → Modo Claude Code → Entrar com Claude Max.');
+  if (!status.ready) {
+    throw new Error(
+      status.needsLogin
+        ? 'A conta Claude Max foi detectada, mas a credencial compartilhada expirou. O VS Code usa o cofre privado dele; clique em “Renovar sessão Max” nas Configurações para disponibilizar uma sessão ao Claude Code externo.'
+        : 'Claude Code não está autenticado. Abra Configurações → Modo Claude Code → Entrar com Claude Max.'
+    );
+  }
 
   const { query } = await claudeSdk();
   const started = Date.now();

@@ -1495,13 +1495,20 @@ async function refreshClaudeCodeStatus() {
       claudeCodeStatusEl.style.color = '#ff9b9b';
       return;
     }
-    if (s.loggedIn) {
+    if (s.ready) {
       const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
       claudeCodeStatusEl.textContent = `conectado · ${plan}${s.email ? ' · ' + s.email : ''}`;
       claudeCodeStatusEl.style.color = '#82d9a5';
+      claudeCodeLoginBtn.textContent = 'Sessão Max pronta ✓';
+    } else if (s.needsLogin) {
+      const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
+      claudeCodeStatusEl.textContent = `conta ${plan} detectada · sessão compartilhada expirada`;
+      claudeCodeStatusEl.style.color = '#ffc978';
+      claudeCodeLoginBtn.textContent = 'Renovar sessão Max';
     } else {
       claudeCodeStatusEl.textContent = 'aguardando login';
       claudeCodeStatusEl.style.color = '#ffc978';
+      claudeCodeLoginBtn.textContent = 'Entrar com Claude Max';
     }
   } catch (e) {
     claudeCodeStatusEl.textContent = 'erro ao verificar';
