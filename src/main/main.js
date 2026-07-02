@@ -296,6 +296,9 @@ const DEFAULT_CONFIG = {
   selectedVrm: '', // personagem escolhido (nome do .vrm em assets/; vazio = o primeiro)
   autoVerify: false, // após editar arquivos, roda o comando de verificação e corrige se falhar
   verifyCommand: '', // comando de verificação (vazio = detecta da stack: npm test, pytest...)
+  preciousFiles: ['icone.png'], // GUARDRAILS: arquivos que a IA NUNCA apaga/sobrescreve
+  formatOnSave: false, // após a IA editar, roda o formatter do projeto (prettier/black/gofmt/rustfmt) se disponível
+  selfReview: false, // antes de finalizar um turno que mexeu em código, um agente revisa o diff
   imageModel: 'sourceful/riverflow-v2.5-fast:free', // modelo para gerar imagens (OpenRouter)
   imageBaseUrl: '', // provedor de imagem (vazio = usa o do chat)
   imageApiKey: '', // chave do provedor de imagem (vazio = usa a do chat)
@@ -2013,6 +2016,77 @@ function withTestFilter(base, runner, filter) {
   if (runner === 'go') return 'go test ./... -run ' + f;
   if (runner === 'cargo') return 'cargo test ' + f;
   return base + ' ' + f;
+}
+
+// ---- GUARDRAILS: comandos destrutivos/irreversíveis (bloqueados por padrão) ----
+const DANGEROUS_CMD = [
+  /\brm\s+-[rfRF]{1,2}\s+(?:\/(?:\s|$)|~|\$HOME|\*|\.\s|--no-preserve-root)/,
+  /\bsudo\s+rm\b/,
+  /\bgit\s+push\b[^\n]*(?:--force(?!-with-lease)|--mirror|\s-f\b)/,
+  /\bgit\s+reset\s+--hard\b/,
+  /\bgit\s+clean\s+-[a-z]*f[a-z]*d/,
+  /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:bash|sh|zsh)\b/,
+  /\bmkfs\b/,
+  /\bdd\b[^\n]*\bof=\/dev\//,
+  /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/,
+  /\b(?:shutdown|reboot|halt|poweroff)\b/,
+  /\bformat\s+[A-Za-z]:/i,
+  /\bRemove-Item\b[^\n]*-Recurse[^\n]*-Force[^\n]*[\\/](?:\*)?\s*$/i,
+  /\b(?:npm\s+publish|yarn\s+publish|cargo\s+publish|twine\s+upload|gem\s+push)\b/,
+];
+function dangerousCommand(cmd) {
+  const c = String(cmd || '');
+  for (const re of DANGEROUS_CMD) {
+    if (re.test(c)) return 'comando bloqueado pelos guardrails (destrutivo/irreversível). Se for REALMENTE necessário, peça ao usuário para rodar manualmente.';
+  }
+  return null;
+}
+// arquivo protegido (nunca apagar/sobrescrever) — bate por nome-base ou caminho relativo
+function isPreciousFile(cfg, abs) {
+  const list = Array.isArray(cfg && cfg.preciousFiles) ? cfg.preciousFiles : [];
+  if (!list.length || !abs) return false;
+  const ws = (cfg && cfg.workspace) || '';
+  const rel = ws && path.resolve(abs).startsWith(path.resolve(ws)) ? path.relative(ws, abs).replace(/\\/g, '/').toLowerCase() : '';
+  const base = path.basename(abs).toLowerCase();
+  return list.some((p) => {
+    const q = String(p || '').trim().toLowerCase().replace(/\\/g, '/');
+    return !!q && (q === base || q === rel || (rel && rel.endsWith('/' + q)));
+  });
+}
+
+// ---- FORMAT-ON-SAVE: roda o formatter do projeto no arquivo editado (best-effort, opt-in) ----
+async function formatFileIfEnabled(cfg, abs) {
+  if (!cfg || !cfg.formatOnSave || !abs || !cfg.workspace) return;
+  const ws = cfg.workspace;
+  const ext = path.extname(abs).toLowerCase();
+  const win = process.platform === 'win32';
+  const PRETTIER = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.jsonc', '.css', '.scss', '.less', '.html', '.vue', '.svelte', '.md', '.mdx', '.yaml', '.yml', '.graphql'];
+  let bin = null;
+  let args = null;
+  if (PRETTIER.includes(ext)) {
+    const local = path.join(ws, 'node_modules', '.bin', 'prettier' + (win ? '.cmd' : ''));
+    try {
+      if (!fs.existsSync(local)) return; // só formata se o PROJETO tem prettier (não força npx lento)
+    } catch (e) {
+      return;
+    }
+    bin = local;
+    args = ['--write', abs];
+  } else if (ext === '.py') {
+    bin = resolveExe('black');
+    args = ['-q', abs];
+  } else if (ext === '.go') {
+    bin = resolveExe('gofmt');
+    args = ['-w', abs];
+  } else if (ext === '.rs') {
+    bin = resolveExe('rustfmt');
+    args = [abs];
+  } else return;
+  try {
+    await execFileAsync(bin, args, { cwd: ws, timeout: 15000, windowsHide: true });
+  } catch (e) {
+    /* formatter ausente/erro → silencioso, não atrapalha a edição */
+  }
 }
 function normalizeEolText(s) {
   return String(s == null ? '' : s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -4074,6 +4148,8 @@ const TOOLS = {
     },
     run: async ({ path: p, old_text, new_text, all }) => {
       const abs = resolvePath(p);
+      const cfg = loadConfig();
+      if (isPreciousFile(cfg, abs)) return { error: 'arquivo protegido (guardrails): "' + p + '" não pode ser editado.', blocked: true };
       const oldC = readTextFileSmart(abs).text;
       const o = String(old_text);
       const nt = String(new_text);
@@ -4084,6 +4160,7 @@ const TOOLS = {
       if (!replaced.count) return { error: 'old_text NÃO encontrado no arquivo — releia com read_file e copie o trecho EXATAMENTE. Diferenças CRLF/LF já são toleradas automaticamente.' };
       const newC = replaced.text;
       fs.writeFileSync(abs, newC, 'utf8');
+      await formatFileIfEnabled(cfg, abs); // format-on-save (opt-in)
       broadcastDiff(p, oldC, newC);
       const out = { ok: true, replaced: replaced.count };
       if (replaced.mode === 'eol-normalized') out.note = 'substituição aplicada normalizando diferenças CRLF/LF e preservando o line ending dominante do arquivo';
@@ -4418,6 +4495,9 @@ const TOOLS = {
       if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
       const p = String(patch || '');
       if (!/^(---|\+\+\+|diff --git|@@)/m.test(p)) return { error: 'isso não parece um diff unificado (esperado linhas ---/+++/@@)' };
+      const files = [...p.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((mm) => mm[1].trim()).filter((f) => f && f !== '/dev/null');
+      const precious = files.find((f) => isPreciousFile(cfg, path.join(cfg.workspace, f)));
+      if (precious) return { error: 'arquivo protegido (guardrails) no patch: "' + precious + '" não pode ser alterado.', blocked: true };
       const tmp = path.join(app.getPath('userData'), 'lumi-patch-' + Date.now() + '.diff');
       try {
         fs.writeFileSync(tmp, p.endsWith('\n') ? p : p + '\n');
@@ -4427,7 +4507,7 @@ const TOOLS = {
           return { error: 'o patch não aplica limpo: ' + String((e && e.stderr) || (e && e.message) || e).slice(0, 300) + ' — releia os arquivos (a base pode ter mudado) e gere o diff de novo' };
         }
         await gitRun(cfg, ['apply', '--whitespace=nowarn', tmp]);
-        const files = [...p.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((mm) => mm[1].trim()).filter((f) => f && f !== '/dev/null');
+        for (const f of files) await formatFileIfEnabled(cfg, path.join(cfg.workspace, f)); // format-on-save (opt-in)
         broadcast('workspace:changed');
         return { ok: true, files, note: files.length + ' arquivo(s) alterados' };
       } catch (e) {
@@ -4455,6 +4535,8 @@ const TOOLS = {
     },
     run: async ({ path: p, content }) => {
       const fp = resolvePath(p);
+      const cfg = loadConfig();
+      if (isPreciousFile(cfg, fp)) return { error: 'arquivo protegido (guardrails): "' + p + '" não pode ser sobrescrito.', blocked: true };
       let oldC = '';
       try {
         oldC = fs.readFileSync(fp, 'utf8');
@@ -4463,6 +4545,7 @@ const TOOLS = {
       }
       const newC = content == null ? '' : String(content);
       fs.writeFileSync(fp, newC);
+      await formatFileIfEnabled(cfg, fp); // format-on-save (opt-in)
       broadcastDiff(p, oldC, newC);
       return { written: fp };
     },
@@ -4481,6 +4564,8 @@ const TOOLS = {
     },
     run: async ({ path: p, content }) => {
       const fp = resolvePath(p);
+      const cfg = loadConfig();
+      if (isPreciousFile(cfg, fp)) return { error: 'arquivo protegido (guardrails): "' + p + '" não pode ser alterado.', blocked: true };
       let oldC = '';
       try {
         oldC = fs.readFileSync(fp, 'utf8');
@@ -4489,6 +4574,7 @@ const TOOLS = {
       }
       const add = String(content || '');
       fs.appendFileSync(fp, add);
+      await formatFileIfEnabled(cfg, fp); // format-on-save (opt-in)
       broadcastDiff(p, oldC, oldC + add);
       return { ok: true };
     },
@@ -4515,8 +4601,10 @@ const TOOLS = {
       parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
     },
     run: async ({ path: p }) => {
-      fs.rmSync(resolvePath(p), { recursive: true, force: true });
-      return { deleted: resolvePath(p) };
+      const abs = resolvePath(p);
+      if (isPreciousFile(loadConfig(), abs)) return { error: 'arquivo protegido (guardrails): "' + p + '" está na lista de arquivos preciosos e não pode ser apagado.', blocked: true };
+      fs.rmSync(abs, { recursive: true, force: true });
+      return { deleted: abs };
     },
   },
   run_command: {
@@ -4528,8 +4616,11 @@ const TOOLS = {
       parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
     },
     run: async ({ command }) => {
+      const blocked = dangerousCommand(command);
+      if (blocked) return { error: blocked, blocked: true };
       try {
         const { stdout, stderr } = await execAsync(String(command), {
+          cwd: loadConfig().workspace || undefined, // roda na pasta da sessão ativa
           timeout: 20000,
           maxBuffer: 1024 * 1024,
           windowsHide: true,
