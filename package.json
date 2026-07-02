@@ -106,6 +106,7 @@
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@pixiv/three-vrm": "^3.4.0",
     "@pixiv/three-vrm-animation": "^3.5.3",
+    "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",

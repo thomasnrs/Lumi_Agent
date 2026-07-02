@@ -356,6 +356,154 @@
         color: #777;
         margin: 2px 0 0;
       }
+      #settings .claude-card {
+        position: relative;
+        isolation: isolate;
+        overflow: hidden;
+        margin: 18px 0 14px;
+        padding: 16px;
+        border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+        border-radius: 16px;
+        background:
+          radial-gradient(circle at 92% -18%, color-mix(in srgb, var(--accent) 22%, transparent) 0, transparent 42%),
+          linear-gradient(145deg, color-mix(in srgb, var(--surface) 94%, var(--accent) 6%), color-mix(in srgb, var(--surface-2) 88%, transparent));
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22), inset 0 1px rgba(255, 255, 255, 0.035);
+        transition: border-color 0.22s ease, box-shadow 0.22s ease;
+      }
+      #settings .claude-card::before {
+        content: '';
+        position: absolute;
+        z-index: -1;
+        inset: 0 auto 0 0;
+        width: 3px;
+        background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 20%, transparent));
+        opacity: 0.45;
+        transition: opacity 0.2s ease, width 0.2s ease;
+      }
+      #settings .claude-card.is-active {
+        border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28), 0 0 28px color-mix(in srgb, var(--accent) 8%, transparent);
+      }
+      #settings .claude-card.is-active::before { width: 4px; opacity: 0.95; }
+      #settings .claude-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+      #settings .claude-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      #settings .claude-mark {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--accent) 13%, var(--surface-2));
+        color: var(--accent);
+        font-size: 17px;
+        box-shadow: inset 0 1px rgba(255,255,255,.06);
+      }
+      #settings .claude-kicker {
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+      #settings .claude-title {
+        margin-top: 2px;
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+      #settings .claude-status {
+        flex: 0 1 auto;
+        max-width: 48%;
+        padding: 5px 9px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+        color: #9aa;
+        font-size: 10px;
+        line-height: 1.25;
+        text-align: right;
+      }
+      #settings .claude-status[data-state='ready'] {
+        border-color: color-mix(in srgb, #61d095 38%, transparent);
+        color: #82d9a5;
+        background: color-mix(in srgb, #61d095 8%, var(--surface-2));
+      }
+      #settings .claude-status[data-state='warning'] { border-color: color-mix(in srgb, #ffc978 35%, transparent); color: #ffc978; }
+      #settings .claude-status[data-state='error'] { border-color: color-mix(in srgb, #ff8e9e 35%, transparent); color: #ff9b9b; }
+      #settings .claude-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+      #settings .claude-field.wide { grid-column: 1 / -1; }
+      #settings .claude-field > label { margin-top: 0; }
+      #settings .claude-scope {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        margin: 13px 0 2px;
+        padding: 10px 11px;
+        border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--surface-2) 62%, transparent);
+        color: #9ba5b4;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      #settings .scope-dot {
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        margin-top: 4px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
+      }
+      #settings .claude-scope code { color: color-mix(in srgb, var(--text) 88%, var(--accent)); word-break: break-all; }
+      #settings .claude-actions { display: flex; gap: 8px; margin-top: 12px; }
+      #settings .claude-actions button {
+        min-height: 38px;
+        padding: 8px 13px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--surface) 88%, transparent);
+        color: var(--text);
+        cursor: pointer;
+        transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+      }
+      #settings .claude-actions button:first-child {
+        flex: 1;
+        border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+        background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+      }
+      #settings .claude-actions button:hover {
+        transform: translateY(-1px);
+        border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+        box-shadow: 0 7px 18px rgba(0,0,0,.18);
+      }
+      #settings .claude-actions button:active { transform: translateY(0); }
+      #settings .claude-footnote {
+        margin: 10px 1px 0;
+        color: #788291;
+        font-size: 10px;
+        line-height: 1.45;
+      }
+      @media (max-width: 640px) {
+        #settings .claude-head { flex-direction: column; }
+        #settings .claude-status { max-width: 100%; text-align: left; }
+        #settings .claude-grid { grid-template-columns: 1fr; }
+        #settings .claude-field.wide { grid-column: auto; }
+      }
       #settings .profiles {
         display: flex;
         gap: 6px;
@@ -514,35 +662,66 @@
           <label>Modelo reserva (fallback — usado se o principal falhar no meio do turno)</label>
           <input id="fallbackModel" type="text" placeholder="opcional, ex.: gpt-4o-mini" autocomplete="off" />
 
-          <div style="margin:14px 0 10px;padding:12px;border:1px solid color-mix(in srgb,var(--accent,#7aa2ff) 35%,var(--border));border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent,#7aa2ff) 10%,var(--surface,#24242f)),color-mix(in srgb,var(--surface,#24242f) 90%,transparent))">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-              <div style="font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--accent,#7aa2ff)">✦ Motor do Modo Código</div>
-              <span id="claudeCodeStatus" style="font-size:11px;color:#9aa">verificando…</span>
-            </div>
-            <select id="codeEngine">
-              <option value="native">Lumi nativa — usa o provedor configurado acima</option>
-              <option value="claude-code">Claude Code — usa minha assinatura Pro/Max</option>
+          <details class="task-model" style="margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px">
+            <summary style="cursor: pointer; font-size: 13px; color: var(--text)">⚡ Modelo para tarefas internas (compactação, commit, revisão…)</summary>
+            <p class="hint" style="margin: 9px 0">
+              Essas tarefas rodam por baixo dos panos e <b>consomem tokens</b>. Aponte pra um modelo <b>barato ou grátis</b>
+              (ex.: Groq 🆓, Gemini 🆓) pra não queimar sua API paga do chat resumindo texto. <b>Campos vazios = herdam do chat.</b>
+            </p>
+            <label>Tipo de API</label>
+            <select id="taskProvider">
+              <option value="">— mesmo do chat —</option>
+              <option value="openai">OpenAI-compatível (Groq, Gemini, OpenRouter, local…)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
             </select>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 10px;margin-top:9px">
-              <div>
-                <label style="margin-top:0">Modelo Claude Code</label>
+            <label>Base URL (vazio = herda do chat)</label>
+            <input id="taskBaseUrl" type="text" placeholder="ex.: https://api.groq.com/openai/v1" autocomplete="off" />
+            <label>Chave de API (vazio = usa a do chat)</label>
+            <input id="taskApiKey" type="password" placeholder="opcional" autocomplete="off" />
+            <label>Modelo (vazio = usa o do chat)</label>
+            <input id="taskModel" type="text" placeholder="ex.: llama-3.3-70b-versatile" autocomplete="off" />
+          </details>
+
+          <section id="claudeCodeCard" class="claude-card">
+            <div class="claude-head">
+              <div class="claude-brand">
+                <span class="claude-mark">✦</span>
+                <div>
+                  <div class="claude-kicker">Motor do Modo Código</div>
+                  <div class="claude-title">Claude Code dentro da Lumi</div>
+                </div>
+              </div>
+              <span id="claudeCodeStatus" class="claude-status" data-state="loading">verificando…</span>
+            </div>
+            <div class="claude-field wide">
+              <label>Motor ativo</label>
+              <select id="codeEngine">
+                <option value="native">Lumi nativa — usa o provedor configurado acima</option>
+                <option value="claude-code">Claude Code — usa minha assinatura Pro/Max</option>
+              </select>
+            </div>
+            <div class="claude-grid">
+              <div class="claude-field">
+                <label>Modelo</label>
                 <select id="claudeCodeModel">
                   <option value="sonnet">Sonnet — equilibrado</option>
                   <option value="opus">Opus — máxima capacidade</option>
                   <option value="haiku">Haiku — rápido</option>
                 </select>
               </div>
-              <div>
-                <label style="margin-top:0">Permissões</label>
+              <div class="claude-field">
+                <label>Permissões</label>
                 <select id="claudeCodePermissionMode">
                   <option value="default">Normal — perguntar quando necessário</option>
+                  <option value="auto">Auto — Claude decide aprovações simples</option>
                   <option value="acceptEdits">Aceitar edições automaticamente</option>
                   <option value="plan">Planejar — somente leitura</option>
                 </select>
               </div>
-              <div style="grid-column:1 / -1">
+              <div class="claude-field wide">
                 <label>Esforço de raciocínio</label>
                 <select id="claudeCodeEffort">
+                  <option value="low">Baixo — mais rápido e econômico</option>
                   <option value="medium">Médio</option>
                   <option value="high">Alto</option>
                   <option value="xhigh">Muito alto</option>
@@ -550,12 +729,20 @@
                 </select>
               </div>
             </div>
-            <div style="display:flex;gap:8px;margin-top:10px">
-              <button id="claudeCodeLogin" type="button" style="flex:1">Entrar / renovar sessão Max</button>
-              <button id="claudeCodeLogout" type="button" style="flex:0 0 auto">Sair</button>
+            <div class="claude-scope">
+              <span class="scope-dot"></span>
+              <span id="claudeCodeScope">Defina uma workspace. O Claude Code usa a pasta inteira como projeto; o arquivo aberto no editor é sinalizado no próximo prompt.</span>
             </div>
-            <p class="hint" style="margin-bottom:0">Ativo quando o Modo Arquiteto estiver ligado. O Claude Code mantém a própria sessão, lê <code>CLAUDE.md</code>, usa skills/MCP e não precisa de API key.</p>
-          </div>
+            <div class="claude-actions">
+              <button id="claudeCodeLogin" type="button">Entrar / renovar sessão Max</button>
+              <button id="claudeCodeLogout" type="button">Sair</button>
+            </div>
+            <div class="claude-field wide">
+              <label>Instruções extras</label>
+              <textarea id="claudeCodePrompt" rows="3" placeholder="Opcional: convenções pessoais, estilo de resposta, regras extras para projetos…"></textarea>
+            </div>
+            <p class="claude-footnote">A sessão é mantida por chat e workspace. O Claude Code lê <code>CLAUDE.md</code>, comandos, agentes, skills, plugins e MCPs disponíveis no projeto.</p>
+          </section>
 
           <label>Passos por turno (chamadas de ferramenta antes de parar)</label>
           <input id="maxSteps" type="number" min="4" max="200" step="1" placeholder="48" />

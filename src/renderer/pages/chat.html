@@ -467,6 +467,7 @@
         display: flex;
         gap: 8px;
         align-items: baseline;
+        white-space: pre-wrap;
       }
       .askcard .aq::before { content: '🙋‍♀️'; }
       .askcard .aopts { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -489,7 +490,8 @@
         opacity: 1;
       }
       .askcard .afree { display: flex; gap: 6px; margin-top: 8px; }
-      .askcard .afree input {
+      .askcard .afree input,
+      .askcard .afree textarea {
         flex: 1;
         min-width: 0;
         border: 1px solid var(--border);
@@ -500,6 +502,7 @@
         font-size: 12px;
         font-family: inherit;
         outline: none;
+        resize: vertical;
       }
       .askcard .afree button {
         border: none;
@@ -1214,6 +1217,9 @@
         text-align: right;
         min-height: 18px;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         transition: color .18s ease, opacity .18s ease;
       }
       #stats.live {
@@ -1274,7 +1280,7 @@
       <button id="btnNew" class="hbtn" title="Nova conversa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
     </div>
     <div id="chatList" hidden>
-      <div class="clhead"><span>Conversas</span><button id="clClose" class="hbtn">✕</button></div>
+      <div class="clhead"><span>Conversas</span><span style="flex:1"></span><button id="clNewWin" class="hbtn" title="Nova conversa em nova janela">↗＋</button><button id="clClose" class="hbtn">✕</button></div>
       <div id="clItems"></div>
     </div>
     <div id="quickPanel" hidden>
@@ -1371,8 +1377,8 @@
       let curRaw = '';
       let curThinking = null;
       let curThinkingDet = null;
-      const HISTORY_PAGE = 60;
-      const HISTORY_STEP = 45;
+      const HISTORY_PAGE = 120; // janela de render (mais fôlego pro papo — antes 60)
+      const HISTORY_STEP = 60;
       let historyRows = [];
       let historyPageStart = 0;
       let historyLastPlan = null;
@@ -1555,24 +1561,11 @@
         if (autoScroll) msgs.scrollTop = msgs.scrollHeight;
         else toBottomBtn.hidden = false; // chegou conteúdo novo enquanto você lia acima
       }
-      let historyShiftTimer = null;
+      // Só detecta "estou no fundo?" pro stick durante streaming. NÃO navega páginas sozinho:
+      // paginar (anteriores/recentes) é só clicando nos botões — antes um timer clicava ao bater na borda.
       msgs.addEventListener('scroll', () => {
         autoScroll = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
         if (autoScroll) toBottomBtn.hidden = true;
-        if (historyShiftTimer) return;
-        const older = msgs.querySelector('.history-pager.older');
-        const newer = msgs.querySelector('.history-pager.newer');
-        const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 8;
-        const canScroll = msgs.scrollHeight > msgs.clientHeight + 20;
-        if (canScroll && ((older && msgs.scrollTop < 8) || (newer && nearBottom))) {
-          historyShiftTimer = setTimeout(() => {
-            historyShiftTimer = null;
-            const target = msgs.scrollTop < 8
-              ? msgs.querySelector('.history-pager.older')
-              : msgs.querySelector('.history-pager.newer');
-            if (target) target.click();
-          }, 80);
-        }
       });
 
       // ---------- grupo de atividade: ações consecutivas viram um card colapsável ----------
@@ -2068,10 +2061,11 @@
         msgs.appendChild(b);
       }
 
-      function showHistoryPage(start, stickBottom) {
-        const maxStart = Math.max(0, historyRows.length - HISTORY_PAGE);
+      function showHistoryPage(start, stickBottom, pageLen) {
+        const win = Math.max(HISTORY_PAGE, Number(pageLen) || HISTORY_PAGE);
+        const maxStart = Math.max(0, historyRows.length - win);
         historyPageStart = Math.max(0, Math.min(Number(start) || 0, maxStart));
-        const end = Math.min(historyRows.length, historyPageStart + HISTORY_PAGE);
+        const end = Math.min(historyRows.length, historyPageStart + win);
         msgs.innerHTML = '';
         typingEl = null;
         curAct = null;
@@ -2130,7 +2124,16 @@
           });
           if (i < list.length) historyRows.push({ kind: 'message', message: list[i], ts: times.get(i) });
         }
-        showHistoryPage(Math.max(0, historyRows.length - HISTORY_PAGE), true);
+        // janela recente: começa em no MÍNIMO o penúltimo prompt do usuário, garantindo
+        // os 2 últimos prompts INTEIROS na tela (mesmo que tenham muitas tool calls)
+        let start = Math.max(0, historyRows.length - HISTORY_PAGE);
+        const userIdx = [];
+        for (let i = 0; i < historyRows.length; i++) {
+          const r = historyRows[i];
+          if (r.kind === 'message' && r.message && r.message.role === 'user') userIdx.push(i);
+        }
+        if (userIdx.length >= 2) start = Math.min(start, userIdx[userIdx.length - 2]);
+        showHistoryPage(start, true, historyRows.length - start);
       }
 
       function refreshTitle() {
@@ -2157,6 +2160,15 @@
           t.appendChild(tm);
           t.addEventListener('click', () => {
             if (!c.current) window.api.chatsSwitch(c.id);
+            chatListEl.hidden = true;
+          });
+          const pop = document.createElement('button');
+          pop.className = 'ca';
+          pop.title = 'Abrir em nova janela';
+          pop.textContent = '↗';
+          pop.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (window.api.openChatWindowFor) window.api.openChatWindowFor(c.id);
             chatListEl.hidden = true;
           });
           const ren = document.createElement('button');
@@ -2204,6 +2216,7 @@
             }
           });
           row.appendChild(t);
+          row.appendChild(pop);
           row.appendChild(ren);
           row.appendChild(del);
           clItems.appendChild(row);
@@ -2221,13 +2234,19 @@
       }
       btnList.addEventListener('click', () => (chatListEl.hidden ? openList() : (chatListEl.hidden = true)));
       document.getElementById('clClose').addEventListener('click', () => (chatListEl.hidden = true));
+      document.getElementById('clNewWin').addEventListener('click', () => {
+        if (window.api.openChatWindow) window.api.openChatWindow(); // nova conversa em janela separada
+        chatListEl.hidden = true;
+      });
       btnNew.addEventListener('click', () => window.api.chatsNew());
       window.api.onChatReload(() => {
         chatListEl.hidden = true;
         loadHistoryIntoUI();
       });
 
-      loadHistoryIntoUI(); // render inicial do chat atual + título
+      // multi-janela: prende esta janela à conversa do ?session (vazio = segue a ativa) ANTES de buscar o histórico
+      const SESSION = new URLSearchParams(location.search).get('session') || '';
+      (window.api.chatBind ? window.api.chatBind(SESSION) : Promise.resolve()).then(loadHistoryIntoUI);
 
       // ---------- ajustes rápidos (modelo, preset, permissões) ----------
       const PERMS = [
@@ -2618,6 +2637,12 @@
       });
       const statsEl = document.getElementById('stats');
       const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : '' + n);
+      const fmtPct = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(Number(n) % 1 ? 1 : 0) + '%' : '');
+      const fmtWhen = (v) => {
+        if (!v) return '';
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      };
       // rodapé = stats do turno + gastômetro do dia (os dois chegam por canais separados)
       let statsTxt = '';
       let spendTxt = '';
@@ -2630,10 +2655,18 @@
       window.api.onStats((s) => {
         const aprox = s.exact ? '' : '~';
         const capacity = s.window ? `/${fmtK(s.window)}${s.pct != null ? ` (${s.pct}%)` : ''}` : '';
-        const phase = s.live && s.phase ? `${s.phase}  ·  ` : '';
-        statsTxt = `${phase}⚡ ${s.tps} tok/s  ·  🧠 ${aprox}${fmtK(s.ctx)}${capacity}  ·  saída ${aprox}${fmtK(s.out)} tok`;
+        const phase = s.live && s.phase ? s.phase : '';
+        const usage = s.engine === 'claude-code' && s.usagePct != null ? `uso: ${fmtPct(s.usagePct)}` : '';
+        statsTxt = [phase.trim(), usage, `⚡ ${s.tps} tok/s`, `🧠 ${aprox}${fmtK(s.ctx)}${capacity}`, `saída ${aprox}${fmtK(s.out)} tok`]
+          .filter(Boolean)
+          .join('  ·  ');
+        const usageTitle =
+          usage
+            ? `Claude Code usage: ${fmtPct(s.usagePct)}${s.usageLabel ? ' · janela ' + s.usageLabel : ''}${s.usageResetsAt ? ' · reseta em ' + fmtWhen(s.usageResetsAt) : ''}\n`
+            : '';
         statsTitle =
           `${s.live ? 'Atualizando ao vivo' : 'Última medição'} · ${s.phase || 'resposta'}\n` +
+          usageTitle +
           `Contexto: ${s.ctx || 0}${s.window ? ` de ${s.window} tokens (${s.pct || 0}%)` : ''}\n` +
           `Saída: ${s.out || 0} tokens${s.exact ? ' · valores informados pelo provedor' : ' · estimativa local'}`;
         statsEl.classList.toggle('live', !!s.live);
@@ -2872,8 +2905,8 @@
         if (live) {
           const free = document.createElement('div');
           free.className = 'afree';
-          const inp = document.createElement('input');
-          inp.type = 'text';
+          const inp = document.createElement('textarea');
+          inp.rows = 2;
           inp.placeholder = 'ou responda com suas palavras...';
           const go = document.createElement('button');
           go.textContent = '➤';
@@ -2882,7 +2915,10 @@
           };
           go.addEventListener('click', sendFree);
           inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') sendFree();
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              sendFree();
+            }
           });
           free.appendChild(inp);
           free.appendChild(go);
@@ -3349,17 +3385,38 @@
         { cmd: 'imagem', desc: 'Gerar imagem: /imagem <descrição>', arg: true, run: (a) => window.api.sendChat('Gere uma imagem: ' + a, []) },
         { cmd: 'buscar', desc: 'Pesquisar na web: /buscar <consulta>', arg: true, run: (a) => window.api.sendChat('Pesquise na web e me responda: ' + a, []) },
         { cmd: 'tela', desc: 'Ver minha tela agora', run: () => window.api.sendChat('Veja minha tela e me diga o que está acontecendo.', []) },
+        { cmd: 'claude', desc: 'Mostrar comandos, agentes e skills do Claude Code', run: () => showClaudeResources() },
         { cmd: 'ajuda', desc: 'Mostrar os comandos', run: () => showHelp() },
       ];
+      let claudeCommands = [];
+      let claudeAgents = [];
+      let claudeSkills = [];
+      function allCommands() {
+        return usingClaudeCode ? COMMANDS.concat(claudeCommands) : COMMANDS;
+      }
+      function showClaudeResources() {
+        if (!usingClaudeCode) {
+          note('O Modo Claude Code não está ativo neste chat.');
+          return;
+        }
+        const commands = claudeCommands.length ? claudeCommands.map((c) => '/' + c.cmd).join('  ·  ') : '(a sessão ainda não publicou comandos)';
+        const agents = claudeAgents.length ? claudeAgents.map((a) => a.name).join(', ') : '(nenhum agente descoberto)';
+        const skills = claudeSkills.length ? claudeSkills.join(', ') : '(nenhuma skill descoberta)';
+        note('✦ Comandos Claude Code: ' + commands + '\nAgentes: ' + agents + '\nSkills: ' + skills);
+      }
       function showHelp() {
-        note('Comandos: ' + COMMANDS.map((c) => '/' + c.cmd).join('  ·  '));
+        note('Comandos: ' + allCommands().map((c) => '/' + c.cmd).join('  ·  '));
       }
       function drawSlash() {
         slashPop.innerHTML = '';
         sItems.forEach((c, i) => {
           const row = document.createElement('div');
           row.className = 'mrow' + (i === sIdx ? ' sel' : '');
-          row.innerHTML = '/' + c.cmd + '<span class="mdesc">' + c.desc + '</span>';
+          row.append('/' + c.cmd);
+          const desc = document.createElement('span');
+          desc.className = 'mdesc';
+          desc.textContent = (c.claude ? '✦ ' : '') + c.desc + (c.argumentHint ? ' ' + c.argumentHint : '');
+          row.appendChild(desc);
           row.addEventListener('mousedown', (e) => {
             e.preventDefault();
             pickSlash(i);
@@ -3375,13 +3432,13 @@
         if (sel) sel.scrollIntoView({ block: 'nearest' });
       }
       function updateSlash() {
-        const m = /^\/(\w*)$/.exec(input.value);
+        const m = /^\/([\w:-]*)$/.exec(input.value);
         if (!m) {
           slashPop.hidden = true;
           return;
         }
         const q = m[1].toLowerCase();
-        sItems = COMMANDS.filter((c) => c.cmd.startsWith(q) || c.desc.toLowerCase().includes(q));
+        sItems = allCommands().filter((c) => c.cmd.startsWith(q) || c.desc.toLowerCase().includes(q));
         if (!sItems.length) {
           slashPop.hidden = true;
           return;
@@ -3393,7 +3450,13 @@
         const c = sItems[i];
         if (!c) return;
         slashPop.hidden = true;
-        if (c.arg) {
+        if (c.claude) {
+          input.value = '/' + c.cmd + (c.argumentHint ? ' ' : '');
+          const p = input.value.length;
+          input.setSelectionRange(p, p);
+          input.focus();
+          autoGrowInput();
+        } else if (c.arg) {
           input.value = '/' + c.cmd + ' ';
           const p = input.value.length;
           input.setSelectionRange(p, p);
@@ -3419,6 +3482,30 @@
         c.run(args);
         return true;
       }
+      function applyClaudeCapabilities(cap) {
+        if (!cap) return;
+        claudeCommands = [];
+        const seen = new Set(COMMANDS.map((c) => c.cmd));
+        (cap.commands || []).forEach((c) => {
+          const names = [c.name].concat(c.aliases || []);
+          names.forEach((name) => {
+            const cmd = String(name || '').replace(/^\/+/, '').toLowerCase();
+            if (!cmd || seen.has(cmd)) return;
+            seen.add(cmd);
+            claudeCommands.push({
+              cmd,
+              desc: c.description || 'Comando do Claude Code',
+              argumentHint: c.argumentHint || '',
+              claude: true,
+            });
+          });
+        });
+        claudeAgents = cap.agents || [];
+        claudeSkills = cap.skills || [];
+        if (!slashPop.hidden) updateSlash();
+      }
+      if (window.api.claudeCodeCapabilities) window.api.claudeCodeCapabilities().then(applyClaudeCapabilities);
+      if (window.api.onClaudeCapabilities) window.api.onClaudeCapabilities(applyClaudeCapabilities);
     </script>
   <script>
       window.__lumiThemed = true;

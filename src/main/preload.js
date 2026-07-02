@@ -137,7 +137,9 @@ contextBridge.exposeInMainWorld('api', {
   factsSet: (index, fact) => ipcRenderer.invoke('facts:set', { index, fact }),
   factsDelete: (index) => ipcRenderer.invoke('facts:delete', index),
   openMemoryPage: () => ipcRenderer.send('memory:open'),
-  openChatWindow: () => ipcRenderer.send('chat:open-window'),
+  openChatWindow: () => ipcRenderer.send('chat:open-window'), // nova conversa em nova janela
+  openChatWindowFor: (id) => ipcRenderer.send('chats:open-window', id), // abre uma conversa existente em nova janela
+  chatBind: (session) => ipcRenderer.invoke('chat:bind', session), // prende esta janela a uma conversa ('' = segue a ativa)
 
   // assistente de primeiro uso
   wizardVrms: () => ipcRenderer.invoke('wizard:vrms'),
@@ -195,6 +197,7 @@ contextBridge.exposeInMainWorld('api', {
   claudeCodeStatus: () => ipcRenderer.invoke('claude-code:status'),
   claudeCodeLogin: () => ipcRenderer.invoke('claude-code:login'),
   claudeCodeLogout: () => ipcRenderer.invoke('claude-code:logout'),
+  claudeCodeCapabilities: () => ipcRenderer.invoke('claude-code:capabilities'),
 
   // MCP
   mcpConnect: () => ipcRenderer.invoke('mcp:connect'),
@@ -251,6 +254,7 @@ contextBridge.exposeInMainWorld('api', {
   onError: (cb) => ipcRenderer.on('chat:error', (_e, m) => cb(m)),
   onAgent: (cb) => ipcRenderer.on('chat:agent', (_e, info) => cb(info)),
   onAgentToken: (cb) => ipcRenderer.on('chat:agent-token', (_e, d) => cb(d)),
+  onClaudeCapabilities: (cb) => ipcRenderer.on('chat:claude-capabilities', (_e, d) => cb(d)),
   onTool: (cb) => ipcRenderer.on('chat:tool', (_e, info) => cb(info)),
   onNote: (cb) => ipcRenderer.on('chat:note', (_e, d) => cb(d)),
   onPlan: (cb) => ipcRenderer.on('chat:plan', (_e, items) => cb(items)),

@@ -1467,14 +1467,22 @@
         tree.classList.remove('drop-root');
         const destDir = destDirFromTarget(e.target);
         let ok = 0;
+        const imported = [];
         for (const f of e.dataTransfer.files) {
           const p = f.path || (window.api.pathForFile && window.api.pathForFile(f));
           if (!p) continue;
           const r = await window.api.importFileToWorkspace(p, destDir);
           if (r && r.error) toast('⚠ ' + r.error, false);
-          else ok++;
+          else {
+            ok++;
+            if (r.path) imported.push(r.path);
+          }
         }
-        if (ok) toast('✓ ' + ok + ' arquivo(s) ' + (remoteActive ? 'enviado(s) pro servidor' : 'copiado(s)') + (destDir ? ' → ' + destDir : ''));
+        if (ok) {
+          await loadTree();
+          if (imported.length === 1) await openFile(imported[0]);
+          toast('✓ ' + ok + ' arquivo(s) ' + (remoteActive ? 'enviado(s) pro servidor' : 'copiado(s)') + (destDir ? ' → ' + destDir : ''));
+        }
       });
 
       // clique direito no vazio da árvore = criar na raiz

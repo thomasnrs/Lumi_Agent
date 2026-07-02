@@ -158,9 +158,25 @@ function logChatEvent(channel, payload) {
   }
 }
 
+// ---- multi-janela de chat ----
+// winChat: webContents.id -> chatId FIXO (janela destacada de uma conversa), ou '*' / ausente = segue a
+// conversa ATIVA (janela principal e chat embutido no editor). Assim eventos chat:* de uma conversa
+// não vazam pra janelas destacadas de OUTRA conversa.
+const winChat = new Map();
+function senderChatId(e) {
+  const v = winChat.get(e.sender.id);
+  return v && v !== '*' ? v : currentChatId;
+}
+
 function sendToAll(channel, ...args) {
+  const chatScoped = typeof channel === 'string' && channel.indexOf('chat:') === 0;
   BrowserWindow.getAllWindows().forEach((w) => {
     if (w.isDestroyed()) return;
+    // chat:* → pula janelas PRESAS a outra conversa (avatar e seguidoras '*' sempre recebem)
+    if (chatScoped && !(win && w === win)) {
+      const v = winChat.get(w.webContents.id);
+      if (v && v !== '*' && v !== currentChatId) return;
+    }
     try {
       const frames = w.webContents.mainFrame.framesInSubtree; // frame principal + todos os iframes
       for (const f of frames) {
@@ -257,8 +273,9 @@ const DEFAULT_CONFIG = {
   architectMode: false, // modo arquiteto (codigo) com memoria por workspace
   codeEngine: 'native', // 'native' | 'claude-code' — no Modo Arquiteto, Claude Code pode assumir o chat
   claudeCodeModel: 'sonnet', // alias do Claude Code: sonnet | opus | haiku (ou id completo)
-  claudeCodePermissionMode: 'default', // default | acceptEdits | plan
+  claudeCodePermissionMode: 'default', // default | auto | acceptEdits | plan
   claudeCodeEffort: 'high', // low | medium | high | xhigh | max
+  claudeCodePrompt: '', // instruções extras do usuário anexadas ao prompt Lumi + Claude Code
   workspace: '', // pasta do projeto atual
   selectedVrm: '', // personagem escolhido (nome do .vrm em assets/; vazio = o primeiro)
   autoVerify: false, // após editar arquivos, roda o comando de verificação e corrige se falhar
@@ -271,6 +288,13 @@ const DEFAULT_CONFIG = {
   searchApiKey: '',
   searxUrl: '', // URL do SearXNG próprio (opcional — busca ilimitada sem chave)
   fallbackModel: '', // modelo reserva: se o principal falhar no meio do turno, continua neste
+  // modelo para TAREFAS INTERNAS (compactação/resumo, mensagem de commit, revisão de diff, PR,
+  // SQL, fala proativa) — aponte pra um modelo barato/grátis pra não queimar a API paga do chat.
+  // Campos vazios = herdam do chat (mesmo comportamento de image*/tts*).
+  taskProvider: '', // '' = mesmo do chat | openai | anthropic
+  taskBaseUrl: '',
+  taskApiKey: '',
+  taskModel: '', // '' = usa o modelo do chat
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
   watchServer: false, // opt-in: vigia o servidor remoto montado (disco cheio / serviço caído) e avisa
@@ -458,12 +482,7 @@ function convertToAnthropic(messages) {
       if (typeof m.content === 'string' && m.content.trim()) blocks.push({ type: 'text', text: m.content });
       if (Array.isArray(m.tool_calls)) {
         for (const tc of m.tool_calls) {
-          let input = {};
-          try {
-            input = JSON.parse((tc.function && tc.function.arguments) || '{}');
-          } catch (e) {
-            /* argumentos compactados no histórico viram {} — é só contexto passado */
-          }
+          const input = parseToolArguments(tc.function && tc.function.arguments);
           blocks.push({ type: 'tool_use', id: tc.id, name: (tc.function && tc.function.name) || 'tool', input });
         }
       }
@@ -757,7 +776,7 @@ function convertToResponses(messages) {
           type: 'function_call',
           call_id: tc.id,
           name: (tc.function && tc.function.name) || 'tool',
-          arguments: (tc.function && tc.function.arguments) || '{}',
+          arguments: safeToolArguments(tc.function && tc.function.arguments),
         });
       }
       continue;
@@ -896,12 +915,7 @@ function convertToGemini(messages) {
     }
     if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
       for (const tc of m.tool_calls) {
-        let args = {};
-        try {
-          args = JSON.parse((tc.function && tc.function.arguments) || '{}');
-        } catch (e) {
-          /* argumentos antigos compactados */
-        }
+        const args = parseToolArguments(tc.function && tc.function.arguments);
         const name = (tc.function && tc.function.name) || 'tool';
         toolNames.set(tc.id, name);
         parts.push({ functionCall: { id: tc.id, name, args } });
@@ -1108,6 +1122,40 @@ function contextLimits(cfg) {
 function promptTokenEstimate(messages, tools) {
   return estimateTokens(messages) + estimateTokens(tools || []);
 }
+function safeToolArguments(args) {
+  if (args && typeof args === 'object' && !Array.isArray(args)) return JSON.stringify(args);
+  const raw = args == null ? '{}' : String(args);
+  if (!raw.trim()) return '{}';
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return JSON.stringify(parsed);
+    return JSON.stringify({ value: parsed });
+  } catch (e) {
+    return JSON.stringify({ _invalid_json_arguments: true, raw: truncate(raw, 2000) });
+  }
+}
+function parseToolArguments(args) {
+  try {
+    const parsed = JSON.parse(safeToolArguments(args));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+function sanitizeToolCallsForProvider(toolCalls) {
+  return (Array.isArray(toolCalls) ? toolCalls : []).map((tc, idx) => {
+    const fn = (tc && tc.function) || {};
+    const name = fn.name || tc.name || 'tool';
+    return {
+      id: (tc && tc.id) || 'call_' + Date.now() + '_' + idx,
+      type: 'function',
+      function: {
+        name,
+        arguments: safeToolArguments(fn.arguments != null ? fn.arguments : tc.arguments),
+      },
+    };
+  });
+}
 function liveStatsTracker(cfg, messages, tools, handlers) {
   const started = Date.now();
   const lim = contextLimits(cfg);
@@ -1170,6 +1218,9 @@ function compactTurnMessages(messages, cfg, tools) {
       m.content = m.content.slice(0, 500) + ' …[resultado antigo compactado; releia ou rode a ferramenta se precisar]';
     } else if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
       m.tool_calls.forEach((tc) => {
+        if (tc.function) {
+          tc.function.arguments = safeToolArguments(tc.function.arguments);
+        }
         if (tc.function && tc.function.arguments && tc.function.arguments.length > 900) {
           tc.function.arguments = JSON.stringify({ _compactado: true, preview: tc.function.arguments.slice(0, 600) });
         }
@@ -1186,6 +1237,9 @@ function compactTurnMessages(messages, cfg, tools) {
         if (typeof m.content === 'string' && m.content.length > 1000) m.content = m.content.slice(0, 700) + ' …[narração antiga compactada]';
         if (Array.isArray(m.tool_calls)) {
           m.tool_calls.forEach((tc) => {
+            if (tc.function) {
+              tc.function.arguments = safeToolArguments(tc.function.arguments);
+            }
             if (tc.function && tc.function.arguments && tc.function.arguments.length > 300)
               tc.function.arguments = JSON.stringify({ _compactado: true, preview: tc.function.arguments.slice(0, 180) });
           });
@@ -1730,6 +1784,327 @@ async function checkPermission(category, summary) {
 }
 
 const truncate = (s, n) => (s && s.length > n ? s.slice(0, n) + '…[cortado]' : s || '');
+
+// Leitura de texto "esperta": a maioria dos projetos é UTF-8, mas documentos
+// vindos do Windows/Office/legado aparecem bastante em Windows-1252 (Latin-1
+// com aspas curvas, ç/ã etc.). Forçar readFile(..., 'utf8') nesses arquivos
+// gera �/mojibake e a IA acha que o documento está quebrado. Aqui tentamos
+// UTF-8 estrito primeiro e só caímos para Windows-1252 quando o buffer não é
+// UTF-8 válido. Escritas novas continuam em UTF-8.
+function decodeTextBuffer(buf) {
+  if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf || '');
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    return { text: buf.subarray(3).toString('utf8'), encoding: 'utf-8-bom' };
+  }
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return { text: buf.subarray(2).toString('utf16le'), encoding: 'utf-16le' };
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    try {
+      return { text: new TextDecoder('utf-16be').decode(buf.subarray(2)), encoding: 'utf-16be' };
+    } catch (e) {
+      // fallback manual simples para UTF-16BE caso o runtime não exponha o label
+      const swapped = Buffer.allocUnsafe(buf.length - 2);
+      for (let i = 2; i + 1 < buf.length; i += 2) {
+        swapped[i - 2] = buf[i + 1];
+        swapped[i - 1] = buf[i];
+      }
+      return { text: swapped.toString('utf16le'), encoding: 'utf-16be' };
+    }
+  }
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(buf), encoding: 'utf-8' };
+  } catch (e) {
+    try {
+      return { text: new TextDecoder('windows-1252').decode(buf), encoding: 'windows-1252' };
+    } catch (e2) {
+      return { text: buf.toString('latin1'), encoding: 'latin1' };
+    }
+  }
+}
+function readTextFileSmart(fp) {
+  return decodeTextBuffer(fs.readFileSync(fp));
+}
+async function readTextFileSmartAsync(fp) {
+  return decodeTextBuffer(await fs.promises.readFile(fp));
+}
+function normalizeEolText(s) {
+  return String(s == null ? '' : s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+function dominantEol(s) {
+  const crlf = (String(s).match(/\r\n/g) || []).length;
+  const lf = (String(s).replace(/\r\n/g, '').match(/\n/g) || []).length;
+  return crlf > lf ? '\r\n' : '\n';
+}
+function adaptEolText(s, eol) {
+  return normalizeEolText(s).replace(/\n/g, eol || '\n');
+}
+function normalizeWithIndexMap(s) {
+  const text = String(s || '');
+  let normalized = '';
+  const starts = [];
+  const ends = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\r') {
+      normalized += '\n';
+      starts.push(i);
+      if (text[i + 1] === '\n') {
+        ends.push(i + 2);
+        i++;
+      } else {
+        ends.push(i + 1);
+      }
+    } else {
+      normalized += text[i];
+      starts.push(i);
+      ends.push(i + 1);
+    }
+  }
+  return { normalized, starts, ends };
+}
+function replaceTextSmart(original, oldText, newText, all) {
+  const oldRaw = String(oldText);
+  const replacement = adaptEolText(newText, dominantEol(original));
+  const exactCount = original.split(oldRaw).length - 1;
+  if (exactCount) {
+    if (exactCount > 1 && !all) return { error: `old_text aparece ${exactCount} vezes — inclua mais linhas de contexto para ficar único, ou passe all=true para trocar todas` };
+    const idx = original.indexOf(oldRaw);
+    return {
+      count: all ? exactCount : 1,
+      mode: 'exact',
+      text: all ? original.split(oldRaw).join(replacement) : original.slice(0, idx) + replacement + original.slice(idx + oldRaw.length),
+    };
+  }
+
+  const needle = normalizeEolText(oldRaw);
+  if (!needle) return { count: 0 };
+  const mapped = normalizeWithIndexMap(original);
+  const matches = [];
+  let pos = mapped.normalized.indexOf(needle);
+  while (pos >= 0) {
+    const endNorm = pos + needle.length - 1;
+    matches.push({ start: mapped.starts[pos], end: mapped.ends[endNorm] });
+    pos = mapped.normalized.indexOf(needle, pos + Math.max(1, needle.length));
+  }
+  if (!matches.length) return { count: 0 };
+  if (matches.length > 1 && !all) return { error: `old_text aparece ${matches.length} vezes ao normalizar CRLF/LF — inclua mais linhas de contexto para ficar único, ou passe all=true para trocar todas` };
+
+  const use = all ? matches : matches.slice(0, 1);
+  let out = '';
+  let cursor = 0;
+  for (const m of use) {
+    out += original.slice(cursor, m.start) + replacement;
+    cursor = m.end;
+  }
+  out += original.slice(cursor);
+  return { count: use.length, mode: 'eol-normalized', text: out };
+}
+function rgIgnoreArgs() {
+  const names = new Set([...(typeof WS_HEAVY !== 'undefined' ? WS_HEAVY : []), '.git', '.lumi-*']);
+  const out = [];
+  for (const n of names) out.push('--glob', '!**/' + n + '/**', '--glob', '!' + n + '/**');
+  out.push('--glob', '!**/.lumi-*/**');
+  return out;
+}
+function globEscape(s) {
+  return String(s || '').replace(/[\\[\]{}()*?!]/g, (m) => '\\' + m);
+}
+let rgExeCache = undefined;
+function rgAvailable() {
+  if (rgExeCache !== undefined) return rgExeCache;
+  const check = (exe) => {
+    try {
+      require('child_process').execFileSync(exe, ['--version'], { windowsHide: true, timeout: 1500, stdio: 'ignore' });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+  rgExeCache = null;
+  // 1) rg no PATH
+  const onPath = resolveExe('rg');
+  if (check(onPath)) {
+    rgExeCache = onPath;
+    return rgExeCache;
+  }
+  // 2) ripgrep empacotado via @vscode/ripgrep (se a dependência existir) — ativa sozinho
+  try {
+    const bundled = require('@vscode/ripgrep').rgPath;
+    if (bundled && check(bundled)) rgExeCache = bundled;
+  } catch (e) {
+    /* pacote ausente: segue sem rg (usa fallback JS async) */
+  }
+  return rgExeCache;
+}
+function runRgLines(args, opts) {
+  return new Promise((resolve) => {
+    const o = opts || {};
+    const exe = rgAvailable();
+    if (!exe) return resolve({ ok: false, error: 'rg indisponível' });
+    const child = spawn(exe, args, { cwd: o.cwd || undefined, windowsHide: true });
+    let buf = '';
+    let stderr = '';
+    let killed = false;
+    const stop = () => {
+      if (killed) return;
+      killed = true;
+      try {
+        child.kill();
+      } catch (e) {
+        /* processo já morreu */
+      }
+    };
+    const timer = setTimeout(stop, Math.max(1000, Math.min(o.timeoutMs || 4500, 15000)));
+    child.stdout.on('data', (d) => {
+      buf += d.toString('utf8');
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx).replace(/\r$/, '');
+        buf = buf.slice(idx + 1);
+        if (line && o.onLine && o.onLine(line) === false) stop();
+      }
+      if (buf.length > 256 * 1024) buf = buf.slice(-64 * 1024);
+    });
+    child.stderr.on('data', (d) => {
+      stderr = (stderr + d.toString('utf8')).slice(-2000);
+    });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: String((e && e.message) || e) });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (buf.trim() && o.onLine) o.onLine(buf.trim());
+      resolve({ ok: code === 0 || code === 1 || killed, code, killed, stderr });
+    });
+  });
+}
+async function rgFindInCode(ws, query) {
+  const q = String(query || '');
+  const byName = [];
+  const hits = [];
+  let limited = false;
+  const ignore = rgIgnoreArgs();
+
+  await runRgLines(['--files', '--no-messages', '--iglob', '*' + globEscape(q) + '*', ...ignore, ws], {
+    timeoutMs: 2500,
+    onLine(line) {
+      const rel = path.relative(ws, path.isAbsolute(line) ? line : path.join(ws, line)).replace(/\\/g, '/');
+      if (rel && !rel.startsWith('..') && byName.length < 30) byName.push(rel);
+      if (byName.length >= 30) {
+        limited = true;
+        return false;
+      }
+      return true;
+    },
+  });
+
+  const content = await runRgLines(
+    [
+      '--json',
+      '--fixed-strings',
+      '--ignore-case',
+      '--max-count',
+      '20',
+      '--max-filesize',
+      '800K',
+      '--no-messages',
+      ...ignore,
+      '--',
+      q,
+      ws,
+    ],
+    {
+      timeoutMs: 4500,
+      onLine(line) {
+        if (hits.length >= 50) {
+          limited = true;
+          return false;
+        }
+        let j;
+        try {
+          j = JSON.parse(line);
+        } catch (e) {
+          return true;
+        }
+        if (j.type !== 'match' || !j.data) return true;
+        const file = ((j.data.path && j.data.path.text) || '').replace(/\\/g, '/');
+        const rel = path.isAbsolute(file) ? path.relative(ws, file).replace(/\\/g, '/') : file;
+        const text = ((j.data.lines && j.data.lines.text) || '').trim().slice(0, 180);
+        hits.push({ file: rel, line: j.data.line_number || 1, text });
+        return true;
+      },
+    }
+  );
+  if (!content.ok) return null;
+  return { files_matching_name: [...new Set(byName)], content_matches: hits, limited };
+}
+
+// grep via ripgrep p/ o tool grep_files: rápido, respeita .gitignore/ignores, async com timeout.
+// devolve null se rg indisponível (aí o caller usa o fallback JS async).
+async function rgGrep(baseDir, wsBase, pattern, isRegex) {
+  const matches = [];
+  let limited = false;
+  const args = ['--json', '--ignore-case', '--max-count', '20', '--max-filesize', '1M', '--no-messages'];
+  if (!isRegex) args.push('--fixed-strings');
+  args.push(...rgIgnoreArgs(), '--', String(pattern), baseDir);
+  const r = await runRgLines(args, {
+    timeoutMs: 6000,
+    onLine(line) {
+      if (matches.length >= 120) {
+        limited = true;
+        return false;
+      }
+      let j;
+      try {
+        j = JSON.parse(line);
+      } catch (e) {
+        return true;
+      }
+      if (j.type !== 'match' || !j.data) return true;
+      const file = ((j.data.path && j.data.path.text) || '').replace(/\\/g, '/');
+      const rel = path.isAbsolute(file) ? path.relative(wsBase, file).replace(/\\/g, '/') : file;
+      const text = ((j.data.lines && j.data.lines.text) || '').replace(/[\r\n]+$/, '').trim().slice(0, 240);
+      matches.push({ file: rel, line: j.data.line_number || 1, text });
+      return true;
+    },
+  });
+  if (!r.ok) return null;
+  return { matches, limited };
+}
+
+// busca global do EDITOR (Ctrl+Shift+F) via ripgrep — devolve {path,line,col,text}. null = rg indisponível.
+async function rgSearchEditor(ws, query) {
+  const results = [];
+  let truncated = false;
+  const MAXR = 400;
+  const ql = String(query).toLowerCase();
+  const args = ['--json', '--fixed-strings', '--ignore-case', '--max-count', '20', '--max-filesize', '1M', '--no-messages', ...rgIgnoreArgs(), '--', String(query), ws];
+  const r = await runRgLines(args, {
+    timeoutMs: 8000,
+    onLine(line) {
+      if (results.length >= MAXR) {
+        truncated = true;
+        return false;
+      }
+      let j;
+      try {
+        j = JSON.parse(line);
+      } catch (e) {
+        return true;
+      }
+      if (j.type !== 'match' || !j.data) return true;
+      const file = ((j.data.path && j.data.path.text) || '').replace(/\\/g, '/');
+      const rel = path.isAbsolute(file) ? path.relative(ws, file).replace(/\\/g, '/') : file;
+      const lineText = ((j.data.lines && j.data.lines.text) || '').replace(/[\r\n]+$/, '');
+      const col = (lineText.toLowerCase().indexOf(ql) + 1) || 1; // coluna em chars (igual ao fallback)
+      results.push({ path: rel, line: j.data.line_number || 1, col, text: lineText.trim().slice(0, 200) });
+      return true;
+    },
+  });
+  if (!r.ok) return null;
+  return { results, truncated };
+}
 
 // ---- BUSCA NA WEB (precisa): Tavily (recomendado) | Brave | DuckDuckGo (sem chave) ----
 async function webSearch(cfg, query, count) {
@@ -2859,12 +3234,34 @@ ipcMain.handle('ports:kill', async (_e, pid) => {
 });
 ipcMain.on('ports:open', (_e, port) => shell.openExternal('http://localhost:' + parseInt(port, 10)));
 
-// ---- ask_user: a Lumi pergunta e ESPERA a resposta do usuário antes de continuar ----
-let pendingAsk = null; // {id, finish(answer), timer}
+// ---- ask_user / Claude Code elicitation: pergunta e ESPERA a resposta do usuário ----
+const pendingAsks = new Map(); // id -> {finish(answer), timer}
 let askSeq = 0;
 ipcMain.on('chat:ask-answer', (_e, { id, answer }) => {
-  if (pendingAsk && pendingAsk.id === id) pendingAsk.finish(String(answer || '').slice(0, 1000));
+  const ask = pendingAsks.get(id);
+  if (ask) ask.finish(String(answer || '').slice(0, 5000));
 });
+function askUserInChat(question, options, opts) {
+  return new Promise((resolve) => {
+    const id = 'ask' + ++askSeq;
+    const o = opts || {};
+    const choices = (Array.isArray(options) ? options : []).slice(0, 8).map((x) => String(x).slice(0, 120));
+    const fallback = String(o.fallback || '(o usuário não respondeu — siga seu melhor julgamento ou pare)');
+    const timeoutMs = Math.max(30000, Math.min(Number(o.timeoutMs) || 10 * 60000, 30 * 60000));
+    const finish = (answer) => {
+      const rec = pendingAsks.get(id);
+      if (!rec) return;
+      clearTimeout(rec.timer);
+      pendingAsks.delete(id);
+      const a = String(answer || '').slice(0, 5000);
+      broadcast('chat:ask-done', { id, answer: a });
+      resolve(a);
+    };
+    const timer = setTimeout(() => finish(fallback), timeoutMs);
+    pendingAsks.set(id, { finish, timer });
+    broadcast('chat:ask', { id, question: String(question || '').slice(0, 1600), options: choices });
+  });
+}
 
 // Registro de ferramentas: schema (pro modelo) + category (permissao) + run (execucao)
 const TOOLS = {
@@ -3052,18 +3449,28 @@ const TOOLS = {
       if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
       const q = String(query || '').trim().slice(0, 200);
       if (!q) return { error: 'consulta vazia' };
+      const rgResult = await rgFindInCode(cfg.workspace, q);
+      if (rgResult) {
+        return {
+          query: q,
+          files_matching_name: rgResult.files_matching_name,
+          content_matches: rgResult.content_matches,
+          engine: 'ripgrep',
+          truncated: rgResult.limited ? 'busca limitada para proteger memória/tempo; refine a consulta se necessário' : undefined,
+        };
+      }
       const ql = q.toLowerCase();
       const byName = [];
       // busca no CONTEÚDO (cap por tempo/quantidade, pula pastas pesadas)
       const hits = [];
-      const deadline = Date.now() + 6000;
+      const deadline = Date.now() + 3500;
       let filesRead = 0;
       let bytesRead = 0;
       let limited = false;
-      const MAX_FILES = 1200;
-      const MAX_BYTES = 32 * 1024 * 1024;
+      const MAX_FILES = 350;
+      const MAX_BYTES = 6 * 1024 * 1024;
       const walk = async (dir, depth) => {
-        if (hits.length >= 40 || depth > 10 || Date.now() > deadline || filesRead >= MAX_FILES || bytesRead >= MAX_BYTES) {
+        if (hits.length >= 35 || depth > 8 || Date.now() > deadline || filesRead >= MAX_FILES || bytesRead >= MAX_BYTES) {
           limited = true;
           return;
         }
@@ -3074,11 +3481,11 @@ const TOOLS = {
           return;
         }
         for (const e of ents) {
-          if (hits.length >= 40 || Date.now() > deadline || filesRead >= MAX_FILES || bytesRead >= MAX_BYTES) {
+          if (hits.length >= 35 || Date.now() > deadline || filesRead >= MAX_FILES || bytesRead >= MAX_BYTES) {
             limited = true;
             return;
           }
-          if (WS_HEAVY.has(e.name) || WS_IGNORE.has(e.name)) continue;
+          if (WS_HEAVY.has(e.name) || WS_IGNORE.has(e.name) || (e.name.startsWith('.lumi-') && e.name !== '.lumi-memory.md')) continue;
           const full = path.join(dir, e.name);
           if (e.isDirectory()) {
             await walk(full, depth + 1);
@@ -3088,13 +3495,13 @@ const TOOLS = {
           if (byName.length < 30 && rel.toLowerCase().includes(ql)) byName.push(rel);
           try {
             const st = await fs.promises.stat(full);
-            if (st.size > 800000) continue;
+            if (st.size > 500000) continue;
             filesRead++;
             bytesRead += st.size;
-            const txt = await fs.promises.readFile(full, 'utf8');
+            const { text: txt } = await readTextFileSmartAsync(full);
             if (txt.includes('\0')) continue;
             const lines = txt.split('\n');
-            for (let i = 0; i < lines.length && hits.length < 40; i++) {
+            for (let i = 0; i < lines.length && hits.length < 35; i++) {
               if (lines[i].toLowerCase().includes(ql)) hits.push({ file: rel, line: i + 1, text: lines[i].trim().slice(0, 160) });
             }
           } catch (e2) {
@@ -3107,6 +3514,7 @@ const TOOLS = {
         query: q,
         files_matching_name: byName,
         content_matches: hits,
+        engine: 'fallback-js',
         truncated: limited ? 'busca limitada para proteger memória/tempo; refine a consulta se necessário' : undefined,
       };
     },
@@ -3404,7 +3812,9 @@ const TOOLS = {
       },
     },
     run: async ({ path: p, offset, limit }) => {
-      const txt = fs.readFileSync(resolvePath(p), 'utf8');
+      const decoded = readTextFileSmart(resolvePath(p));
+      const txt = decoded.text;
+      if (txt.includes('\0')) return { error: 'arquivo parece binário (contém bytes nulos)' };
       const lines = txt.split('\n');
       const total = lines.length;
       const start = Math.max(1, parseInt(offset, 10) || 1);
@@ -3419,6 +3829,7 @@ const TOOLS = {
       const shown = content.split('\n').length;
       const end = Math.min(start + shown - 1, total);
       const out = { content, totalLines: total, showing: `linhas ${start}-${end} de ${total}` + (capped ? ' (janela cortada por tamanho)' : '') };
+      if (decoded.encoding && decoded.encoding !== 'utf-8') out.encoding = decoded.encoding;
       if (end < total) out.note = `o arquivo continua: chame read_file com offset=${end + 1} para a próxima janela`;
       return out;
     },
@@ -3443,20 +3854,20 @@ const TOOLS = {
     },
     run: async ({ path: p, old_text, new_text, all }) => {
       const abs = resolvePath(p);
-      const oldC = fs.readFileSync(abs, 'utf8');
+      const oldC = readTextFileSmart(abs).text;
       const o = String(old_text);
       const nt = String(new_text);
       if (o === nt) return { error: 'old_text e new_text são iguais — nada a fazer' };
       if (!o) return { error: 'old_text vazio' };
-      const count = oldC.split(o).length - 1;
-      if (!count) return { error: 'old_text NÃO encontrado no arquivo — releia com read_file e copie o trecho EXATAMENTE (indentação e quebras de linha contam)' };
-      if (count > 1 && !all) return { error: `old_text aparece ${count} vezes — inclua mais linhas de contexto para ficar único, ou passe all=true para trocar todas` };
-      // split/join evita as pegadinhas de $ do String.replace
-      const idx = oldC.indexOf(o);
-      const newC = all ? oldC.split(o).join(nt) : oldC.slice(0, idx) + nt + oldC.slice(idx + o.length);
+      const replaced = replaceTextSmart(oldC, o, nt, all);
+      if (replaced.error) return { error: replaced.error };
+      if (!replaced.count) return { error: 'old_text NÃO encontrado no arquivo — releia com read_file e copie o trecho EXATAMENTE. Diferenças CRLF/LF já são toleradas automaticamente.' };
+      const newC = replaced.text;
       fs.writeFileSync(abs, newC, 'utf8');
       broadcastDiff(p, oldC, newC);
-      return { ok: true, replaced: all ? count : 1 };
+      const out = { ok: true, replaced: replaced.count };
+      if (replaced.mode === 'eol-normalized') out.note = 'substituição aplicada normalizando diferenças CRLF/LF e preservando o line ending dominante do arquivo';
+      return out;
     },
   },
   grep_files: {
@@ -3478,28 +3889,56 @@ const TOOLS = {
     },
     run: async ({ pattern, path: sub, regex }) => {
       const base = resolvePath(sub || '.');
-      let re = null;
       if (regex) {
         try {
-          re = new RegExp(pattern, 'i');
+          new RegExp(pattern, 'i'); // valida cedo
         } catch (e) {
           return { error: 'regex inválida: ' + e.message };
         }
       }
+      const wsBase = loadConfig().workspace || process.cwd();
+      let baseStat;
+      try {
+        baseStat = await fs.promises.stat(base);
+      } catch (e) {
+        return { error: 'caminho não encontrado: ' + (sub || '.') };
+      }
+
+      // 1) ripgrep: rápido, respeita .gitignore, async com timeout (nunca trava o app)
+      const rg = await rgGrep(base, wsBase, pattern, !!regex);
+      if (rg) {
+        return {
+          matches: rg.matches,
+          total: rg.matches.length,
+          engine: 'ripgrep',
+          truncated: rg.limited ? 'há mais resultados — refine o pattern ou limite o path' : undefined,
+        };
+      }
+
+      // 2) fallback SEM ripgrep: agora ASSÍNCRONO e LIMITADO (deadline + caps) — antes era sync e travava
       const q = String(pattern).toLowerCase();
+      const re = regex ? new RegExp(pattern, 'i') : null;
       const matches = [];
       let truncated = false;
-      const tryFile = (full, rel) => {
+      const deadline = Date.now() + 5000;
+      let files = 0;
+      let bytes = 0;
+      const MAXF = 1500;
+      const MAXB = 24 * 1024 * 1024;
+      const overBudget = () => Date.now() > deadline || files >= MAXF || bytes >= MAXB;
+      const tryFile = async (full, rel) => {
         let st;
         try {
-          st = fs.statSync(full);
+          st = await fs.promises.stat(full);
         } catch (e) {
           return;
         }
         if (!st.isFile() || st.size > 1000000) return;
+        files++;
+        bytes += st.size;
         let content;
         try {
-          content = fs.readFileSync(full, 'utf8');
+          content = (await readTextFileSmartAsync(full)).text;
         } catch (e) {
           return;
         }
@@ -3518,38 +3957,39 @@ const TOOLS = {
           }
         }
       };
-      const wsBase = loadConfig().workspace || process.cwd();
-      const walk = (dir, depth) => {
+      const walk = async (dir, depth) => {
         if (matches.length >= 120 || depth > 12) return;
-        let names = [];
+        if (overBudget()) {
+          truncated = true;
+          return;
+        }
+        let ents = [];
         try {
-          names = fs.readdirSync(dir);
+          ents = await fs.promises.readdir(dir, { withFileTypes: true });
         } catch (e) {
           return;
         }
-        for (const name of names) {
+        for (const ent of ents) {
           if (matches.length >= 120) return;
-          if (WS_HEAVY.has(name) || WS_IGNORE.has(name) || (name.startsWith('.lumi-') && name !== '.lumi-memory.md')) continue;
-          const full = path.join(dir, name);
-          let st;
-          try {
-            st = fs.statSync(full);
-          } catch (e) {
-            continue;
+          if (overBudget()) {
+            truncated = true;
+            return;
           }
-          if (st.isDirectory()) walk(full, depth + 1);
-          else tryFile(full, path.relative(wsBase, full).replace(/\\/g, '/'));
+          const nm = ent.name;
+          if (WS_HEAVY.has(nm) || WS_IGNORE.has(nm) || (nm.startsWith('.lumi-') && nm !== '.lumi-memory.md')) continue;
+          const full = path.join(dir, nm);
+          if (ent.isDirectory()) await walk(full, depth + 1);
+          else await tryFile(full, path.relative(wsBase, full).replace(/\\/g, '/'));
         }
       };
-      let st;
-      try {
-        st = fs.statSync(base);
-      } catch (e) {
-        return { error: 'caminho não encontrado: ' + (sub || '.') };
-      }
-      if (st.isFile()) tryFile(base, path.relative(wsBase, base).replace(/\\/g, '/'));
-      else walk(base, 0);
-      return { matches, total: matches.length, truncated: truncated ? 'há mais resultados — refine o pattern ou limite o path' : undefined };
+      if (baseStat.isFile()) await tryFile(base, path.relative(wsBase, base).replace(/\\/g, '/'));
+      else await walk(base, 0);
+      return {
+        matches,
+        total: matches.length,
+        engine: 'fallback-js',
+        truncated: truncated ? 'busca limitada (tempo/quantidade) — refine o pattern ou limite o path' : undefined,
+      };
     },
   },
   write_file: {
@@ -3843,20 +4283,12 @@ const TOOLS = {
         required: ['question'],
       },
     },
-    run: ({ question, options }) =>
-      new Promise((resolve) => {
-        const id = 'ask' + ++askSeq;
-        const opts = (Array.isArray(options) ? options : []).slice(0, 4).map((o) => String(o).slice(0, 80));
-        const finish = (answer) => {
-          if (!pendingAsk || pendingAsk.id !== id) return;
-          clearTimeout(pendingAsk.timer);
-          pendingAsk = null;
-          broadcast('chat:ask-done', { id, answer });
-          resolve({ answer });
-        };
-        pendingAsk = { id, finish, timer: setTimeout(() => finish('(o usuário não respondeu em 10 minutos — siga seu melhor julgamento ou pare)'), 10 * 60000) };
-        broadcast('chat:ask', { id, question: String(question || '').slice(0, 500), options: opts });
+    run: async ({ question, options }) => ({
+      answer: await askUserInChat(question, options, {
+        fallback: '(o usuário não respondeu em 10 minutos — siga seu melhor julgamento ou pare)',
+        timeoutMs: 10 * 60000,
       }),
+    }),
   },
   update_plan: {
     category: null, // só exibição — sem risco
@@ -4361,11 +4793,13 @@ function recordUsage(cfg, usage) {
   try {
     if (!usage || (!usage.prompt_tokens && !usage.completion_tokens)) return;
     const u = loadUsageDay();
-    let host = 'api';
-    try {
-      host = cfg.provider === 'anthropic' ? 'anthropic' : new URL(cfg.baseUrl).hostname;
-    } catch (e) {
-      /* baseUrl estranha — agrupa em "api" */
+    let host = cfg.usageHost || 'api';
+    if (!cfg.usageHost) {
+      try {
+        host = cfg.provider === 'anthropic' ? 'anthropic' : new URL(cfg.baseUrl).hostname;
+      } catch (e) {
+        /* baseUrl estranha — agrupa em "api" */
+      }
     }
     const p = u.prov[host] || (u.prov[host] = { in: 0, out: 0, usd: 0 });
     p.in += usage.prompt_tokens || 0;
@@ -4467,16 +4901,11 @@ async function runSubAgent(cfg, agent, task, label) {
       messages.push({
         role: 'assistant',
         content: turn.text || null,
-        tool_calls: turn.toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })),
+        tool_calls: sanitizeToolCallsForProvider(turn.toolCalls),
         _responsesItems: turn.responseItems,
       });
       for (const tc of turn.toolCalls) {
-        let args = {};
-        try {
-          args = JSON.parse(tc.arguments || '{}');
-        } catch (e) {
-          /* ok */
-        }
+        const args = parseToolArguments(tc.arguments);
         broadcast('chat:tool', { name: tc.name, args, agent: who });
         const result = await runTool(tc.name, args);
         broadcast('chat:tool-result', { name: tc.name, args, result, agent: who });
@@ -4564,11 +4993,7 @@ async function runAgent(cfg) {
       const assistantTools = {
         role: 'assistant',
         content: turn.text || null,
-        tool_calls: turn.toolCalls.map((tc) => ({
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
+        tool_calls: sanitizeToolCallsForProvider(turn.toolCalls),
         _responsesItems: turn.responseItems,
       };
       messages.push(assistantTools);
@@ -4592,12 +5017,7 @@ async function runAgent(cfg) {
       const others = turn.toolCalls.filter((tc) => tc.name !== 'delegate_to_agent');
 
       for (const tc of others) {
-        let args = {};
-        try {
-          args = JSON.parse(tc.arguments || '{}');
-        } catch (e) {
-          /* args invalidos */
-        }
+        const args = parseToolArguments(tc.arguments);
         broadcast('chat:tool', { name: tc.name, args });
         const result = await runTool(tc.name, args);
         broadcast('chat:tool-result', { name: tc.name, args, result });
@@ -4631,12 +5051,7 @@ async function runAgent(cfg) {
       if (delegations.length) {
         const dres = await Promise.all(
           delegations.map(async (tc) => {
-            let args = {};
-            try {
-              args = JSON.parse(tc.arguments || '{}');
-            } catch (e) {
-              /* args invalidos */
-            }
+            const args = parseToolArguments(tc.arguments);
             broadcast('chat:tool', { name: tc.name, args });
             const result = await runTool(tc.name, args);
             broadcast('chat:tool-result', { name: tc.name, args, result });
@@ -5006,6 +5421,7 @@ function cloneContextMessage(m) {
     if (typeof copy.content === 'string' && copy.content.length > 64000)
       copy.content = copy.content.slice(0, 64000) + ' …[resultado preservado parcialmente]';
     if (Array.isArray(copy.tool_calls)) {
+      copy.tool_calls = sanitizeToolCallsForProvider(copy.tool_calls);
       copy.tool_calls.forEach((tc) => {
         if (tc && tc.function && typeof tc.function.arguments === 'string' && tc.function.arguments.length > 32000) {
           tc.function.arguments = JSON.stringify({ _preservadoParcialmente: true, preview: tc.function.arguments.slice(0, 30000) });
@@ -5146,8 +5562,24 @@ function saveSummary() {
   saveCurrentChat(); // multi-chat: o resumo vai junto no arquivo do chat
 }
 
-// Completa uma mensagem (nao-streaming) no provedor atual — usado p/ resumir
+// Deriva a config das TAREFAS INTERNAS: se o usuário definiu um modelo de tarefas,
+// usa ele (herdando o que ficou em branco do chat). Senão, usa a config do chat como está.
+function taskCfg(cfg) {
+  if (!cfg || (!cfg.taskModel && !cfg.taskProvider && !cfg.taskBaseUrl && !cfg.taskApiKey)) return cfg;
+  const provider = cfg.taskProvider || cfg.provider;
+  let baseUrl = cfg.taskBaseUrl;
+  if (!baseUrl) {
+    // sem URL dedicada: mesmo provedor → usa a do chat; anthropic → default oficial; senão herda a do chat
+    baseUrl = provider === cfg.provider ? cfg.baseUrl : provider === 'anthropic' ? 'https://api.anthropic.com/v1' : cfg.baseUrl;
+  }
+  return { ...cfg, provider, baseUrl, apiKey: cfg.taskApiKey || cfg.apiKey, model: cfg.taskModel || cfg.model };
+}
+
+// Completa uma mensagem (nao-streaming) no provedor atual — usado p/ resumir e tarefas internas.
+// TODAS as tarefas secundárias passam por aqui (o chat principal usa turnAdapter, não isto),
+// então aplicar taskCfg aqui redireciona compactação/commit/review/PR/SQL/proatividade de uma vez.
 async function llmComplete(cfg, messages) {
+  cfg = taskCfg(cfg);
   if (cfg.provider === 'opencode') {
     const r = await turnAdapter(cfg)(cfg, messages, [], () => {}, () => {});
     return r.text || '';
@@ -5366,6 +5798,19 @@ function newChat(seedSummary, seedWorklog) {
   setCurrentChatId(genChatId());
   saveCurrentChat();
   return currentChatId;
+}
+// cria uma conversa NOVA e vazia em disco SEM mexer na sessão ativa (pra abrir em janela destacada)
+function createEmptyChat() {
+  const id = genChatId();
+  try {
+    fs.writeFileSync(
+      chatFile(id),
+      JSON.stringify({ id, title: 'Nova conversa', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [] })
+    );
+  } catch (e) {
+    /* ok */
+  }
+  return id;
 }
 // salva o atual e abre um chat novo (Nova conversa)
 function startNewChat() {
@@ -5966,6 +6411,34 @@ function openPage(id, file, title, w, h) {
   openPages.set(id, pageWin);
 }
 
+// Janela de chat DESTACADA (multi-instância, presa a uma conversa via ?session=<id>).
+// Diferente de openPage: não é single-instance — dá pra abrir várias, cada uma numa conversa.
+function openChatWindow(chatId, title) {
+  const cw = new BrowserWindow({
+    width: 400,
+    height: 600,
+    title: title || 'Chat',
+    icon: ICON_PATH,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    backgroundColor: '#16161e',
+    autoHideMenuBar: true,
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: true,
+      webviewTag: true,
+    },
+    ...acrylicOpts(),
+  });
+  cw.setMenuBarVisibility(false);
+  cw.loadFile(path.join(__dirname, '..', 'renderer', 'pages', 'chat.html'), { query: chatId ? { session: chatId } : {} });
+  return cw;
+}
+
 // ============================================================
 //  Menu de contexto (clique direito no boneco)
 //  Renderizado numa janelinha própria com VIDRO (acrílico no Win11);
@@ -6513,7 +6986,7 @@ ipcMain.handle('workspace:read', (_e, rel) => {
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return null;
   try {
-    return fs.readFileSync(fp, 'utf8');
+    return readTextFileSmart(fp).text;
   } catch (e) {
     return null;
   }
@@ -6539,7 +7012,7 @@ ipcMain.handle('workspace:write', (_e, { rel, content }) => {
   if (!fp) return false;
   let oldC = '';
   try {
-    oldC = fs.readFileSync(fp, 'utf8');
+    oldC = readTextFileSmart(fp).text;
   } catch (e) {
     /* novo */
   }
@@ -6616,6 +7089,9 @@ ipcMain.handle('workspace:search', async (_e, query) => {
   const cfg = loadConfig();
   const q = String(query || '').toLowerCase();
   if (!cfg.workspace || q.length < 2) return { results: [], truncated: false };
+  // ripgrep primeiro (rápido, respeita .gitignore); cai pro walk async se rg indisponível
+  const rg = await rgSearchEditor(cfg.workspace, query);
+  if (rg) return rg;
   const results = [];
   let files = 0;
   let truncated = false;
@@ -6648,7 +7124,7 @@ ipcMain.handle('workspace:search', async (_e, query) => {
       files++;
       let content;
       try {
-        content = await fs.promises.readFile(full, 'utf8');
+        content = (await readTextFileSmartAsync(full)).text;
       } catch (e) {
         continue;
       }
@@ -7556,8 +8032,11 @@ ipcMain.handle('workspace:import-file', async (_e, { srcPath, destDir }) => {
   try {
     if (fs.existsSync(dest)) return { error: '"' + path.basename(srcPath) + '" já existe aqui' };
     await fs.promises.copyFile(srcPath, dest);
+    const rel = path.relative(cfg.workspace, dest).replace(/\\/g, '/');
+    recentWorkspaceFiles.push(rel);
+    if (recentWorkspaceFiles.length > 20) recentWorkspaceFiles = recentWorkspaceFiles.slice(-20);
     broadcast('workspace:changed');
-    return { ok: true, name: path.basename(srcPath) };
+    return { ok: true, name: path.basename(srcPath), path: rel };
   } catch (e) {
     return { error: String((e && e.message) || e).slice(0, 160) };
   }
@@ -7750,7 +8229,12 @@ ipcMain.handle('wizard:install-vrm', async () => {
     return { error: String((e && e.message) || e) };
   }
 });
-ipcMain.on('chat:open-window', () => openPage('chat', 'chat.html', 'Chat', 380, 560));
+// nova conversa (vazia) em nova janela, sem perturbar a conversa ativa
+ipcMain.on('chat:open-window', () => openChatWindow(createEmptyChat(), 'Novo chat'));
+// abre uma conversa EXISTENTE numa nova janela (destacada)
+ipcMain.on('chats:open-window', (_e, id) => {
+  if (id) openChatWindow(String(id));
+});
 
 // le o texto de um .anim do Unity (para conversao experimental de idle)
 ipcMain.handle('get-unity-idle', () => {
@@ -7812,6 +8296,7 @@ ipcMain.handle('config:set', (_e, cfg) => {
 
 // arquivo ativo no editor (workspace.html avisa) — o chat anexa às mensagens quando o chip está ligado
 let activeEditorFile = null;
+let recentWorkspaceFiles = []; // imports externos recentes; sinalizados no próximo prompt Claude Code
 ipcMain.on('editor:active', (_e, rel) => {
   activeEditorFile = rel || null;
   broadcast('editor:active', activeEditorFile);
@@ -8135,6 +8620,175 @@ function claudeToolSummary(name, input, title) {
   const target = a.file_path || a.path || a.command || a.query || a.url || '';
   return `${name}${target ? ': ' + truncate(String(target), 180) : ''}`;
 }
+function claudeElicitationFields(schema) {
+  const s = schema && typeof schema === 'object' ? schema : {};
+  const props = s.properties && typeof s.properties === 'object' ? s.properties : {};
+  const required = new Set(Array.isArray(s.required) ? s.required : []);
+  return Object.keys(props).map((key) => {
+    const p = props[key] && typeof props[key] === 'object' ? props[key] : {};
+    return {
+      key,
+      title: p.title || key,
+      description: p.description || '',
+      type: Array.isArray(p.type) ? p.type[0] : p.type || 'string',
+      enum: Array.isArray(p.enum) ? p.enum.map(String) : null,
+      required: required.has(key),
+    };
+  });
+}
+function coerceElicitationValue(value, field) {
+  const s = String(value == null ? '' : value).trim();
+  if (field && field.type === 'boolean') return /^(true|sim|yes|1|ok|aceito|permitir)$/i.test(s);
+  if (field && (field.type === 'number' || field.type === 'integer')) {
+    const n = Number(s.replace(',', '.'));
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (field && field.type === 'array') return s.split(',').map((x) => x.trim()).filter(Boolean);
+  return s;
+}
+async function askClaudeElicitation(req) {
+  const title = req.title || req.displayName || `Claude Code${req.serverName ? ' · ' + req.serverName : ''}`;
+  const desc = [req.description, req.message].filter(Boolean).join('\n');
+  if (req.mode === 'url' && req.url) {
+    const first = await askUserInChat(`${title}\n\n${desc}\n\nURL: ${req.url}`, ['Abrir URL', 'Já concluí', 'Cancelar'], {
+      fallback: 'Cancelar',
+      timeoutMs: 15 * 60000,
+    });
+    if (/cancelar|cancel/i.test(first)) return { action: 'cancel' };
+    if (/abrir/i.test(first)) {
+      try {
+        shell.openExternal(req.url);
+      } catch (e) {
+        /* segue perguntando */
+      }
+      const done = await askUserInChat('Abri a URL do Claude/MCP. Quando terminar, confirma pra eu liberar a continuação?', ['Concluído', 'Cancelar'], {
+        fallback: 'Cancelar',
+        timeoutMs: 20 * 60000,
+      });
+      return /cancelar|cancel/i.test(done) ? { action: 'cancel' } : { action: 'accept' };
+    }
+    return { action: 'accept' };
+  }
+
+  const fields = claudeElicitationFields(req.requestedSchema);
+  if (!fields.length) {
+    const ans = await askUserInChat(`${title}\n\n${desc}`, ['Continuar', 'Cancelar'], { fallback: 'Cancelar', timeoutMs: 15 * 60000 });
+    return /cancelar|cancel/i.test(ans) ? { action: 'decline' } : { action: 'accept' };
+  }
+
+  if (fields.length === 1) {
+    const f = fields[0];
+    const opts = f.enum && f.enum.length <= 7 ? f.enum.concat('Cancelar') : ['Cancelar'];
+    const ans = await askUserInChat(
+      `${title}\n\n${desc}\n\n${f.title}${f.required ? ' (obrigatório)' : ''}${f.description ? ': ' + f.description : ''}`,
+      opts,
+      { fallback: 'Cancelar', timeoutMs: 15 * 60000 }
+    );
+    if (/^cancelar$/i.test(ans) || /^cancel$/i.test(ans)) return { action: 'decline' };
+    return { action: 'accept', content: { [f.key]: coerceElicitationValue(ans, f) } };
+  }
+
+  const schemaHint = fields
+    .map((f) => `- ${f.key}${f.required ? ' *' : ''}: ${f.type}${f.description ? ' — ' + f.description : ''}`)
+    .join('\n');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ans = await askUserInChat(
+      `${title}\n\n${desc}\n\nResponda em JSON com estes campos:\n${schemaHint}\n\nExemplo: {"campo":"valor"}`,
+      ['Cancelar'],
+      { fallback: 'Cancelar', timeoutMs: 15 * 60000 }
+    );
+    if (/^cancelar$/i.test(ans) || /^cancel$/i.test(ans)) return { action: 'decline' };
+    try {
+      const content = JSON.parse(ans);
+      if (content && typeof content === 'object' && !Array.isArray(content)) return { action: 'accept', content };
+    } catch (e) {
+      /* pergunta de novo uma vez */
+    }
+  }
+  return { action: 'cancel' };
+}
+async function askClaudeUserDialog(req) {
+  const payload = req && req.payload && typeof req.payload === 'object' ? req.payload : {};
+  const title = payload.title || payload.heading || payload.displayName || `Claude Code: ${req.dialogKind}`;
+  const message = payload.message || payload.prompt || payload.question || payload.description || payload.body || JSON.stringify(payload, null, 2);
+  const rawOptions = Array.isArray(payload.options) ? payload.options : Array.isArray(payload.choices) ? payload.choices : [];
+  const options = rawOptions
+    .map((o) => (typeof o === 'string' ? o : o && (o.label || o.title || o.text || o.value)))
+    .filter(Boolean)
+    .map(String)
+    .slice(0, 8);
+  const answer = await askUserInChat(`${title}\n\n${message}`, options.length ? options.concat('Cancelar') : ['Continuar', 'Cancelar'], {
+    fallback: 'Cancelar',
+    timeoutMs: 15 * 60000,
+  });
+  if (/^cancelar$/i.test(answer) || /^cancel$/i.test(answer)) return { behavior: 'cancelled' };
+  return { behavior: 'completed', result: { answer, value: answer, confirmed: true } };
+}
+function claudeAskOptions(question) {
+  return (Array.isArray(question && question.options) ? question.options : [])
+    .map((o) => {
+      if (typeof o === 'string') return { label: o, description: '', preview: '' };
+      if (!o || typeof o !== 'object') return null;
+      const label = o.label || o.title || o.text || o.value || '';
+      if (!label) return null;
+      return {
+        label: String(label).slice(0, 120),
+        description: String(o.description || o.hint || '').slice(0, 500),
+        preview: String(o.preview || '').slice(0, 1200),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+}
+function claudeAskText(question, idx, total) {
+  const q = question || {};
+  const header = q.header ? String(q.header) : total > 1 ? `Pergunta ${idx + 1}/${total}` : 'Claude Code precisa de uma resposta';
+  const body = String(q.question || q.prompt || q.message || 'Como deseja continuar?');
+  const opts = claudeAskOptions(q);
+  const optText = opts.length
+    ? '\n\nOpções:\n' +
+      opts
+        .map((o) => {
+          let line = `- ${o.label}`;
+          if (o.description) line += `: ${o.description}`;
+          if (o.preview) line += `\n  preview: ${o.preview.replace(/\n/g, '\n  ')}`;
+          return line;
+        })
+        .join('\n')
+    : '';
+  const multi = q.multiSelect ? '\n\nPode responder com múltiplas opções separadas por vírgula.' : '';
+  return `${header}\n\n${body}${multi}${optText}`;
+}
+async function answerClaudeAskUserQuestion(input) {
+  const src = input && typeof input === 'object' ? input : {};
+  const questions = Array.isArray(src.questions) ? src.questions.slice(0, 8) : [];
+  const answers = src.answers && typeof src.answers === 'object' && !Array.isArray(src.answers) ? { ...src.answers } : {};
+  if (!questions.length) return { input: { ...src, answers } };
+
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i] || {};
+    const questionText = String(q.question || q.prompt || q.message || `Pergunta ${i + 1}`);
+    if (answers[questionText]) continue;
+    const opts = claudeAskOptions(q).map((o) => o.label);
+    const choices = opts.length
+      ? (q.multiSelect ? opts.concat('Responder livremente', 'Cancelar') : opts.concat('Responder livremente', 'Cancelar'))
+      : ['Responder livremente', 'Cancelar'];
+    let answer = await askUserInChat(claudeAskText(q, i, questions.length), choices, {
+      fallback: 'Cancelar',
+      timeoutMs: 20 * 60000,
+    });
+    if (/^cancelar$/i.test(answer) || /^cancel$/i.test(answer)) return { cancelled: true, input: src };
+    if (/^responder livremente$/i.test(answer)) {
+      answer = await askUserInChat(`Resposta livre para o Claude Code:\n\n${questionText}`, ['Cancelar'], {
+        fallback: 'Cancelar',
+        timeoutMs: 20 * 60000,
+      });
+      if (/^cancelar$/i.test(answer) || /^cancel$/i.test(answer)) return { cancelled: true, input: src };
+    }
+    answers[questionText] = String(answer || '').trim();
+  }
+  return { input: { ...src, answers } };
+}
 function claudePromptFromContent(content) {
   if (typeof content === 'string') return content;
   const text = (content || []).filter((p) => p && p.type === 'text').map((p) => p.text).join('\n');
@@ -8143,11 +8797,131 @@ function claudePromptFromContent(content) {
 }
 function claudeUserPrompt() {
   const m = [...history].reverse().find((x) => x && x.role === 'user');
-  return m ? claudePromptFromContent(m.content) : '';
+  let prompt = m ? claudePromptFromContent(m.content) : '';
+  if (recentWorkspaceFiles.length) {
+    const files = recentWorkspaceFiles.splice(0);
+    prompt += `\n\nArquivos adicionados recentemente à workspace:\n${files.map((f) => '- ' + f).join('\n')}`;
+  }
+  return prompt;
 }
-function claudeUsageStats(usage, started, phase, live, generatedChars) {
-  const input = (usage && (usage.input_tokens || usage.prompt_tokens)) || 0;
-  const output = (usage && (usage.output_tokens || usage.completion_tokens)) || Math.ceil((generatedChars || 0) / 3.6);
+function buildClaudeCodePrompt(cfg) {
+  const parts = [
+    '# Identidade',
+    'Você é a Lumi, uma companheira virtual que vive na área de trabalho do usuário. No Modo Código, você usa o Claude Code como seu motor de engenharia, mas continua sendo a Lumi.',
+    'Seja calorosa, curiosa, levemente brincalhona e genuinamente prestativa. Fale sempre no idioma do usuário.',
+    'Em trabalho técnico, seja objetiva e aja como uma engenheira sênior: investigue, implemente, verifique e entregue o resultado. Não transforme cada passo em um discurso.',
+    '',
+    '# Integração com a interface da Lumi',
+    '- A interface já renderiza suas ferramentas, comandos, diffs, subagentes, progresso e permissões. Não replique saídas brutas extensas na resposta.',
+    '- Não peça ao usuário para rodar comandos ou abrir arquivos que você mesma consegue acessar com as ferramentas do Claude Code.',
+    '- Respeite as decisões de permissão da interface. Se algo for negado, adapte o plano sem pressionar o usuário.',
+    '- Quando usar agentes, dê tarefas claras e depois sintetize os resultados; não abandone a resposta final a um subagente.',
+    '- Ao terminar, diga concisamente o que mudou e como foi verificado. Não afirme que verificou algo que não executou.',
+    '- Se houver emoção clara, você pode terminar com uma tag curta como [feliz], [pensativa] ou [surpresa]; a Lumi a transforma em reação do avatar.',
+    '',
+    '# Continuidade',
+    '- Sua sessão é persistida por chat e workspace. Continue tarefas anteriores sem exigir que o usuário repita contexto já presente na sessão.',
+    '- CLAUDE.md, regras do repositório, skills, comandos, agentes, plugins e MCPs descobertos pelo Claude Code continuam tendo validade e devem ser usados quando relevantes.',
+    `- ${OS_NOTE}`,
+    `- ${timeNote()}`,
+  ];
+  if (cfg.systemPrompt && cfg.systemPrompt !== DEFAULT_CONFIG.systemPrompt) {
+    parts.push('', '# Personalização escrita pelo usuário', String(cfg.systemPrompt).slice(0, 12000));
+  }
+  if (cfg.claudeCodePrompt && String(cfg.claudeCodePrompt).trim()) {
+    parts.push('', '# Instruções extras para o Modo Claude Code', String(cfg.claudeCodePrompt).trim().slice(0, 12000));
+  }
+  if (cfg.memoryEnabled !== false) {
+    const facts = loadFacts().map((x) => x.fact).slice(-30);
+    if (facts.length) parts.push('', '# Memórias relevantes sobre o usuário', ...facts.map((f) => '- ' + f));
+  }
+  if (cfg.workspace) {
+    try {
+      const mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8').trim().slice(0, 16000);
+      if (mem) parts.push('', '# Memória complementar da Lumi sobre este projeto', mem);
+    } catch (e) {
+      /* a memória nativa do Claude Code/CLAUDE.md continua disponível */
+    }
+  }
+  return parts.join('\n');
+}
+let claudeCapabilities = { sessionId: '', commands: [], agents: [], skills: [], model: '', version: '' };
+function publishClaudeCapabilities(data) {
+  claudeCapabilities = {
+    ...claudeCapabilities,
+    ...data,
+    commands: Array.isArray(data.commands) ? data.commands : claudeCapabilities.commands,
+    agents: Array.isArray(data.agents) ? data.agents : claudeCapabilities.agents,
+    skills: Array.isArray(data.skills) ? data.skills : claudeCapabilities.skills,
+  };
+  broadcast('chat:claude-capabilities', claudeCapabilities);
+}
+ipcMain.handle('claude-code:capabilities', () => claudeCapabilities);
+function claudeUsageToChatUsage(usage) {
+  if (!usage) return null;
+  const input =
+    (usage.input_tokens || usage.prompt_tokens || 0) +
+    (usage.cache_creation_input_tokens || 0) +
+    (usage.cache_read_input_tokens || 0);
+  const output = usage.output_tokens || usage.completion_tokens || 0;
+  return { prompt_tokens: input, completion_tokens: output, total_tokens: input + output };
+}
+function claudePct(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const pct = n <= 1 ? n * 100 : n; // rate_limit_event costuma vir 0..1; /usage vem 0..100
+  return Math.max(0, Math.min(999, Math.round(pct * 10) / 10));
+}
+function claudeLimitLabel(type) {
+  const map = {
+    five_hour: '5h',
+    seven_day: '7d',
+    seven_day_oauth_apps: '7d apps',
+    seven_day_opus: '7d Opus',
+    seven_day_sonnet: '7d Sonnet',
+    overage: 'extra',
+    extra_usage: 'extra',
+  };
+  return map[type] || type || 'Claude Max';
+}
+function claudeLimitFromRateEvent(info) {
+  if (!info) return null;
+  const pct = claudePct(info.utilization);
+  if (pct == null) return null;
+  const resetsAt =
+    typeof info.resetsAt === 'number'
+      ? new Date(info.resetsAt > 1e12 ? info.resetsAt : info.resetsAt * 1000).toISOString()
+      : info.resetsAt || null;
+  return {
+    usagePct: pct,
+    usageLabel: claudeLimitLabel(info.rateLimitType),
+    usageStatus: info.status || '',
+    usageResetsAt: resetsAt,
+  };
+}
+function claudeLimitFromUsageResponse(data) {
+  const limits = data && data.rate_limits;
+  if (!limits || data.rate_limits_available === false) return null;
+  let best = null;
+  for (const key of ['five_hour', 'seven_day_sonnet', 'seven_day_opus', 'seven_day_oauth_apps', 'seven_day', 'extra_usage']) {
+    const item = limits[key];
+    if (!item) continue;
+    const pct = claudePct(item.utilization);
+    if (pct == null) continue;
+    const candidate = {
+      usagePct: pct,
+      usageLabel: claudeLimitLabel(key),
+      usageStatus: data.subscription_type || '',
+      usageResetsAt: item.resets_at || null,
+    };
+    if (!best || candidate.usagePct > best.usagePct) best = candidate;
+  }
+  return best;
+}
+function claudeUsageStats(usage, started, phase, live, generatedChars, limitInfo) {
+  const mapped = claudeUsageToChatUsage(usage);
+  const input = (mapped && mapped.prompt_tokens) || 0;
+  const output = (mapped && mapped.completion_tokens) || Math.ceil((generatedChars || 0) / 3.6);
   const secs = Math.max(0.2, (Date.now() - started) / 1000);
   broadcast('chat:stats', {
     tps: Math.round((output / secs) * 10) / 10,
@@ -8160,6 +8934,10 @@ function claudeUsageStats(usage, started, phase, live, generatedChars) {
     window: 0,
     pct: 0,
     engine: 'claude-code',
+    usagePct: limitInfo && limitInfo.usagePct,
+    usageLabel: limitInfo && limitInfo.usageLabel,
+    usageStatus: limitInfo && limitInfo.usageStatus,
+    usageResetsAt: limitInfo && limitInfo.usageResetsAt,
   });
 }
 function blockText(content) {
@@ -8183,7 +8961,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   const started = Date.now();
   const prompt = promptOverride || claudeUserPrompt();
   const sameWorkspace = claudeSessionId && path.resolve(claudeSessionWorkspace || '') === path.resolve(cfg.workspace);
-  const mode = ['default', 'acceptEdits', 'plan'].includes(cfg.claudeCodePermissionMode) ? cfg.claudeCodePermissionMode : 'default';
+  const mode = ['default', 'auto', 'acceptEdits', 'plan'].includes(cfg.claudeCodePermissionMode) ? cfg.claudeCodePermissionMode : 'default';
   const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.claudeCodeEffort) ? cfg.claudeCodeEffort : 'high';
   const options = {
     cwd: cfg.workspace,
@@ -8199,14 +8977,22 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
     persistSession: true,
     settingSources: ['user', 'project', 'local'],
     tools: { type: 'preset', preset: 'claude_code' },
+    toolConfig: { askUserQuestion: { previewFormat: 'html' } },
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append:
-        'Você está integrado à interface da Lumi. Fale sempre no idioma do usuário, mantenha o progresso conciso e use as ferramentas para concluir a tarefa. ' +
-        'Não peça para o usuário rodar comandos que você mesma pode executar. A interface já mostra ferramentas e diffs.',
+      append: buildClaudeCodePrompt(cfg),
     },
+    onElicitation: async (request) => askClaudeElicitation(request),
+    onUserDialog: async (request) => askClaudeUserDialog(request),
+    supportedDialogKinds: ['refusal_fallback_prompt', 'ask_user_question', 'confirmation', 'question'],
     canUseTool: async (toolName, input, info) => {
+      if (/^AskUserQuestion$/i.test(String(toolName || ''))) {
+        const answered = await answerClaudeAskUserQuestion(input || {});
+        return answered.cancelled
+          ? { behavior: 'deny', message: 'O usuário cancelou a pergunta do Claude Code.' }
+          : { behavior: 'allow', updatedInput: answered.input };
+      }
       const category = claudeToolCategory(toolName);
       if (!category) return { behavior: 'allow', updatedInput: input };
       const allowed = await checkPermission(category, claudeToolSummary(toolName, input, info && info.title));
@@ -8221,12 +9007,46 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   const q = query({ prompt, options });
   activeClaudeQuery = q;
   let full = '';
-  let streamed = false;
+  let streamedMain = false;
+  const streamedAgents = new Set();
   let finalUsage = null;
+  let claudeLimitHud = null;
   let generatedChars = 0;
   let lastStatsAt = 0;
   const toolInputs = new Map();
-  claudeUsageStats(null, started, sameWorkspace ? 'retomando sessão Claude Code' : 'iniciando Claude Code', true);
+  const toolAgentLabels = new Map();
+  const refreshClaudeUsageHud = async () => {
+    if (!q || typeof q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET !== 'function') return null;
+    try {
+      const data = await Promise.race([
+        q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+        new Promise((resolve) => setTimeout(() => resolve(null), 3500)),
+      ]);
+      if (!data) return null;
+      const limit = claudeLimitFromUsageResponse(data);
+      if (limit) claudeLimitHud = limit;
+      return data;
+    } catch (e) {
+      return null; // API experimental: se falhar, o rate_limit_event ainda atualiza o HUD
+    }
+  };
+  const capabilitiesPromise = Promise.all([
+    q.supportedCommands().catch(() => []),
+    q.supportedAgents().catch(() => []),
+    refreshClaudeUsageHud(),
+  ]).then(([commands, agents]) => {
+    publishClaudeCapabilities({
+      sessionId: claudeSessionId,
+      commands: (commands || []).map((c) => ({
+        name: c.name,
+        description: c.description || '',
+        argumentHint: c.argumentHint || '',
+        aliases: c.aliases || [],
+      })),
+      agents: (agents || []).map((a) => ({ name: a.name, description: a.description || '', model: a.model || '' })),
+    });
+  });
+  claudeUsageStats(null, started, sameWorkspace ? 'retomando sessão Claude Code' : 'iniciando Claude Code', true, 0, claudeLimitHud);
   try {
     for await (const msg of q) {
       if (msg && msg.session_id) {
@@ -8237,13 +9057,19 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
         const ev = msg.event;
         if (ev.type === 'content_block_delta' && ev.delta) {
           if (ev.delta.type === 'text_delta' && ev.delta.text) {
-            streamed = true;
-            full += ev.delta.text;
-            generatedChars += ev.delta.text.length;
-            broadcast('chat:token', ev.delta.text);
-            if (Date.now() - lastStatsAt > 250) {
-              lastStatsAt = Date.now();
-              claudeUsageStats(null, started, 'Claude Code respondendo', true, generatedChars);
+            if (msg.parent_tool_use_id) {
+              streamedAgents.add(msg.parent_tool_use_id);
+              const label = toolAgentLabels.get(msg.parent_tool_use_id) || 'Subagente Claude';
+              broadcast('chat:agent-token', { agent: label, t: ev.delta.text });
+            } else {
+              streamedMain = true;
+              full += ev.delta.text;
+              generatedChars += ev.delta.text.length;
+              broadcast('chat:token', ev.delta.text);
+              if (Date.now() - lastStatsAt > 250) {
+                lastStatsAt = Date.now();
+                claudeUsageStats(null, started, 'Claude Code respondendo', true, generatedChars, claudeLimitHud);
+              }
             }
           } else if ((ev.delta.type === 'thinking_delta' || ev.delta.type === 'signature_delta') && ev.delta.thinking) {
             broadcast('chat:thinking', ev.delta.thinking);
@@ -8253,12 +9079,28 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       }
       if (msg.type === 'assistant' && msg.message) {
         for (const block of msg.message.content || []) {
-          if (block.type === 'text' && !streamed && block.text) {
-            full += block.text;
-            broadcast(msg.parent_tool_use_id ? 'chat:agent-token' : 'chat:token',
-              msg.parent_tool_use_id ? { agent: msg.subagent_type || 'Subagente Claude', t: block.text } : block.text);
+          if (block.type === 'text' && block.text) {
+            if (msg.parent_tool_use_id) {
+              if (!streamedAgents.has(msg.parent_tool_use_id)) {
+                const label = toolAgentLabels.get(msg.parent_tool_use_id) || msg.subagent_type || 'Subagente Claude';
+                broadcast('chat:agent-token', { agent: label, t: block.text });
+              }
+            } else if (!streamedMain) {
+              full += block.text;
+              broadcast('chat:token', block.text);
+            }
           } else if (block.type === 'tool_use') {
             toolInputs.set(block.id, { name: block.name, input: block.input || {} });
+            if (/^(Agent|Task)$/i.test(block.name)) {
+              const agentName = (block.input && (block.input.subagent_type || block.input.agent || block.input.name)) || 'Agente Claude';
+              const label = `${agentName} · ${String(block.id).slice(-4)}`;
+              toolAgentLabels.set(block.id, label);
+              broadcast('chat:agent', {
+                name: label,
+                task: (block.input && (block.input.description || block.input.task || block.input.prompt)) || '',
+                phase: 'start',
+              });
+            }
             broadcast('chat:tool', {
               name: block.name,
               args: slimVal(block.input || {}, 0),
@@ -8273,6 +9115,11 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           if (block.type !== 'tool_result') continue;
           const meta = toolInputs.get(block.tool_use_id) || { name: 'tool', input: {} };
           const result = msg.tool_use_result != null ? msg.tool_use_result : block.content;
+          const agentLabel = toolAgentLabels.get(block.tool_use_id);
+          if (agentLabel) {
+            broadcast('chat:agent', { name: agentLabel, phase: 'done' });
+            toolAgentLabels.delete(block.tool_use_id);
+          }
           broadcast('chat:tool-result', {
             name: meta.name,
             args: slimVal(meta.input, 0),
@@ -8284,6 +9131,23 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       }
       if (msg.type === 'system' && msg.subtype === 'init') {
         broadcast('chat:note', { text: `✦ Claude Code ${msg.claude_code_version} · ${msg.model} · ${msg.permissionMode}` });
+        publishClaudeCapabilities({
+          sessionId: msg.session_id,
+          skills: msg.skills || [],
+          agents: (msg.agents || []).map((name) => ({ name, description: '', model: '' })),
+          model: msg.model,
+          version: msg.claude_code_version,
+        });
+      } else if (msg.type === 'system' && msg.subtype === 'commands_changed') {
+        publishClaudeCapabilities({
+          sessionId: msg.session_id,
+          commands: (msg.commands || []).map((c) => ({
+            name: c.name,
+            description: c.description || '',
+            argumentHint: c.argumentHint || '',
+            aliases: c.aliases || [],
+          })),
+        });
       } else if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
         broadcast('chat:compacted', {
           beforeTokens: msg.compact_metadata && msg.compact_metadata.pre_tokens,
@@ -8291,10 +9155,24 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           engine: 'claude-code',
         });
       } else if (msg.type === 'system' && msg.subtype === 'task_progress') {
-        broadcast('chat:agent-token', { agent: msg.subagent_type || 'Claude Code', t: msg.description || '' });
-      } else if (msg.type === 'rate_limit_event' && msg.rate_limit_info && msg.rate_limit_info.status !== 'allowed') {
-        const pct = Math.round((msg.rate_limit_info.utilization || 0) * 100);
-        broadcast('chat:note', { text: `⚠ limite do Claude Max em ${pct}% (${msg.rate_limit_info.rateLimitType || 'janela atual'})` });
+        const label = (msg.tool_use_id && toolAgentLabels.get(msg.tool_use_id)) || msg.subagent_type || 'Claude Code';
+        broadcast('chat:agent-token', { agent: label, t: msg.description || '' });
+      } else if (msg.type === 'system' && msg.subtype === 'task_notification' && msg.tool_use_id) {
+        const label = toolAgentLabels.get(msg.tool_use_id);
+        if (label) {
+          broadcast('chat:agent', { name: label, phase: 'done' });
+          toolAgentLabels.delete(msg.tool_use_id);
+        }
+      } else if (msg.type === 'tool_use_summary' && msg.summary) {
+        broadcast('chat:note', { text: '✦ ' + msg.summary });
+      } else if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
+        claudeLimitHud = claudeLimitFromRateEvent(msg.rate_limit_info) || claudeLimitHud;
+        if (claudeLimitHud) {
+          claudeUsageStats(finalUsage, started, 'Claude Code respondendo', true, generatedChars, claudeLimitHud);
+          if (msg.rate_limit_info.status !== 'allowed') {
+            broadcast('chat:note', { text: `⚠ limite do Claude Max em ${claudeLimitHud.usagePct}% (${claudeLimitHud.usageLabel || 'janela atual'})` });
+          }
+        }
       } else if (msg.type === 'result') {
         finalUsage = msg.usage || null;
         if ((!full || !full.trim()) && msg.subtype === 'success' && msg.result) {
@@ -8312,6 +9190,8 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       }
     }
   } finally {
+    await refreshClaudeUsageHud();
+    await capabilitiesPromise.catch(() => {});
     if (activeClaudeQuery === q) activeClaudeQuery = null;
     try {
       q.close();
@@ -8319,7 +9199,9 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       /* já encerrado */
     }
   }
-  claudeUsageStats(finalUsage, started, 'concluído', false, generatedChars);
+  claudeUsageStats(finalUsage, started, 'concluído', false, generatedChars, claudeLimitHud);
+  const mappedUsage = claudeUsageToChatUsage(finalUsage);
+  if (mappedUsage) recordUsage({ ...cfg, usageHost: 'claude-code', model: 'claude-code' }, mappedUsage);
   if (!(chatAbort && chatAbort.signal.aborted) && steerQueue.length) {
     const followup = steerQueue.splice(0).map((s) => claudePromptFromContent(s.content)).filter(Boolean).join('\n\n');
     if (followup) {
@@ -8332,7 +9214,23 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
 }
 
 // ---- IPC: chat ----
-ipcMain.handle('chat:history', () => ({ messages: history, events: chatEvents, archive: chatArchive }));
+// prende a janela a uma conversa ('' = segue a ativa). Auto-limpa quando a janela fecha.
+ipcMain.handle('chat:bind', (e, session) => {
+  const id = e.sender.id;
+  winChat.set(id, session ? String(session) : '*');
+  e.sender.once('destroyed', () => winChat.delete(id));
+  return true;
+});
+ipcMain.handle('chat:history', (e) => {
+  const id = senderChatId(e);
+  if (id === currentChatId) return { messages: history, events: chatEvents, archive: chatArchive };
+  try {
+    const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {}; // janela destacada: lê do disco
+    return { messages: j.history || [], events: j.events || [], archive: j.archive || [] };
+  } catch (e2) {
+    return { messages: [], events: [], archive: [] };
+  }
+});
 
 // "Nova conversa": salva a atual e abre um chat novo (não perde a anterior)
 ipcMain.on('chat:reset', () => startNewChat());
@@ -8342,9 +9240,10 @@ ipcMain.handle('chat:fork', () => forkConversation());
 
 // ---- multi-chat: listar / criar / trocar / renomear / apagar ----
 ipcMain.handle('chats:list', () => listChats());
-ipcMain.handle('chats:current', () => {
-  const found = listChats().find((c) => c.id === currentChatId);
-  return { id: currentChatId, title: (found && found.title) || titleFromHistory(history) };
+ipcMain.handle('chats:current', (e) => {
+  const id = senderChatId(e);
+  const found = listChats().find((c) => c.id === id);
+  return { id, title: (found && found.title) || (id === currentChatId ? titleFromHistory(history) : 'Conversa') };
 });
 ipcMain.handle('chats:new', () => {
   startNewChat();
@@ -8422,6 +9321,17 @@ async function expandMentions(text) {
 ipcMain.on('chat:send', async (_e, payload) => {
   const raw = typeof payload === 'string' ? payload : payload.text || '';
   const images = (payload && payload.images) || [];
+  // multi-janela: se esta janela está presa a OUTRA conversa, troca a sessão ativa pra ela.
+  // Um turno por vez (serializado): se já há agente rodando, avisa e não interrompe.
+  const wantId = winChat.get(_e.sender.id);
+  if (wantId && wantId !== '*' && wantId !== currentChatId) {
+    if (agentRunning) {
+      _e.sender.send('chat:note', { text: '⏳ Outra conversa está processando — espere ela terminar antes de enviar aqui.' });
+      return;
+    }
+    saveCurrentChat();
+    if (loadChatInto(wantId)) setCurrentChatId(wantId);
+  }
   const cfg = loadConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
@@ -8577,7 +9487,7 @@ ipcMain.on('chat:stop', () => {
       /* ok */
     }
   }
-  if (pendingAsk) pendingAsk.finish('(o usuário parou a tarefa)'); // destrava o loop pra ele poder abortar
+  for (const ask of [...pendingAsks.values()]) ask.finish('(o usuário parou a tarefa)'); // destrava loops aguardando resposta
   for (const fin of [...pendingPerms.values()]) fin({ allow: false }); // permissões pendentes = negadas
   steerQueue = [];
   broadcast('chat:stopped');

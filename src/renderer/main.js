@@ -1068,11 +1068,18 @@ const searchProviderEl = document.getElementById('searchProvider');
 const searchApiKeyEl = document.getElementById('searchApiKey');
 const searxUrlEl = document.getElementById('searxUrl');
 const fallbackModelEl = document.getElementById('fallbackModel');
+const taskProviderEl = document.getElementById('taskProvider');
+const taskBaseUrlEl = document.getElementById('taskBaseUrl');
+const taskApiKeyEl = document.getElementById('taskApiKey');
+const taskModelEl = document.getElementById('taskModel');
 const codeEngineEl = document.getElementById('codeEngine');
+const claudeCodeCardEl = document.getElementById('claudeCodeCard');
 const claudeCodeModelEl = document.getElementById('claudeCodeModel');
 const claudeCodePermissionModeEl = document.getElementById('claudeCodePermissionMode');
 const claudeCodeEffortEl = document.getElementById('claudeCodeEffort');
+const claudeCodePromptEl = document.getElementById('claudeCodePrompt');
 const claudeCodeStatusEl = document.getElementById('claudeCodeStatus');
+const claudeCodeScopeEl = document.getElementById('claudeCodeScope');
 const claudeCodeLoginBtn = document.getElementById('claudeCodeLogin');
 const claudeCodeLogoutBtn = document.getElementById('claudeCodeLogout');
 const proactivityEl = document.getElementById('proactivity');
@@ -1429,10 +1436,19 @@ async function openSettings() {
   searchApiKeyEl.value = c.searchApiKey || '';
   searxUrlEl.value = c.searxUrl || '';
   fallbackModelEl.value = c.fallbackModel || '';
+  taskProviderEl.value = c.taskProvider || '';
+  taskBaseUrlEl.value = c.taskBaseUrl || '';
+  taskApiKeyEl.value = c.taskApiKey || '';
+  taskModelEl.value = c.taskModel || '';
   codeEngineEl.value = c.codeEngine || 'native';
+  claudeCodeCardEl.classList.toggle('is-active', codeEngineEl.value === 'claude-code');
   claudeCodeModelEl.value = c.claudeCodeModel || 'sonnet';
   claudeCodePermissionModeEl.value = c.claudeCodePermissionMode || 'default';
   claudeCodeEffortEl.value = c.claudeCodeEffort || 'high';
+  claudeCodePromptEl.value = c.claudeCodePrompt || '';
+  claudeCodeScopeEl.textContent = c.workspace
+    ? `Projeto inteiro disponível via cwd: ${c.workspace}. O arquivo aberto no editor é sinalizado automaticamente no próximo prompt.`
+    : 'Defina uma workspace. O Claude Code usa a pasta inteira como projeto; o arquivo aberto no editor é sinalizado no próximo prompt.';
   proactivityEl.value = c.proactivity || 'normal';
   reactAppsEl.checked = !!c.reactApps;
   watchServerEl.checked = !!c.watchServer;
@@ -1488,39 +1504,44 @@ presetSel.addEventListener('change', () => {
 
 async function refreshClaudeCodeStatus() {
   claudeCodeStatusEl.textContent = 'verificando…';
+  claudeCodeStatusEl.dataset.state = 'loading';
   try {
     const s = await window.api.claudeCodeStatus();
     if (!s.installed) {
       claudeCodeStatusEl.textContent = 'não instalado';
-      claudeCodeStatusEl.style.color = '#ff9b9b';
+      claudeCodeStatusEl.dataset.state = 'error';
       return;
     }
     if (s.ready) {
       const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
       claudeCodeStatusEl.textContent = `conectado · ${plan}${s.email ? ' · ' + s.email : ''}`;
-      claudeCodeStatusEl.style.color = '#82d9a5';
+      claudeCodeStatusEl.dataset.state = 'ready';
       claudeCodeLoginBtn.textContent = 'Sessão Max pronta ✓';
     } else if (s.needsLogin) {
       const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
       claudeCodeStatusEl.textContent = `conta ${plan} detectada · sessão compartilhada expirada`;
-      claudeCodeStatusEl.style.color = '#ffc978';
+      claudeCodeStatusEl.dataset.state = 'warning';
       claudeCodeLoginBtn.textContent = 'Renovar sessão Max';
     } else {
       claudeCodeStatusEl.textContent = 'aguardando login';
-      claudeCodeStatusEl.style.color = '#ffc978';
+      claudeCodeStatusEl.dataset.state = 'warning';
       claudeCodeLoginBtn.textContent = 'Entrar com Claude Max';
     }
   } catch (e) {
     claudeCodeStatusEl.textContent = 'erro ao verificar';
-    claudeCodeStatusEl.style.color = '#ff9b9b';
+    claudeCodeStatusEl.dataset.state = 'error';
   }
 }
+codeEngineEl.addEventListener('change', () => {
+  claudeCodeCardEl.classList.toggle('is-active', codeEngineEl.value === 'claude-code');
+});
 claudeCodeLoginBtn.addEventListener('click', async () => {
   claudeCodeStatusEl.textContent = 'abrindo login…';
+  claudeCodeStatusEl.dataset.state = 'loading';
   const r = await window.api.claudeCodeLogin();
   if (r && r.error) {
     claudeCodeStatusEl.textContent = r.error;
-    claudeCodeStatusEl.style.color = '#ff9b9b';
+    claudeCodeStatusEl.dataset.state = 'error';
     return;
   }
   claudeCodeStatusEl.textContent = 'conclua o login no navegador/terminal';
@@ -1632,10 +1653,15 @@ function readForm() {
     searchApiKey: searchApiKeyEl.value.trim(),
     searxUrl: searxUrlEl.value.trim(),
     fallbackModel: fallbackModelEl.value.trim(),
+    taskProvider: taskProviderEl.value,
+    taskBaseUrl: taskBaseUrlEl.value.trim(),
+    taskApiKey: taskApiKeyEl.value.trim(),
+    taskModel: taskModelEl.value.trim(),
     codeEngine: codeEngineEl.value,
     claudeCodeModel: claudeCodeModelEl.value,
     claudeCodePermissionMode: claudeCodePermissionModeEl.value,
     claudeCodeEffort: claudeCodeEffortEl.value,
+    claudeCodePrompt: claudeCodePromptEl.value.trim(),
     proactivity: proactivityEl.value,
     reactApps: reactAppsEl.checked,
     watchServer: watchServerEl.checked,
