@@ -317,6 +317,7 @@ const DEFAULT_CONFIG = {
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
   watchServer: false, // opt-in: vigia o servidor remoto montado (disco cheio / serviço caído) e avisa
+  logSentinel: 'off', // 🛡️ sentinela de logs do SISTEMA: 'off' | 'notify' (avisa erros novos a cada 30min) | 'fix' (avisa + investiga sozinha se for do projeto)
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   contextWindow: 128000,
   compactAtPct: 80,
@@ -5008,6 +5009,38 @@ const TOOLS = {
       fs.writeFileSync(dest, doc + '\n');
       broadcast('workspace:changed');
       return { ok: true, path: 'CLAUDE.md', bytes: doc.length, preview: doc.slice(0, 600) };
+    },
+  },
+  system_logs: {
+    category: 'exec', // lê o Event Log/journalctl por comando do SO
+    summary: (a) => 'ler os logs do sistema' + (a && a.minutes ? ' (últimos ' + a.minutes + ' min)' : ''),
+    schema: {
+      name: 'system_logs',
+      description:
+        'Lê os ERROS recentes do SISTEMA OPERACIONAL (Windows Event Log / journalctl / log show): crash de app, erro de driver/serviço, etc. Cada entrada traz hora, origem e mensagem — e, quando o processo ainda roda, o COMANDO com que foi lançado (launch). Use quando o usuário relatar crash/travamento de um programa/jogo ou pedir "o que aconteceu no sistema".',
+      parameters: {
+        type: 'object',
+        properties: {
+          minutes: { type: 'number', description: 'janela de tempo (padrão 60, máx 1440)' },
+          level: { type: 'string', description: '"error" (padrão) ou "warning" (inclui avisos)' },
+          query: { type: 'string', description: 'filtra por texto (nome do app, driver...)' },
+        },
+      },
+    },
+    run: async ({ minutes, level, query }) => {
+      try {
+        await refreshProcessSnapshot(); // pra anexar o comando de lançamento dos processos vivos
+        const r = await readSystemLogs(minutes, level === 'warning' ? 'warning' : 'error');
+        let list = r.entries;
+        if (query) {
+          const q = String(query).toLowerCase();
+          list = list.filter((e) => ((e.source || '') + ' ' + (e.message || '') + ' ' + (e.launch || '')).toLowerCase().includes(q));
+        }
+        if (!list.length) return { entries: [], note: 'nenhum erro do sistema na janela pedida' + (query ? ' com esse filtro' : '') };
+        return { entries: list.slice(0, 40), total: list.length, note: 'campo "launch" = comando com que o processo foi iniciado (correlação). Cruze com o histórico do usuário pra achar a causa.' };
+      } catch (e) {
+        return { error: String((e && e.message) || e).slice(0, 200) };
+      }
     },
   },
   write_file: {
@@ -10416,6 +10449,30 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
 }
 
 // ---- IPC: chat ----
+// ✨ VARINHA: melhora o prompt do usuário ANTES de enviar (usa o modelo de tarefa barato)
+ipcMain.handle('chat:improve-prompt', async (_e, text) => {
+  const cfg = loadConfig();
+  const t = String(text || '').slice(0, 8000);
+  if (!t.trim()) return { error: 'escreva algo primeiro' };
+  // contexto leve do projeto ajuda a especificar sem inventar
+  const ws = cfg.workspace ? ' O usuário está num projeto (' + path.basename(cfg.workspace) + (activeEditorFile ? ', arquivo ativo: ' + activeEditorFile : '') + ') — pode referenciar isso se o pedido for de código.' : '';
+  try {
+    const out = await llmComplete(cfg, [
+      {
+        role: 'system',
+        content:
+          'Você reescreve o pedido do usuário num prompt MELHOR para uma assistente-agente (que programa, usa ferramentas, mexe em arquivos): claro, específico e completo — objetivo, contexto necessário e critérios de aceite quando fizer sentido. NÃO invente requisitos que o usuário não deu, NÃO mude a intenção, mantenha o idioma e o tom. Pedido simples já bom? Só lapide. Responda SOMENTE com o prompt reescrito (sem comentários, sem aspas em volta).' + ws,
+      },
+      { role: 'user', content: t },
+    ]);
+    const clean = String(out || '').trim().replace(/^```[a-z]*\n?|```$/g, '').replace(/^["']+|["']+$/g, '').trim();
+    if (!clean) return { error: 'a I.A. não retornou nada' };
+    return { text: clean.slice(0, 8000) };
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 160) };
+  }
+});
+
 // prende a janela a uma conversa ('' = segue a ativa). Auto-limpa quando a janela fecha.
 ipcMain.handle('chat:bind', (e, session) => {
   const id = e.sender.id;
@@ -10959,6 +11016,124 @@ setInterval(() => {
     setTimeout(() => proactiveSay((late ? '⏰ (atrasado, eu estava fechada) Lembrete: ' : '⏰ Lembrete: ') + r.message, 'surprised'), i * 4000);
   });
 }, 15000);
+
+// ============================================================
+//  🛡️ SENTINELA DE LOGS DO SISTEMA (opt-in: config.logSentinel)
+//  Lê os erros do SO (Event Log/journalctl/log show), correlaciona com os
+//  processos em execução (quem lançou, com que comando) e: avisa (notify)
+//  ou dispara a investigação sozinha se o erro parecer do projeto (fix).
+// ============================================================
+let procSnapshot = new Map(); // nome do exe → linha de comando (última varredura)
+async function refreshProcessSnapshot() {
+  try {
+    if (process.platform === 'win32') {
+      const { stdout } = await execAsync(
+        'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object Name,CommandLine | ConvertTo-Json -Compress"',
+        { timeout: 20000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }
+      );
+      const arr = JSON.parse(stdout || '[]');
+      const next = new Map();
+      for (const p of Array.isArray(arr) ? arr : [arr]) {
+        if (p && p.Name && p.CommandLine && !next.has(p.Name.toLowerCase())) next.set(p.Name.toLowerCase(), String(p.CommandLine).slice(0, 300));
+      }
+      procSnapshot = next;
+    } else {
+      const { stdout } = await execAsync(process.platform === 'darwin' ? 'ps -axo comm=,args=' : 'ps -eo comm:32,args --no-headers', { timeout: 15000, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
+      const next = new Map();
+      for (const l of stdout.split('\n')) {
+        const name = l.slice(0, 32).trim().toLowerCase();
+        const args = l.slice(32).trim();
+        if (name && args && !next.has(name)) next.set(name, args.slice(0, 300));
+      }
+      procSnapshot = next;
+    }
+  } catch (e) {
+    /* snapshot é best-effort */
+  }
+}
+// lê os erros/avisos recentes do SISTEMA (multi-OS) → entradas estruturadas
+async function readSystemLogs(minutes, level) {
+  const mins = Math.max(5, Math.min(parseInt(minutes, 10) || 60, 24 * 60));
+  const entries = [];
+  if (process.platform === 'win32') {
+    const levels = level === 'warning' ? '@(1,2,3)' : '@(1,2)';
+    // try/catch DENTRO do PS: sem eventos na janela, Get-WinEvent "falha" (exit 1) — devolve [] em vez de estourar
+    const ps =
+      'try { Get-WinEvent -FilterHashtable @{LogName=@(\'Application\',\'System\'); Level=' + levels + '; StartTime=(Get-Date).AddMinutes(-' + mins + ')} -MaxEvents 60 -ErrorAction Stop | ' +
+      'Select-Object @{n=\'time\';e={$_.TimeCreated.ToString(\'s\')}},@{n=\'source\';e={$_.ProviderName}},Id,LevelDisplayName,Message | ConvertTo-Json -Compress } catch { \'[]\' }';
+    const { stdout } = await execAsync('powershell -NoProfile -Command "' + ps.replace(/"/g, '\\"') + '"', { timeout: 30000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+    let arr = [];
+    try {
+      arr = JSON.parse(stdout || '[]');
+    } catch (e) {
+      arr = [];
+    }
+    for (const ev of Array.isArray(arr) ? arr : [arr]) {
+      if (!ev) continue;
+      entries.push({ time: ev.time, source: ev.source, id: ev.Id, level: ev.LevelDisplayName, message: String(ev.Message || '').replace(/\s+/g, ' ').slice(0, 500) });
+    }
+  } else if (process.platform === 'linux') {
+    const pri = level === 'warning' ? 'warning' : 'err';
+    const { stdout } = await execAsync(`journalctl --no-pager -p ${pri} --since "${mins} min ago" -n 150 -o short-iso 2>/dev/null || true`, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+    for (const l of stdout.split('\n')) {
+      const m = l.match(/^(\S+)\s+\S+\s+([^:\[]+)(?:\[\d+\])?:\s+(.+)$/);
+      if (m) entries.push({ time: m[1], source: m[2].trim(), level: 'error', message: m[3].slice(0, 500) });
+    }
+  } else {
+    const { stdout } = await execAsync(`log show --last ${mins}m --predicate 'messageType == error' --style syslog 2>/dev/null | tail -n 150`, { timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+    for (const l of stdout.split('\n')) {
+      const m = l.match(/^(\S+ \S+)\s+\S*\s*(\S+)\s+.*?:\s*(.+)$/);
+      if (m) entries.push({ time: m[1], source: m[2], level: 'error', message: m[3].slice(0, 500) });
+    }
+  }
+  // correlação: erro menciona um exe que está rodando? anexa COMO ele foi lançado (comando)
+  for (const e of entries) {
+    const m = String(e.message || '').match(/([\w.-]+\.exe)/i);
+    const key = m && m[1] ? m[1].toLowerCase() : null;
+    if (key && procSnapshot.has(key)) e.launch = procSnapshot.get(key);
+  }
+  return { entries: entries.slice(0, 60) };
+}
+let sentinelSeen = new Set(); // assinaturas já tratadas (não re-alertar/re-corrigir o mesmo erro)
+async function logSentinelSweep() {
+  const cfg = loadConfig();
+  if (cfg.logSentinel !== 'notify' && cfg.logSentinel !== 'fix') return;
+  try {
+    await refreshProcessSnapshot(); // atualiza "quem está rodando + comando de lançamento"
+    const { entries } = await readSystemLogs(35, 'error');
+    const fresh = entries.filter((e) => {
+      const k = (e.source || '') + '|' + (e.id || '') + '|' + String(e.message || '').slice(0, 100);
+      if (sentinelSeen.has(k)) return false;
+      sentinelSeen.add(k);
+      return true;
+    });
+    if (sentinelSeen.size > 600) sentinelSeen = new Set([...sentinelSeen].slice(-300));
+    if (!fresh.length) return;
+    const ws = cfg.workspace || '';
+    const wsName = ws ? path.basename(ws).toLowerCase() : '';
+    const related = wsName
+      ? fresh.filter((e) => {
+          const m = (String(e.message || '') + ' ' + String(e.launch || '')).toLowerCase();
+          return m.includes(wsName) || (ws && m.includes(ws.toLowerCase().replace(/\\/g, '/')));
+        })
+      : [];
+    const top = fresh.slice(0, 3).map((e) => (e.source || '?') + ': ' + compactText(e.message, 110)).join(' · ');
+    broadcast('chat:note', {
+      text: '🛡️ Sentinela: ' + fresh.length + ' erro(s) novo(s) no sistema' + (related.length ? ' — ' + related.length + ' parece(m) do SEU projeto' : '') + '. ' + top + (related.length && cfg.logSentinel !== 'fix' ? ' (peça "investiga isso" ou ligue o modo corrigir)' : ''),
+    });
+    // modo FIX: erro do projeto → dispara a investigação sozinha (1 por varredura; nunca re-dispara o mesmo erro)
+    if (cfg.logSentinel === 'fix' && related.length && !agentRunning) {
+      const brief = related.slice(0, 2).map((e) => '[' + (e.time || '') + ' ' + (e.source || '') + (e.id ? '#' + e.id : '') + '] ' + compactText(e.message, 450) + (e.launch ? '\n(processo lançado com: ' + e.launch + ')' : '')).join('\n\n');
+      ipcMain.emit('chat:send', { sender: { id: -9, send: () => {} } }, {
+        text: '[🛡️ sentinela de logs — automático] O sistema registrou erro(s) que parecem relacionados ao projeto atual:\n\n' + brief + '\n\nInvestigue a causa NO PROJETO e corrija se aplicável (system_logs/locate_stack/get_problems ajudam). Se concluir que NÃO é do projeto, explique em 1-2 linhas e pare.',
+      });
+    }
+  } catch (e) {
+    logd('logSentinel', String((e && e.message) || e));
+  }
+}
+setInterval(logSentinelSweep, 30 * 60 * 1000); // varre a cada 30 min (no-op quando desligada)
+setTimeout(logSentinelSweep, 4 * 60 * 1000); // primeira varredura ~4 min após abrir (pega o que aconteceu antes)
 
 // loop do companheirismo (1x/min)
 setInterval(async () => {

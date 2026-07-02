@@ -1076,6 +1076,7 @@ const autoVerifyEl = document.getElementById('autoVerify');
 const selfReviewEl = document.getElementById('selfReview');
 const formatOnSaveEl = document.getElementById('formatOnSave');
 const preciousFilesEl = document.getElementById('preciousFiles');
+const logSentinelEl = document.getElementById('logSentinel');
 const codeEngineEl = document.getElementById('codeEngine');
 const claudeCodeCardEl = document.getElementById('claudeCodeCard');
 const claudeCodeModelEl = document.getElementById('claudeCodeModel');
@@ -1448,6 +1449,7 @@ async function openSettings() {
   selfReviewEl.checked = c.selfReview === true;
   formatOnSaveEl.checked = c.formatOnSave === true;
   preciousFilesEl.value = (Array.isArray(c.preciousFiles) ? c.preciousFiles : []).join(', ');
+  logSentinelEl.value = c.logSentinel || 'off';
   codeEngineEl.value = c.codeEngine || 'native';
   claudeCodeCardEl.classList.toggle('is-active', codeEngineEl.value === 'claude-code');
   claudeCodeModelEl.value = c.claudeCodeModel || 'sonnet';
@@ -1669,6 +1671,7 @@ function readForm() {
     selfReview: selfReviewEl.checked,
     formatOnSave: formatOnSaveEl.checked,
     preciousFiles: preciousFilesEl.value.split(',').map((s) => s.trim()).filter(Boolean),
+    logSentinel: logSentinelEl.value,
     codeEngine: codeEngineEl.value,
     claudeCodeModel: claudeCodeModelEl.value,
     claudeCodePermissionMode: claudeCodePermissionModeEl.value,

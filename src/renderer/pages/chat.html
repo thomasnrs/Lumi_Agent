@@ -1331,6 +1331,9 @@
         <button id="modelBtn" class="iconbtn" title="Trocar o modelo da I.A.">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>
         </button>
+        <button id="wandBtn" class="iconbtn" title="✨ Melhorar meu prompt (a I.A. reescreve antes de enviar — clique de novo pra desfazer)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>
+        </button>
         <button id="forkBtn" class="iconbtn" title="Forkar conversa (novo chat, mantém o resumo do anterior)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
         </button>
@@ -1846,6 +1849,7 @@
         apply_patch: 'aplicando um patch',
         get_problems: 'checando erros (lint/tipos)',
         generate_project_doc: 'escrevendo o CLAUDE.md',
+        system_logs: 'lendo os logs do sistema',
         append_file: 'editando arquivo',
         make_dir: 'criando pasta',
         delete_file: 'apagando arquivo',
@@ -2544,6 +2548,37 @@
             mpCurModel = c.model;
           }
         });
+
+      // ---------- ✨ varinha: melhora o prompt antes de enviar (clique de novo = desfaz) ----------
+      const wandBtn = document.getElementById('wandBtn');
+      let wandOrig = null; // original guardado pro desfazer
+      let wandLast = null; // último texto melhorado (se o input ainda for ele, dá pra desfazer)
+      wandBtn.addEventListener('click', async () => {
+        const cur = input.value;
+        if (!cur.trim()) return toast('escreva algo primeiro ✍️');
+        if (wandOrig !== null && cur === wandLast) {
+          input.value = wandOrig; // desfazer
+          wandOrig = null;
+          wandLast = null;
+          input.dispatchEvent(new Event('input'));
+          input.focus();
+          return toast('↩ prompt original restaurado');
+        }
+        wandBtn.disabled = true;
+        wandBtn.style.opacity = '0.5';
+        const r = await window.api.improvePrompt(cur);
+        wandBtn.disabled = false;
+        wandBtn.style.opacity = '';
+        if (r && r.error) return toast('⚠ ' + r.error, false);
+        if (r && r.text) {
+          wandOrig = cur;
+          wandLast = r.text;
+          input.value = r.text;
+          input.dispatchEvent(new Event('input')); // re-ajusta a altura do textarea
+          input.focus();
+          toast('✨ prompt melhorado — revise e envie (clique de novo pra desfazer)');
+        }
+      });
 
       // ---------- chip do arquivo ativo do editor (anexa a cada mensagem; clique liga/desliga) ----------
       const activeChip = document.getElementById('activeChip');

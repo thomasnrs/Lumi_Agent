@@ -834,6 +834,13 @@
             </label>
             <p class="hint" style="margin: 8px 0 4px">🛡️ Guardrails (comandos destrutivos bloqueados) estão sempre ligados. Arquivos protegidos (nunca apagar/sobrescrever), separados por vírgula:</p>
             <input id="preciousFiles" type="text" placeholder="icone.png, .env, chave.pem" autocomplete="off" />
+            <label style="margin-top: 10px">🛡️ Sentinela de logs do sistema (varre erros do SO a cada 30 min)</label>
+            <select id="logSentinel">
+              <option value="off">Desligada</option>
+              <option value="notify">Avisar sobre erros novos (crash de apps, drivers…)</option>
+              <option value="fix">Avisar + investigar sozinha se o erro for do projeto</option>
+            </select>
+            <p class="hint">Ela lê o Event Log/journalctl, cruza com os processos em execução (quem lançou, com que comando) e te avisa no chat. No modo "investigar", erros ligados ao workspace disparam a análise automaticamente.</p>
           </details>
 
           <p class="hint">🎨 Geração de imagens fica em "Gerar imagem" (clique direito → Gerar imagem).</p>

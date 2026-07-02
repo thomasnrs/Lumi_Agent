@@ -143,6 +143,7 @@ contextBridge.exposeInMainWorld('api', {
   openChatWindow: () => ipcRenderer.send('chat:open-window'), // nova conversa em nova janela
   openChatWindowFor: (id) => ipcRenderer.send('chats:open-window', id), // abre uma conversa existente em nova janela
   chatBind: (session) => ipcRenderer.invoke('chat:bind', session), // prende esta janela a uma conversa ('' = segue a ativa)
+  improvePrompt: (text) => ipcRenderer.invoke('chat:improve-prompt', text), // ✨ varinha: melhora o prompt antes de enviar
 
   // assistente de primeiro uso
   wizardVrms: () => ipcRenderer.invoke('wizard:vrms'),
