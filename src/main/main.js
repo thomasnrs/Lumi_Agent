@@ -1097,7 +1097,9 @@ const CODING_GUIDE =
   '7. Quando não souber algo (lib, versão atual, API, erro estranho), use web_search em vez de adivinhar.\n' +
   '8. Seja CONCISA e direta: explique decisões importantes em poucas linhas; o foco é a ação e o resultado, não textão. Mostre o progresso em passos pequenos (os diffs aparecem no chat).\n' +
   '9. Segurança: não rode comandos destrutivos sem motivo claro; antes de apagar/sobrescrever algo importante ou tomar uma decisão que é do USUÁRIO, valide com ask_user (pergunta com opções clicáveis).\n' +
-  '10. Depois de mudanças relevantes, ATUALIZE a memória do projeto com update_project_memory (visão geral, arquitetura, decisões, estrutura de arquivos e tarefas pendentes) — é isso que mantém seu contexto entre sessões/chats novos.\n' +
+  '10. MEMÓRIA EM CAMADAS (não duplique conteúdo entre elas):\n' +
+  '    - CLAUDE.md = o briefing ESTÁVEL do projeto (stack, estrutura, como rodar/verificar, convenções). Mudou a arquitetura ou o jeito de rodar? Atualize-o (generate_project_doc com update:true, ou edit_file pontual).\n' +
+  '    - .lumi-memory.md (update_project_memory) = seu CADERNO de trabalho entre sessões: decisões tomadas (e o PORQUÊ), pegadinhas/gotchas, tentativas que FALHARAM (pra não repetir), preferências do usuário neste projeto e pendências. NÃO repita o que já está no CLAUDE.md nem o que é óbvio lendo o código.\n' +
   '11. Tarefa com 3+ etapas? Mostre um PLANO com update_plan logo no início (passos curtos) e atualize os status (doing/done) conforme avança — o usuário acompanha pelo checklist.\n' +
   '12. GIT: só commite/push quando o usuário pedir. Commits atômicos com mensagem clara (o quê + porquê); confira git status/diff antes de commitar; NUNCA use --force nem reescreva histórico sem pedido explícito.';
 
@@ -1634,8 +1636,9 @@ function buildSystemPrompt(cfg) {
     }
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     const rules = readRepoRules(cfg.workspace);
-    if (rules) proj += `\n\n## Regras do repositório (escritas pelo dono do projeto — SIGA À RISCA, têm prioridade sobre o guia geral)\n${rules}`;
-    sp += '\n\n' + CODING_GUIDE + proj + `\n\n## Memória do projeto (.lumi-memory.md):\n${mem}`;
+    if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (fonte da verdade sobre stack/estrutura/como rodar/convenções; SIGA À RISCA, tem prioridade sobre o guia geral)\n${rules}`;
+    else proj += '\n\nEste projeto ainda NÃO tem CLAUDE.md. Quando você já tiver entendido o projeto, ofereça gerar um com generate_project_doc (briefing estável melhora todas as sessões futuras).';
+    sp += '\n\n' + CODING_GUIDE + proj + `\n\n## Sua memória de trabalho (.lumi-memory.md — decisões+porquê, gotchas, tentativas falhas, preferências, pendências; complementa o briefing, NÃO o repete):\n${mem}`;
   }
   // MULTI-AGENTES: lista a equipe disponivel para delegacao
   if (agentsAvailable(cfg)) {
@@ -3867,7 +3870,11 @@ const TOOLS = {
         fileCount: tree.length,
         tree: tree.slice(0, 400),
         keyFiles: key,
-        note: 'Resuma a arquitetura, o propósito e como rodar; aponte os pontos de entrada. Salve o essencial com update_project_memory.',
+        note:
+          'Resuma a arquitetura, o propósito e como rodar; aponte os pontos de entrada.' +
+          (fs.existsSync(path.join(cfg.workspace, 'CLAUDE.md'))
+            ? ' O CLAUDE.md é o briefing estável — se notar que ele divergiu do código, sugira atualizá-lo (generate_project_doc update:true).'
+            : ' Este projeto NÃO tem CLAUDE.md — ofereça gerar um com generate_project_doc (briefing estável pra todas as sessões). Decisões/gotchas vão na .lumi-memory (update_project_memory), sem duplicar o briefing.'),
       };
     },
   },
@@ -4167,7 +4174,7 @@ const TOOLS = {
     summary: () => 'ler a memória do projeto',
     schema: {
       name: 'read_project_memory',
-      description: 'Lê a memória do projeto atual (.lumi-memory.md no workspace). Use no início para retomar o contexto.',
+      description: 'Lê sua memória de TRABALHO do projeto (.lumi-memory.md): decisões, gotchas, preferências, pendências. Use pra retomar de onde parou. (O briefing estável — stack/estrutura/como rodar — vem do CLAUDE.md, já injetado no seu contexto.)',
       parameters: { type: 'object', properties: {} },
     },
     run: async () => {
@@ -4186,7 +4193,7 @@ const TOOLS = {
     schema: {
       name: 'update_project_memory',
       description:
-        'Salva/atualiza a memória do projeto (.lumi-memory.md). Inclua visão geral, arquitetura, decisões, estrutura de arquivos e tarefas pendentes.',
+        'Salva sua memória de TRABALHO do projeto (.lumi-memory.md) — o caderno que sobrevive entre sessões. Estruture nas seções: "## Decisões" (o quê + PORQUÊ), "## Gotchas" (pegadinhas/armadilhas), "## Preferências do usuário", "## Pendências". NÃO duplique o briefing do CLAUDE.md (stack/estrutura/como rodar) nem o que é óbvio no código.',
       parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
     },
     run: async ({ content }) => {
@@ -4199,10 +4206,31 @@ const TOOLS = {
       } catch (e) {
         /* memória ainda não existe */
       }
-      const newC = String(content || '');
+      let newC = String(content || '');
+      let compacted = false;
+      // memória crescendo demais → compacta (modelo de tarefa; best-effort, nunca bloqueia o save)
+      if (newC.length > 20000) {
+        try {
+          const c = await llmComplete(cfg, [
+            {
+              role: 'system',
+              content:
+                'Compacte esta memória de trabalho de projeto SEM perder informação útil. Preserve a estrutura em seções (## Decisões / ## Gotchas / ## Preferências do usuário / ## Pendências), mantenha decisões+porquês, gotchas e pendências ATUAIS; remova redundâncias, histórico obsoleto e o que já foi concluído há muito tempo. Responda SÓ com o markdown final (máx ~9000 caracteres).',
+            },
+            { role: 'user', content: newC.slice(0, 48000) },
+          ]);
+          const clean = String(c || '').replace(/^```[a-z]*\n?|```$/g, '').trim();
+          if (clean.length > 500) {
+            newC = clean;
+            compacted = true;
+          }
+        } catch (e) {
+          /* compactação falhou → salva como veio */
+        }
+      }
       fs.writeFileSync(fp, newC);
       broadcastDiff('.lumi-memory.md', oldC, newC); // mostra no chat o que ela resumiu/mudou
-      return { ok: true };
+      return { ok: true, compacted: compacted || undefined };
     },
   },
   open_url: {
@@ -4725,14 +4753,23 @@ const TOOLS = {
     schema: {
       name: 'generate_project_doc',
       description:
-        'Varre o projeto e escreve um CLAUDE.md sob medida (stack, estrutura, como rodar/verificar, convenções) — pra dar contexto de qualidade em TODA sessão futura. force:true sobrescreve um CLAUDE.md existente.',
-      parameters: { type: 'object', properties: { force: { type: 'boolean' } } },
+        'Escreve o CLAUDE.md do projeto (briefing estável: stack, estrutura, como rodar/verificar, convenções) — contexto de qualidade pra TODA sessão futura. Se já existir: update:true RECONCILIA com o código atual (preserva notas do dono que ainda valem); force:true reescreve do zero.',
+      parameters: { type: 'object', properties: { update: { type: 'boolean' }, force: { type: 'boolean' } } },
     },
-    run: async ({ force }) => {
+    run: async ({ force, update }) => {
       const cfg = loadConfig();
       if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
       const dest = path.join(cfg.workspace, 'CLAUDE.md');
-      if (fs.existsSync(dest) && !force) return { error: 'já existe um CLAUDE.md — passe force:true pra sobrescrever, ou ajuste com edit_file.' };
+      const exists = fs.existsSync(dest);
+      if (exists && !force && !update) return { error: 'já existe um CLAUDE.md — use update:true pra reconciliar com o código atual (preserva notas válidas), force:true pra reescrever do zero, ou edit_file pra um ajuste pontual.' };
+      let existing = '';
+      if (exists && update) {
+        try {
+          existing = fs.readFileSync(dest, 'utf8').slice(0, 8000);
+        } catch (e) {
+          /* ok */
+        }
+      }
       const stack = detectStack(cfg.workspace);
       let tree = [];
       try {
@@ -4763,9 +4800,10 @@ const TOOLS = {
           {
             role: 'system',
             content:
-              'Escreva um CLAUDE.md CONCISO e ÚTIL pra orientar uma IA a trabalhar neste projeto. Português, markdown. Seções: "# <Nome>" (1 linha do que é), "## Stack", "## Estrutura" (só o essencial: onde ficam as coisas), "## Como rodar / verificar" (comandos REAIS), "## Convenções" (padrões a seguir, inferidos). Específico e curto; sem encher linguiça. Baseie-se SÓ nos fatos dados; não invente.',
+              'Escreva um CLAUDE.md CONCISO e ÚTIL pra orientar uma IA a trabalhar neste projeto. Português, markdown. Seções: "# <Nome>" (1 linha do que é), "## Stack", "## Estrutura" (só o essencial: onde ficam as coisas), "## Como rodar / verificar" (comandos REAIS), "## Convenções" (padrões a seguir, inferidos). Específico e curto; sem encher linguiça. Baseie-se SÓ nos fatos dados; não invente.' +
+              (existing ? ' ATUALIZAÇÃO: existe um CLAUDE.md — reconcilie-o com os fatos atuais: corrija o que divergiu, PRESERVE notas/convenções escritas pelo dono que continuam válidas, remova o que não existe mais.' : ''),
           },
-          { role: 'user', content: 'Fatos do projeto:\n\n' + facts },
+          { role: 'user', content: (existing ? 'CLAUDE.md ATUAL:\n\n' + existing + '\n\n---\n\n' : '') + 'Fatos do projeto:\n\n' + facts },
         ]);
       } catch (e) {
         return { error: 'falha ao gerar (modelo): ' + String((e && e.message) || e) };
@@ -5681,9 +5719,9 @@ function subAgentSystemPrompt(cfg, agent) {
     if (isCoder && det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     if (isCoder) {
       const rules = readRepoRules(cfg.workspace);
-      if (rules) proj += `\n\n## Regras do repositório (SIGA À RISCA)\n${rules}`;
+      if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (SIGA À RISCA)\n${rules}`;
     }
-    sp += proj + `\n\n## Memória do projeto (.lumi-memory.md):\n${mem}`;
+    sp += proj + `\n\n## Memória de trabalho do projeto (.lumi-memory.md — decisões, gotchas, pendências; complementa o briefing, não o repete):\n${mem}`;
   }
   // resumo do que já rolou na conversa principal
   if (convSummary) {
