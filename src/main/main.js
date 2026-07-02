@@ -220,14 +220,24 @@ function wsCfg(e) {
   return cfg;
 }
 
-function sendToAll(channel, ...args) {
+// id de roteamento da sessão que está EMITINDO (fg segue o ponteiro currentChatId)
+function emitSid() {
+  const s = S();
+  return s === fgSession ? currentChatId : s.id;
+}
+// envia para as janelas certas: presas (winChat) recebem SÓ a sua conversa;
+// seguidoras/avatar recebem só a de PRIMEIRO PLANO — turnos paralelos não vazam entre janelas
+function sendToAllFor(sid, channel, ...args) {
   const chatScoped = typeof channel === 'string' && channel.indexOf('chat:') === 0;
   BrowserWindow.getAllWindows().forEach((w) => {
     if (w.isDestroyed()) return;
-    // chat:* → pula janelas PRESAS a outra conversa (avatar e seguidoras '*' sempre recebem)
-    if (chatScoped && !(win && w === win)) {
+    if (chatScoped) {
       const v = winChat.get(w.webContents.id);
-      if (v && v !== '*' && v !== currentChatId) return;
+      if (v && v !== '*') {
+        if (v !== sid) return; // janela presa: só eventos da SUA conversa
+      } else if (sid && sid !== currentChatId) {
+        return; // seguidoras (e avatar): só a conversa de primeiro plano
+      }
     }
     try {
       const frames = w.webContents.mainFrame.framesInSubtree; // frame principal + todos os iframes
@@ -246,29 +256,36 @@ function sendToAll(channel, ...args) {
     }
   });
 }
+function sendToAll(channel, ...args) {
+  sendToAllFor(emitSid(), channel, ...args);
+}
 
 // BATCHING dos tokens de stream: modelos cospem dezenas de eventos/s e cada um viraria
 // um IPC × janelas × iframes. Juntamos ~24ms de texto num envio só (imperceptível a olho)
 // e QUALQUER outro evento descarrega os tokens pendentes antes — a ordem nunca muda.
-const tokBatch = { token: '', thinking: '', agents: new Map() };
+// Com PARALELISMO, o batch é POR SESSÃO (sid) — streams simultâneos não se misturam.
+const tokBatch = new Map(); // sid -> { token, thinking, agents: Map }
 let tokFlushTimer = null;
+function tokBucket(sid) {
+  let b = tokBatch.get(sid);
+  if (!b) {
+    b = { token: '', thinking: '', agents: new Map() };
+    tokBatch.set(sid, b);
+  }
+  return b;
+}
 function flushTokenBatch() {
   if (tokFlushTimer) {
     clearTimeout(tokFlushTimer);
     tokFlushTimer = null;
   }
-  if (tokBatch.thinking) {
-    sendToAll('chat:thinking', tokBatch.thinking);
-    tokBatch.thinking = '';
+  if (!tokBatch.size) return;
+  for (const [sid, b] of tokBatch) {
+    if (b.thinking) sendToAllFor(sid, 'chat:thinking', b.thinking);
+    if (b.token) sendToAllFor(sid, 'chat:token', b.token);
+    for (const [agent, t] of b.agents) sendToAllFor(sid, 'chat:agent-token', { agent, t });
   }
-  if (tokBatch.token) {
-    sendToAll('chat:token', tokBatch.token);
-    tokBatch.token = '';
-  }
-  if (tokBatch.agents.size) {
-    for (const [agent, t] of tokBatch.agents) sendToAll('chat:agent-token', { agent, t });
-    tokBatch.agents.clear();
-  }
+  tokBatch.clear();
 }
 function scheduleTokenFlush() {
   if (!tokFlushTimer) tokFlushTimer = setTimeout(flushTokenBatch, 24);
@@ -276,23 +293,24 @@ function scheduleTokenFlush() {
 
 function broadcast(channel, ...args) {
   if (channel === 'chat:token') {
-    tokBatch.token += args[0] || '';
+    tokBucket(emitSid()).token += args[0] || '';
     scheduleTokenFlush();
     return;
   }
   if (channel === 'chat:thinking') {
-    tokBatch.thinking += args[0] || '';
+    tokBucket(emitSid()).thinking += args[0] || '';
     scheduleTokenFlush();
     return;
   }
   if (channel === 'chat:agent-token') {
     const d = args[0] || {};
-    tokBatch.agents.set(d.agent, (tokBatch.agents.get(d.agent) || '') + (d.t || ''));
+    const b = tokBucket(emitSid());
+    b.agents.set(d.agent, (b.agents.get(d.agent) || '') + (d.t || ''));
     scheduleTokenFlush();
     return;
   }
   flushTokenBatch(); // tokens pendentes saem ANTES de tool/done/erro etc. (ordem preservada)
-  logChatEvent(channel, args[0]); // grava na linha do tempo do chat (quando for evento de chat)
+  logChatEvent(channel, args[0]); // grava na linha do tempo do chat (na sessão que emitiu)
   if (channel === 'workspace:changed') liveNotifyReload(); // arquivos mudaram → live server recarrega as páginas
   sendToAll(channel, ...args);
 }
@@ -5968,7 +5986,7 @@ async function runTool(name, args) {
   const callKey = name + '|' + JSON.stringify(a);
   const identicalFails = S().toolCallLog.filter((c) => c.key === callKey && c.error && c.stateSeq === S().stateSeq).length;
   if (identicalFails >= 2) {
-    const last = [...toolCallLog].reverse().find((c) => c.key === callKey && c.error);
+    const last = [...S().toolCallLog].reverse().find((c) => c.key === callKey && c.error);
     const out = {
       error:
         'LOOP DETECTADO: você repetiu EXATAMENTE esta chamada e ela já falhou ' + identicalFails + 'x com: "' +
@@ -6957,9 +6975,9 @@ function contextMessagesForTurn() {
     return S().history.map(cloneContextMessage).filter(Boolean);
   }
   return [
-    ...history.slice(0, start).map(cloneContextMessage).filter(Boolean),
-    ...lastTurnContext.messages.map(cloneContextMessage).filter(Boolean),
-    ...history.slice(anchor).map(cloneContextMessage).filter(Boolean),
+    ...S().history.slice(0, start).map(cloneContextMessage).filter(Boolean),
+    ...S().lastTurnContext.messages.map(cloneContextMessage).filter(Boolean),
+    ...S().history.slice(anchor).map(cloneContextMessage).filter(Boolean),
   ];
 }
 function finalizeLastTurnContext(finalText) {
@@ -7020,7 +7038,7 @@ function recordToolTrace(name, args, result) {
 }
 function beginTurnLog() {
   resetTurnGuards(); // anti-loop + leia-antes-de-editar zeram a cada turno novo
-  const last = [...history].reverse().find((m) => m.role === 'user');
+  const last = [...S().history].reverse().find((m) => m.role === 'user');
   const raw = last && (typeof last.content === 'string' ? last.content : (last.content || []).filter((p) => p.type === 'text').map((p) => p.text).join(' '));
   S().currentTurnLog = {
     at: new Date().toISOString(),
@@ -7041,8 +7059,8 @@ function finishTurnLog(outcome, status) {
     at: S().currentTurnLog.at,
     goal: S().currentTurnLog.goal,
     status: status || 'completed',
-    filesRead: [...currentTurnLog.filesRead].slice(0, 40),
-    filesChanged: [...currentTurnLog.filesChanged].slice(0, 40),
+    filesRead: [...S().currentTurnLog.filesRead].slice(0, 40),
+    filesChanged: [...S().currentTurnLog.filesChanged].slice(0, 40),
     tools: S().currentTurnLog.tools,
     verification: S().currentTurnLog.verification.slice(-6),
     outcome: compactText(outcome, 700),
@@ -7218,16 +7236,18 @@ function titleFromHistory(h) {
 }
 // salva a conversa ATIVA no arquivo do chat atual (preserva createdAt e título renomeado)
 function saveCurrentChat() {
-  if (loadConfig().memoryEnabled === false || !currentChatId) return;
+  // salva a SESSÃO atual (fg fora de turno; a própria sessão dentro de um turno paralelo)
+  const sid = S().id || currentChatId;
+  if (loadConfig().memoryEnabled === false || !sid) return;
   try {
     let meta = {};
     try {
-      meta = JSON.parse(fs.readFileSync(chatFile(currentChatId), 'utf8')) || {};
+      meta = JSON.parse(fs.readFileSync(chatFile(sid), 'utf8')) || {};
     } catch (e) {
       /* chat novo */
     }
     const data = {
-      id: currentChatId,
+      id: sid,
       title: meta.customTitle ? meta.title : titleFromHistory(S().history),
       customTitle: !!meta.customTitle,
       createdAt: meta.createdAt || new Date().toISOString(),
@@ -7241,7 +7261,7 @@ function saveCurrentChat() {
       claudeSessionId: S().claudeSessionId,
       claudeSessionWorkspace: S().claudeSessionWorkspace,
     };
-    fs.writeFileSync(chatFile(currentChatId), JSON.stringify(data));
+    fs.writeFileSync(chatFile(sid), JSON.stringify(data));
   } catch (e) {
     /* ok */
   }
@@ -7286,7 +7306,8 @@ function loadChatInto(id) {
     S().claudeSessionId = j.claudeSessionId || '';
     S().claudeSessionWorkspace = j.claudeSessionWorkspace || '';
     S().pendingTurnTranscript = null;
-    currentChatId = j.id || id;
+    S().id = j.id || id; // identidade da SESSÃO (roteia eventos e o arquivo de save)
+    if (S() === fgSession) currentChatId = S().id; // ponteiro de primeiro plano só muda no fg
     return true;
   } catch (e) {
     return false;
@@ -7294,6 +7315,7 @@ function loadChatInto(id) {
 }
 function setCurrentChatId(id) {
   currentChatId = id;
+  fgSession.id = id; // invariante: currentChatId === fgSession.id
   try {
     const c = loadConfig();
     c.currentChatId = id;
@@ -7330,6 +7352,26 @@ function createEmptyChat() {
   }
   return id;
 }
+// sessão VIVA de um chat (cria e carrega do disco na 1ª vez) — é o que permite turnos PARALELOS
+function getSession(chatId) {
+  if (!chatId || chatId === fgSession.id) return fgSession;
+  let sess = sessions.get(chatId);
+  if (!sess) {
+    sess = makeSession(chatId);
+    sessionALS.run(sess, () => loadChatInto(chatId)); // carrega o histórico DENTRO do contexto da sessão
+    sessions.set(chatId, sess);
+    // teto de sessões vivas: descarta a ociosa mais antiga (o estado dela já foi salvo ao fim do turno)
+    if (sessions.size > 6) {
+      for (const [id2, s2] of sessions) {
+        if (!s2.running && id2 !== chatId) {
+          sessions.delete(id2);
+          break;
+        }
+      }
+    }
+  }
+  return sess;
+}
 // salva o atual e abre um chat novo (Nova conversa)
 function startNewChat() {
   saveCurrentChat();
@@ -7338,10 +7380,27 @@ function startNewChat() {
 }
 function switchChat(id) {
   if (!id || id === currentChatId) return;
-  saveCurrentChat();
+  saveCurrentChat(); // snapshot do fg atual (mesmo rodando: save intermediário é inofensivo)
+  // PARALELISMO: a fg atual vira sessão viva de fundo (se estiver no meio de um turno, ele CONTINUA);
+  // se o destino já tem sessão viva (rodando em paralelo), a gente a ADOTA como novo primeiro plano.
+  if (fgSession.id) sessions.set(fgSession.id, fgSession);
+  const live = sessions.get(id);
+  if (live) {
+    sessions.delete(id);
+    fgSession = live;
+    setCurrentChatId(fgSession.id);
+    broadcast('chat:reload');
+    return;
+  }
+  const fresh = makeSession(id);
+  const prev = fgSession;
+  fgSession = fresh; // S() fora de turno passa a apontar pro novo fg
   if (loadChatInto(id)) {
     setCurrentChatId(id);
     broadcast('chat:reload');
+  } else {
+    fgSession = prev; // falhou ao carregar: volta
+    sessions.delete(prev.id);
   }
 }
 function renameChat(id, title) {
@@ -7359,6 +7418,16 @@ function deleteChat(id) {
     fs.unlinkSync(chatFile(id));
   } catch (e) {
     /* ok */
+  }
+  // se havia sessão viva desse chat (talvez rodando em paralelo), aborta e descarta
+  const live = sessions.get(id);
+  if (live) {
+    try {
+      if (live.abort) live.abort.abort();
+    } catch (e) {
+      /* ok */
+    }
+    sessions.delete(id);
   }
   if (id === currentChatId) {
     const rest = listChats();
@@ -10373,7 +10442,7 @@ function claudePromptFromContent(content) {
   return text + (images ? `\n\n[${images} imagem(ns) foram anexadas na interface; o Modo Claude Code ainda não encaminha imagens diretamente.]` : '');
 }
 function claudeUserPrompt() {
-  const m = [...history].reverse().find((x) => x && x.role === 'user');
+  const m = [...S().history].reverse().find((x) => x && x.role === 'user');
   let prompt = m ? claudePromptFromContent(m.content) : '';
   if (recentWorkspaceFiles.length) {
     const files = recentWorkspaceFiles.splice(0);
@@ -10822,11 +10891,13 @@ ipcMain.handle('chat:bind', (e, session) => {
   e.sender.once('destroyed', () => winChat.delete(id));
   return true;
 });
-ipcMain.handle('chat:S().history', (e) => {
+ipcMain.handle('chat:history', (e) => {
   const id = senderChatId(e);
-  if (id === currentChatId) return { messages: S().history, events: S().chatEvents, archive: S().chatArchive };
+  // sessão VIVA (fg ou paralela) tem o estado mais fresco que o disco
+  const live = id === currentChatId ? fgSession : sessions.get(id);
+  if (live) return { messages: live.history, events: live.chatEvents, archive: live.chatArchive };
   try {
-    const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {}; // janela destacada: lê do disco
+    const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {}; // janela destacada ociosa: lê do disco
     return { messages: j.history || [], events: j.events || [], archive: j.archive || [] };
   } catch (e2) {
     return { messages: [], events: [], archive: [] };
@@ -10933,20 +11004,20 @@ async function expandMentions(text) {
   return { text: text + FILES_SENTINEL + blocks.join('\n\n'), files: used };
 }
 
-ipcMain.on('chat:send', async (_e, payload) => {
+// PARALELISMO: cada envio roda NA SESSÃO da conversa da janela (AsyncLocalStorage carrega a
+// sessão por todo o turno). Janela presa a outro chat → turno roda EM PARALELO com o fg.
+ipcMain.on('chat:send', (_e, payload) => {
+  const bound = winChat.get(_e.sender.id);
+  const sess = bound && bound !== '*' ? getSession(bound) : fgSession;
+  sessionALS.run(sess, () =>
+    handleChatSend(_e, payload).catch((err) => {
+      logd('chat:send', String((err && err.message) || err));
+    })
+  );
+});
+async function handleChatSend(_e, payload) {
   const raw = typeof payload === 'string' ? payload : payload.text || '';
   const images = (payload && payload.images) || [];
-  // multi-janela: se esta janela está presa a OUTRA conversa, troca a sessão ativa pra ela.
-  // Um turno por vez (serializado): se já há agente rodando, avisa e não interrompe.
-  const wantId = winChat.get(_e.sender.id);
-  if (wantId && wantId !== '*' && wantId !== currentChatId) {
-    if (S().running) {
-      _e.sender.send('chat:note', { text: '⏳ Outra conversa está processando — espere ela terminar antes de enviar aqui.' });
-      return;
-    }
-    saveCurrentChat();
-    if (loadChatInto(wantId)) setCurrentChatId(wantId);
-  }
   // a IA trabalha na PASTA DESTA JANELA (workspace window) — ou global se a janela não tem pasta própria
   S().workspace = winWorkspace.get(_e.sender.id) || null;
   const cfg = loadConfig();
@@ -10973,9 +11044,9 @@ ipcMain.on('chat:send', async (_e, payload) => {
   }
 
   S().history.push({ role: 'user', content });
-  broadcast('chat:user', { text, images }); // mostra em todas as janelas
+  broadcast('chat:user', { text, images }); // mostra nas janelas desta conversa
   await runChatTurn(cfg, true);
-});
+}
 
 // Roda um turno completo do agente sobre o S().history atual (usado pelo enviar E pelo regenerar)
 async function runChatTurn(cfg, popUserOnError) {
@@ -11056,7 +11127,7 @@ async function runChatTurn(cfg, popUserOnError) {
     if (S().cp && S().cp.files.size) {
       checkpoints.push(S().cp);
       if (checkpoints.length > 10) checkpoints.shift();
-      broadcast('chat:checkpoint', { id: S().cp.id, count: S().cp.files.size, files: [...currentCp.files.keys()] });
+      broadcast('chat:checkpoint', { id: S().cp.id, count: S().cp.files.size, files: [...S().cp.files.keys()] });
     }
     S().cp = null;
     S().running = false;
@@ -11066,7 +11137,13 @@ async function runChatTurn(cfg, popUserOnError) {
 }
 
 // Regenerar: descarta a última resposta e roda o turno de novo sobre o mesmo pedido
-ipcMain.on('chat:regen', async () => {
+// (roteado pela sessão da janela — regenerar num chat paralelo mexe SÓ nele)
+ipcMain.on('chat:regen', (e0) => {
+  const bound = e0 && e0.sender ? winChat.get(e0.sender.id) : null;
+  const sess = bound && bound !== '*' ? getSession(bound) : fgSession;
+  sessionALS.run(sess, () => handleChatRegen().catch((err) => logd('chat:regen', String((err && err.message) || err))));
+});
+async function handleChatRegen() {
   if (S().running) return; // não regenera no meio de um turno
   if (!S().history.length || S().history[S().history.length - 1].role !== 'assistant') return;
   S().history.pop();
@@ -11080,10 +11157,13 @@ ipcMain.on('chat:regen', async () => {
   S().chatEvents = S().chatEvents.filter((e) => e.a < S().history.length);
   broadcast('chat:reload'); // a UI re-renderiza sem a última resposta
   await runChatTurn(loadConfig(), false);
-});
+}
 
-// Stop: aborta o turno atual (botão de parar)
-ipcMain.on('chat:stop', () => {
+// Stop: aborta o turno DA SESSÃO da janela que clicou (paralelos não são afetados)
+ipcMain.on('chat:stop', (e0) => {
+  const bound = e0 && e0.sender ? winChat.get(e0.sender.id) : null;
+  const sess = bound && bound !== '*' ? sessions.get(bound) || (bound === fgSession.id ? fgSession : null) : fgSession;
+  if (!sess) return;
   if (activeClaudeQuery) {
     const q = activeClaudeQuery;
     Promise.resolve()
@@ -11097,17 +11177,17 @@ ipcMain.on('chat:stop', () => {
         }
       });
   }
-  if (S().abort) {
+  if (sess.abort) {
     try {
-      S().abort.abort();
+      sess.abort.abort();
     } catch (e) {
       /* ok */
     }
   }
   for (const ask of [...pendingAsks.values()]) ask.finish('(o usuário parou a tarefa)'); // destrava loops aguardando resposta
   for (const fin of [...pendingPerms.values()]) fin({ allow: false }); // permissões pendentes = negadas
-  S().steerQueue = [];
-  broadcast('chat:stopped');
+  sess.steerQueue = [];
+  sessionALS.run(sess, () => broadcast('chat:stopped')); // o "parado" vai pras janelas DESSA conversa
 });
 
 // ============================================================
