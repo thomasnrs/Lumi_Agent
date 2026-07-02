@@ -168,6 +168,22 @@ function senderChatId(e) {
   return v && v !== '*' ? v : currentChatId;
 }
 
+// multi-janela de WORKSPACE: cada janela = sua própria pasta + seu próprio chat + a IA
+// trabalhando NAQUELA pasta. winWorkspace: webContents.id -> pasta.
+//  - Handlers do EDITOR usam wsCfg(e) → resolvem a pasta DA JANELA (mesmo sem ser a sessão ativa).
+//  - As ferramentas da IA seguem `activeWorkspace` (a pasta da sessão que está rodando o turno).
+//    Como só roda 1 turno por vez (serializado), isso é sempre bem definido e não conflita.
+// Sem binding = pasta global (comportamento atual, retrocompatível).
+const winWorkspace = new Map();
+let activeWorkspace = null; // pasta da sessão ativa durante um turno (a IA trabalha nela)
+function wsCfg(e) {
+  const cfg = loadConfig();
+  const ws = e && e.sender && winWorkspace.get(e.sender.id);
+  if (ws) return { ...cfg, workspace: ws }; // janela do editor: sua própria pasta
+  if (activeWorkspace) return { ...cfg, workspace: rawWorkspace() }; // janela primária: pasta real (não a da sessão em turno)
+  return cfg;
+}
+
 function sendToAll(channel, ...args) {
   const chatScoped = typeof channel === 'string' && channel.indexOf('chat:') === 0;
   BrowserWindow.getAllWindows().forEach((w) => {
@@ -413,16 +429,27 @@ function loadConfig() {
     if (!cfgCache || cfgCache.mtimeMs !== mt) {
       cfgCache = { mtimeMs: mt, value: { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(configPath(), 'utf8')) } };
     }
-    return { ...cfgCache.value };
+    const v = { ...cfgCache.value };
+    if (activeWorkspace) v.workspace = activeWorkspace; // durante um turno, a IA trabalha na pasta da sessão ativa
+    return v;
   } catch (e) {
-    return { ...DEFAULT_CONFIG };
+    const v = { ...DEFAULT_CONFIG };
+    if (activeWorkspace) v.workspace = activeWorkspace;
+    return v;
   }
+}
+// pasta REAL do config (ignora o override de sessão) — pra não persistir a pasta da sessão como global
+function rawWorkspace() {
+  return (cfgCache && cfgCache.value && cfgCache.value.workspace) || '';
 }
 
 function saveConfig(cfg) {
-  fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2));
+  const toSave = { ...cfg };
+  // blindagem: a pasta da sessão ativa NUNCA deve ser gravada como workspace global do config.json
+  if (activeWorkspace && toSave.workspace === activeWorkspace) toSave.workspace = rawWorkspace();
+  fs.writeFileSync(configPath(), JSON.stringify(toSave, null, 2));
   try {
-    cfgCache = { mtimeMs: fs.statSync(configPath()).mtimeMs, value: { ...DEFAULT_CONFIG, ...cfg } };
+    cfgCache = { mtimeMs: fs.statSync(configPath()).mtimeMs, value: { ...DEFAULT_CONFIG, ...toSave } };
   } catch (e) {
     cfgCache = null; // na dúvida, o próximo loadConfig relê do disco
   }
@@ -2379,7 +2406,7 @@ function stripAnsi(s) {
     .replace(/\r/g, '');
 }
 
-ipcMain.handle('term:create', (_e, opts) => createTerminal(opts));
+ipcMain.handle('term:create', (e, opts) => createTerminal({ ...(opts || {}), cwd: (opts && opts.cwd) || winWorkspace.get(e.sender.id) || undefined }));
 
 // perfis de terminal (▾ ao lado do ＋): PowerShell/CMD/Git Bash/WSL no Windows, bash no Linux
 ipcMain.handle('term:profiles', async () => {
@@ -6439,6 +6466,62 @@ function openChatWindow(chatId, title) {
   return cw;
 }
 
+// Janela de WORKSPACE destacada (multi-instância), apontando pra uma PASTA própria.
+// Editor + chat embutido dessa janela trabalham nessa pasta (via winWorkspace/wsCfg).
+function openWorkspaceWindow(folder) {
+  // cada janela de workspace ganha sua PRÓPRIA conversa (chat embutido) associada à pasta
+  let session = '';
+  if (folder) {
+    session = genChatId();
+    try {
+      fs.writeFileSync(
+        chatFile(session),
+        JSON.stringify({ id: session, title: path.basename(folder), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [], workspace: folder })
+      );
+    } catch (e) {
+      /* ok */
+    }
+  }
+  const ww = new BrowserWindow({
+    width: 1320,
+    height: 720,
+    title: folder ? path.basename(folder) + ' — Workspace' : 'Workspace',
+    icon: ICON_PATH,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    backgroundColor: '#16161e',
+    autoHideMenuBar: true,
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: true,
+      webviewTag: true,
+    },
+    ...acrylicOpts(),
+  });
+  ww.setMenuBarVisibility(false);
+  ww.loadFile(path.join(__dirname, '..', 'renderer', 'pages', 'workspace.html'), { query: folder ? { ws: folder, session } : {} });
+  return ww;
+}
+// a janela do editor se prende a uma pasta ('' = pasta global). Auto-limpa ao fechar.
+ipcMain.handle('ws:bind', (e, folder) => {
+  const id = e.sender.id;
+  if (folder) winWorkspace.set(id, String(folder));
+  else winWorkspace.delete(id);
+  e.sender.once('destroyed', () => winWorkspace.delete(id));
+  return { workspace: winWorkspace.get(id) || rawWorkspace() || loadConfig().workspace || '' };
+});
+// abre uma OUTRA pasta numa nova janela de workspace (cada uma com seu editor + chat + IA)
+ipcMain.handle('workspace:open-window', async () => {
+  const r = await dialog.showOpenDialog({ title: 'Abrir pasta em nova janela', properties: ['openDirectory'] });
+  if (r.canceled || !r.filePaths || !r.filePaths[0]) return { canceled: true };
+  openWorkspaceWindow(r.filePaths[0]);
+  return { ok: true, folder: r.filePaths[0] };
+});
+
 // ============================================================
 //  Menu de contexto (clique direito no boneco)
 //  Renderizado numa janelinha própria com VIDRO (acrílico no Win11);
@@ -6974,15 +7057,15 @@ function safeWsPath(cfg, rel) {
   const fp = path.resolve(cfg.workspace, rel || '');
   return fp.startsWith(path.resolve(cfg.workspace)) ? fp : null;
 }
-ipcMain.handle('workspace:tree', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:tree', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return [];
   const out = [];
   await walkWorkspace(cfg.workspace, cfg.workspace, out, 0);
   return out.sort();
 });
-ipcMain.handle('workspace:read', (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:read', (e, rel) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return null;
   try {
@@ -6992,8 +7075,8 @@ ipcMain.handle('workspace:read', (_e, rel) => {
   }
 });
 // lê um arquivo de imagem do workspace como data URL (para o preview no editor)
-ipcMain.handle('workspace:read-image', (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:read-image', (e, rel) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return null;
   try {
@@ -7006,8 +7089,8 @@ ipcMain.handle('workspace:read-image', (_e, rel) => {
     return null;
   }
 });
-ipcMain.handle('workspace:write', (_e, { rel, content }) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:write', (e, { rel, content }) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return false;
   let oldC = '';
@@ -7071,22 +7154,22 @@ async function buildWsTree(rootAbs) {
   }
   return root;
 }
-ipcMain.handle('workspace:fulltree', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:fulltree', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return null;
   return await buildWsTree(cfg.workspace);
 });
 // lazy: filhos de UMA pasta sob demanda (a UI pode pedir ao expandir uma não-carregada)
-ipcMain.handle('workspace:children', async (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:children', async (e, rel) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return [];
   return await lsLevel(fp, cfg.workspace);
 });
 
 // busca global no projeto (Ctrl+Shift+F do editor): texto simples, case-insensitive
-ipcMain.handle('workspace:search', async (_e, query) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:search', async (e, query) => {
+  const cfg = wsCfg(e);
   const q = String(query || '').toLowerCase();
   if (!cfg.workspace || q.length < 2) return { results: [], truncated: false };
   // ripgrep primeiro (rápido, respeita .gitignore); cai pro walk async se rg indisponível
@@ -7150,8 +7233,8 @@ ipcMain.handle('workspace:search', async (_e, query) => {
 });
 
 // branch + nº de alterações (statusbar do editor)
-ipcMain.handle('workspace:gitinfo', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:gitinfo', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return {};
   try {
     const { stdout: br } = await execAsync('git rev-parse --abbrev-ref HEAD', { cwd: cfg.workspace, timeout: 4000, windowsHide: true });
@@ -7163,8 +7246,8 @@ ipcMain.handle('workspace:gitinfo', async () => {
 });
 
 // git status do workspace (cores no explorer): M=modificado, A=novo, D=apagado, ??=não rastreado
-ipcMain.handle('workspace:gitstatus', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:gitstatus', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return {};
   try {
     const { stdout } = await execAsync('git status --porcelain -uall', { cwd: cfg.workspace, timeout: 5000, windowsHide: true });
@@ -7202,8 +7285,8 @@ function gitRun(cfg, args, opts) {
 }
 
 // status detalhado: staged e unstaged SEPARADOS (porcelain v1 -z aguenta espaço/rename no nome)
-ipcMain.handle('git:panel-status', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:panel-status', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace definido' };
   try {
     const { stdout: br } = await gitRun(cfg, ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -7242,8 +7325,8 @@ ipcMain.handle('git:panel-status', async () => {
 });
 
 // conteúdo do arquivo no HEAD (lado "original" do diff); '' se o arquivo é novo
-ipcMain.handle('git:head-file', async (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:head-file', async (e, rel) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !rel) return '';
   try {
     const { stdout } = await gitRun(cfg, ['show', 'HEAD:' + String(rel).replace(/\\/g, '/')]);
@@ -7253,8 +7336,8 @@ ipcMain.handle('git:head-file', async (_e, rel) => {
   }
 });
 
-ipcMain.handle('git:stage', async (_e, paths) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:stage', async (e, paths) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !Array.isArray(paths) || !paths.length) return { error: 'nada para preparar' };
   try {
     await gitRun(cfg, ['add', '--', ...paths]);
@@ -7264,8 +7347,8 @@ ipcMain.handle('git:stage', async (_e, paths) => {
   }
 });
 
-ipcMain.handle('git:unstage', async (_e, paths) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:unstage', async (e, paths) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !Array.isArray(paths) || !paths.length) return { error: 'nada para despreparar' };
   try {
     await gitRun(cfg, ['reset', '-q', 'HEAD', '--', ...paths]);
@@ -7277,8 +7360,8 @@ ipcMain.handle('git:unstage', async (_e, paths) => {
 
 // descarta alterações: rastreado → volta pro HEAD; não rastreado → apaga o arquivo
 // (a CONFIRMAÇÃO é na UI — aqui só executa)
-ipcMain.handle('git:discard', async (_e, paths) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:discard', async (e, paths) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !Array.isArray(paths) || !paths.length) return { error: 'nada para descartar' };
   const errors = [];
   for (const rel of paths) {
@@ -7298,8 +7381,8 @@ ipcMain.handle('git:discard', async (_e, paths) => {
   return errors.length ? { error: errors.join('; ') } : { ok: true };
 });
 
-ipcMain.handle('git:commit', async (_e, { message, stageAll }) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:commit', async (e, { message, stageAll }) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace definido' };
   if (!message || !message.trim()) return { error: 'mensagem vazia' };
   try {
@@ -7312,8 +7395,8 @@ ipcMain.handle('git:commit', async (_e, { message, stageAll }) => {
 });
 
 // ✦ a Lumi escreve a mensagem olhando o diff (staged se houver; senão, tudo)
-ipcMain.handle('git:ai-message', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:ai-message', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace definido' };
   try {
     const { stdout: stagedNames } = await gitRun(cfg, ['diff', '--cached', '--name-only']);
@@ -7346,8 +7429,8 @@ ipcMain.handle('git:ai-message', async () => {
 });
 
 // ✦ a Lumi REVISA o diff antes do commit (bugs reais, riscos, casos não tratados)
-ipcMain.handle('git:ai-review', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:ai-review', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace definido' };
   try {
     const { stdout: stagedNames } = await gitRun(cfg, ['diff', '--cached', '--name-only']);
@@ -7371,8 +7454,8 @@ ipcMain.handle('git:ai-review', async () => {
 });
 
 // histórico de commits (lista) + detalhe de um commit (stat + patch)
-ipcMain.handle('git:log', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:log', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return [];
   try {
     const { stdout } = await gitRun(cfg, ['log', '--format=%h%x09%s%x09%cr%x09%an', '-n', '30']);
@@ -7387,8 +7470,8 @@ ipcMain.handle('git:log', async () => {
     return [];
   }
 });
-ipcMain.handle('git:show-commit', async (_e, hash) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:show-commit', async (e, hash) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !/^[0-9a-f]{4,40}$/i.test(String(hash || ''))) return { error: 'commit inválido' };
   try {
     const { stdout } = await gitRun(cfg, ['show', hash, '--stat', '--patch', '--no-color', '--format=%h %s%n%an · %ad%n']);
@@ -7399,8 +7482,8 @@ ipcMain.handle('git:show-commit', async (_e, hash) => {
 });
 
 // linhas alteradas de UM arquivo vs HEAD (barrinhas de gutter no editor)
-ipcMain.handle('git:line-status', async (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:line-status', async (e, rel) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !rel) return null;
   try {
     const { stdout } = await gitRun(cfg, ['diff', 'HEAD', '--unified=0', '--no-color', '--', rel]);
@@ -7423,8 +7506,8 @@ ipcMain.handle('git:line-status', async (_e, rel) => {
   }
 });
 
-ipcMain.handle('git:branches', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:branches', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return [];
   try {
     const { stdout } = await gitRun(cfg, ['branch', '--format=%(refname:short)']);
@@ -7434,8 +7517,8 @@ ipcMain.handle('git:branches', async () => {
   }
 });
 
-ipcMain.handle('git:checkout', async (_e, { name, create }) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:checkout', async (e, { name, create }) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !name) return { error: 'branch inválida' };
   try {
     await gitRun(cfg, create ? ['checkout', '-b', name] : ['checkout', name]);
@@ -7445,8 +7528,8 @@ ipcMain.handle('git:checkout', async (_e, { name, create }) => {
   }
 });
 
-ipcMain.handle('git:push', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:push', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace' };
   try {
     const { stdout } = await gitRun(cfg, ['push']);
@@ -7467,8 +7550,8 @@ ipcMain.handle('git:push', async () => {
   }
 });
 
-ipcMain.handle('git:pull', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:pull', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace' };
   try {
     const { stdout } = await gitRun(cfg, ['pull', '--ff-only']);
@@ -7479,8 +7562,8 @@ ipcMain.handle('git:pull', async () => {
 });
 
 // ---- stash: guardar/listar/aplicar/descartar alterações ----
-ipcMain.handle('git:stash-list', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:stash-list', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return [];
   try {
     const { stdout } = await gitRun(cfg, ['stash', 'list', '--format=%gd\t%s']);
@@ -7492,8 +7575,8 @@ ipcMain.handle('git:stash-list', async () => {
     return [];
   }
 });
-ipcMain.handle('git:stash', async (_e, { action, ref }) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:stash', async (e, { action, ref }) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return { error: 'nenhum workspace' };
   try {
     if (action === 'push') await gitRun(cfg, ['stash', 'push', '-u']); // -u inclui não rastreados
@@ -7509,8 +7592,8 @@ ipcMain.handle('git:stash', async (_e, { action, ref }) => {
 });
 
 // ---- conflitos de merge: listar e resolver (ficar com o nosso / o deles) ----
-ipcMain.handle('git:conflicts', async () => {
-  const cfg = loadConfig();
+ipcMain.handle('git:conflicts', async (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return [];
   try {
     const { stdout } = await gitRun(cfg, ['diff', '--name-only', '--diff-filter=U']);
@@ -7519,8 +7602,8 @@ ipcMain.handle('git:conflicts', async () => {
     return [];
   }
 });
-ipcMain.handle('git:resolve', async (_e, { file, side }) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:resolve', async (e, { file, side }) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !file) return { error: 'inválido' };
   // ours = a versão da branch atual; theirs = a que está vindo (merge/rebase)
   const opt = side === 'theirs' ? '--theirs' : '--ours';
@@ -7535,8 +7618,8 @@ ipcMain.handle('git:resolve', async (_e, { file, side }) => {
 });
 
 // ---- blame: autor/data/commit por linha de um arquivo ----
-ipcMain.handle('git:blame', async (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('git:blame', async (e, rel) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !rel) return null;
   try {
     const { stdout } = await gitRun(cfg, ['blame', '--line-porcelain', '--', rel]);
@@ -8024,8 +8107,8 @@ ipcMain.handle('live:stop', () => {
 
 // drop de arquivo externo no explorador: copia pro workspace (funciona inclusive
 // quando o workspace é um mount remoto Z: — o sshfs envia pro servidor)
-ipcMain.handle('workspace:import-file', async (_e, { srcPath, destDir }) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:import-file', async (e, { srcPath, destDir }) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace || !srcPath) return { error: 'inválido' };
   const dest = safeWsPath(cfg, path.join(destDir || '', path.basename(srcPath)));
   if (!dest) return { error: 'destino fora do workspace' };
@@ -8041,8 +8124,8 @@ ipcMain.handle('workspace:import-file', async (_e, { srcPath, destDir }) => {
     return { error: String((e && e.message) || e).slice(0, 160) };
   }
 });
-ipcMain.handle('workspace:create', (_e, { rel, dir }) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:create', (e, { rel, dir }) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return { error: 'workspace inválido' };
   try {
@@ -8058,8 +8141,8 @@ ipcMain.handle('workspace:create', (_e, { rel, dir }) => {
     return { error: String((e && e.message) || e) };
   }
 });
-ipcMain.handle('workspace:delete', (_e, rel) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:delete', (e, rel) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp || fp === path.resolve(cfg.workspace)) return { error: 'caminho inválido' };
   try {
@@ -8069,8 +8152,8 @@ ipcMain.handle('workspace:delete', (_e, rel) => {
     return { error: String((e && e.message) || e) };
   }
 });
-ipcMain.handle('workspace:rename', (_e, { rel, name }) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:rename', (e, { rel, name }) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
   if (!fp) return { error: 'caminho inválido' };
   const clean = String(name || '').replace(/[\\/]/g, '').trim();
@@ -8085,8 +8168,8 @@ ipcMain.handle('workspace:rename', (_e, { rel, name }) => {
   }
 });
 // mover um arquivo/pasta para outra pasta (drag & drop)
-ipcMain.handle('workspace:move', (_e, { src, destDir }) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:move', (e, { src, destDir }) => {
+  const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, src);
   const destAbs = cfg.workspace && safeWsPath(cfg, destDir || '');
   if (!fp || destAbs == null) return { error: 'caminho inválido' };
@@ -8154,17 +8237,17 @@ function startWorkspaceWatcher() {
   }
 }
 
-ipcMain.handle('workspace:get-memory', () => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:get-memory', (e) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return '';
   try {
     return fs.readFileSync(workspaceMemoryPath(cfg), 'utf8');
-  } catch (e) {
+  } catch (e2) {
     return '';
   }
 });
-ipcMain.handle('workspace:set-memory', (_e, content) => {
-  const cfg = loadConfig();
+ipcMain.handle('workspace:set-memory', (e, content) => {
+  const cfg = wsCfg(e);
   if (!cfg.workspace) return false;
   fs.writeFileSync(workspaceMemoryPath(cfg), content || '');
   return true;
@@ -8303,8 +8386,8 @@ ipcMain.on('editor:active', (_e, rel) => {
 });
 
 // revela o arquivo no Explorer/Finder do sistema (menu Arquivo do editor)
-ipcMain.on('workspace:reveal', (_e, rel) => {
-  const ws = loadConfig().workspace;
+ipcMain.on('workspace:reveal', (e, rel) => {
+  const ws = wsCfg(e).workspace;
   if (!ws) return;
   if (rel) shell.showItemInFolder(path.join(ws, rel));
   else shell.openPath(ws);
@@ -9332,6 +9415,8 @@ ipcMain.on('chat:send', async (_e, payload) => {
     saveCurrentChat();
     if (loadChatInto(wantId)) setCurrentChatId(wantId);
   }
+  // a IA trabalha na PASTA DESTA JANELA (workspace window) — ou global se a janela não tem pasta própria
+  activeWorkspace = winWorkspace.get(_e.sender.id) || null;
   const cfg = loadConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)

@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('api', {
   setWorkspaceMemory: (content) => ipcRenderer.invoke('workspace:set-memory', content),
   getWorkspaceTree: () => ipcRenderer.invoke('workspace:tree'),
   getWorkspaceFullTree: () => ipcRenderer.invoke('workspace:fulltree'),
+  wsBind: (folder) => ipcRenderer.invoke('ws:bind', folder), // prende a janela do editor a uma pasta
+  openWorkspaceWindow: () => ipcRenderer.invoke('workspace:open-window'), // escolhe pasta e abre em nova janela
   getWorkspaceChildren: (rel) => ipcRenderer.invoke('workspace:children', rel),
   readWorkspaceFile: (rel) => ipcRenderer.invoke('workspace:read', rel),
   readWorkspaceImage: (rel) => ipcRenderer.invoke('workspace:read-image', rel),

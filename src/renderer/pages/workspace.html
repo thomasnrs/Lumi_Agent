@@ -3267,10 +3267,18 @@
       // ============================================================
       //  Barra de menus (estilo VS Code) + troca rápida de workspace
       // ============================================================
+      // multi-janela: esta janela do editor pode ter PASTA própria (?ws) e CHAT próprio (?session)
+      const boundWorkspace = new URLSearchParams(location.search).get('ws') || '';
+      if (boundWorkspace && window.api.wsBind) window.api.wsBind(boundWorkspace); // resolve antes do loadTree (IPC rápido)
+      (function () {
+        const s = new URLSearchParams(location.search).get('session') || '';
+        const cf = document.getElementById('chatframe');
+        if (s && cf) cf.src = 'chat.html?session=' + encodeURIComponent(s); // chat embutido = conversa própria desta janela
+      })();
       const rootnameEl = document.getElementById('rootname');
       async function updateRoot() {
         try {
-          const ws = (await window.api.getConfig()).workspace || '';
+          const ws = boundWorkspace || (await window.api.getConfig()).workspace || '';
           rootnameEl.textContent = ws ? ws.replace(/\\/g, '/').split('/').pop().toUpperCase() : 'Explorer';
           rootnameEl.title = ws;
         } catch (e) {
@@ -3531,6 +3539,7 @@
             const rec = (c.recentWorkspaces || []).filter((w) => w !== c.workspace);
             return [
               { label: 'Abrir pasta (workspace)…', icon: MI.folderOpen, fn: openFolder },
+              { label: 'Abrir pasta em NOVA janela…', icon: MI.folderOpen, hint: 'chat + IA próprios', fn: () => window.api.openWorkspaceWindow && window.api.openWorkspaceWindow() },
               { label: '📡 Abrir pasta remota (SSH)…', icon: MI.plug, fn: openRemote },
               ...(remoteActive ? [{ label: '⏏ Fechar pasta remota (' + remoteActive + ')', icon: MI.reveal, fn: closeRemote }] : []),
               ...(await (async () => {
