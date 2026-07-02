@@ -1787,7 +1787,12 @@
         if (cur) refreshTab(cur);
         updateGitGutter();
       }
-      window.api.onWorkspaceChanged(() => {
+      const normWsPath = (s) => String(s || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+      window.api.onWorkspaceChanged((root) => {
+        // multi-janela: mudança veio com o ROOT da pasta — se não é a MINHA pasta, ignora
+        // (sem root = evento genérico de ferramenta → todas atualizam, como antes)
+        const mine = normWsPath(boundWorkspace || (rootnameEl && rootnameEl.title) || '');
+        if (root && mine && normWsPath(root) !== mine) return;
         if (document.querySelector('.modal')) return; // não atrapalha criação/rename em andamento
         // janela em BACKGROUND: adia (a IA editando N arquivos disparava N walks da árvore
         // sem ninguém olhando — em remoto isso é rede). Refaz UMA vez ao voltar o foco.

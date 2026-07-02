@@ -153,6 +153,7 @@ function makeSession(id) {
     pendingTurnTranscript: null,
     claudeSessionId: '',
     claudeSessionWorkspace: '',
+    claudeQuery: null, // Query do Agent SDK em andamento NESTA sessão (Stop interrompe só ela)
   };
 }
 let fgSession = makeSession(''); // sessão de primeiro plano
@@ -258,6 +259,27 @@ function sendToAllFor(sid, channel, ...args) {
 }
 function sendToAll(channel, ...args) {
   sendToAllFor(emitSid(), channel, ...args);
+}
+// envia para UMA janela específica (por webContents.id) — terminais por janela usam isto
+function sendToWc(wcId, channel, ...args) {
+  if (wcId == null) return sendToAll(channel, ...args);
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed() || w.webContents.id !== wcId) continue;
+    try {
+      for (const f of w.webContents.mainFrame.framesInSubtree) {
+        try {
+          f.send(channel, ...args);
+        } catch (e) {
+          /* frame descartado */
+        }
+      }
+    } catch (e) {
+      try {
+        w.webContents.send(channel, ...args);
+      } catch (_) {}
+    }
+    return;
+  }
 }
 
 // BATCHING dos tokens de stream: modelos cospem dezenas de eventos/s e cada um viraria
@@ -3070,7 +3092,11 @@ function flushTermBatch() {
     termFlushTimer = null;
   }
   if (!termBatch.size) return;
-  for (const [id, data] of termBatch) sendToAll('term:data', { id, data });
+  for (const [id, data] of termBatch) {
+    const rec = terminals.get(id);
+    if (rec && rec.owner != null) sendToWc(rec.owner, 'term:data', { id, data }); // terminal de janela: só a dona
+    else sendToAll('term:data', { id, data });
+  }
   termBatch.clear();
 }
 
@@ -3083,7 +3109,8 @@ function createTerminal(opts) {
   const id = 't' + ++termSeq;
   const title = o.title || path.basename(shell, '.exe');
   logd('term:create', { shell, args: profArgs, cwd, pty: !!nodePty });
-  const rec = { p: null, pty: false, title, buf: '', ai: !!o.ai }; // ai = aberto pela Lumi (política de limpeza)
+  // owner = webContents da janela que criou (terminais POR JANELA); null = da Lumi/global (todas veem)
+  const rec = { p: null, pty: false, title, buf: '', ai: !!o.ai, owner: o.owner != null ? o.owner : null };
   const push = (d) => {
     rec.buf = (rec.buf + d).slice(-200000); // final do scrollback (replay da UI + leitura da IA)
     // BATCH 16ms: build despejando MB/s virava um IPC por chunk × janelas × frames — e cada
@@ -3093,7 +3120,8 @@ function createTerminal(opts) {
   };
   const onExit = (code) => {
     flushTermBatch(); // entrega o resto da saída ANTES do exit (ordem preservada)
-    broadcast('term:exit', { id, exitCode: code });
+    if (rec.owner != null) sendToWc(rec.owner, 'term:exit', { id, exitCode: code });
+    else broadcast('term:exit', { id, exitCode: code });
     terminals.delete(id);
   };
   try {
@@ -3116,7 +3144,9 @@ function createTerminal(opts) {
     return { error: 'não consegui abrir o terminal (' + path.basename(shell) + '): ' + e.message };
   }
   terminals.set(id, rec);
-  broadcast('term:opened', { id, title, pty: rec.pty }); // a UI do workspace cria a aba
+  // a UI cria a aba: terminal de janela vai SÓ pra dona; da Lumi (owner null) vai pra todas
+  if (rec.owner != null) sendToWc(rec.owner, 'term:opened', { id, title, pty: rec.pty });
+  else broadcast('term:opened', { id, title, pty: rec.pty });
   if (o.command) termWrite(rec, String(o.command) + (rec.pty ? '\r' : '\n'));
   return { id, pid: rec.p.pid, shell: title, pty: rec.pty };
 }
@@ -3145,7 +3175,18 @@ function stripAnsi(s) {
     .replace(/\r/g, '');
 }
 
-ipcMain.handle('term:create', (e, opts) => createTerminal({ ...(opts || {}), cwd: (opts && opts.cwd) || winWorkspace.get(e.sender.id) || undefined }));
+const termOwnersHooked = new Set(); // janelas com terminais: ao fechar, mata os dela (sem órfãos invisíveis)
+ipcMain.handle('term:create', (e, opts) => {
+  const wcId = e.sender.id;
+  if (!termOwnersHooked.has(wcId)) {
+    termOwnersHooked.add(wcId);
+    e.sender.once('destroyed', () => {
+      termOwnersHooked.delete(wcId);
+      for (const [, r] of terminals) if (r.owner === wcId) termKill(r);
+    });
+  }
+  return createTerminal({ ...(opts || {}), cwd: (opts && opts.cwd) || winWorkspace.get(wcId) || undefined, owner: wcId });
+});
 
 // perfis de terminal (▾ ao lado do ＋): PowerShell/CMD/Git Bash/WSL no Windows, bash no Linux
 ipcMain.handle('term:profiles', async () => {
@@ -3942,7 +3983,11 @@ ipcMain.on('term:kill', (_e, id) => {
   const t = terminals.get(id);
   if (t) termKill(t);
 });
-ipcMain.handle('term:list', () => [...terminals.entries()].map(([id, r]) => ({ id, pid: r.p.pid, title: r.title })));
+ipcMain.handle('term:list', (e) =>
+  [...terminals.entries()]
+    .filter(([, r]) => r.owner == null || r.owner === e.sender.id) // cada janela vê os SEUS (+ os da Lumi)
+    .map(([id, r]) => ({ id, pid: r.p.pid, title: r.title }))
+);
 ipcMain.handle('term:buffer', (_e, id) => {
   const t = terminals.get(id);
   return t ? t.buf : '';
@@ -5912,7 +5957,7 @@ function toolSchemas(opts) {
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
-let activeClaudeQuery = null; // Query do Agent SDK em andamento (Stop chama interrupt/close)
+// (claudeQuery agora vive na Session — Claude Code roda em PARALELO, um por sessão)
 const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file', 'apply_patch']; // apply_patch conta: auto-verify/self-review/checkpoint
 
 // ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
@@ -8132,9 +8177,14 @@ function openWorkspaceWindow(folder) {
 // a janela do editor se prende a uma pasta ('' = pasta global). Auto-limpa ao fechar.
 ipcMain.handle('ws:bind', (e, folder) => {
   const id = e.sender.id;
-  if (folder) winWorkspace.set(id, String(folder));
-  else winWorkspace.delete(id);
-  e.sender.once('destroyed', () => winWorkspace.delete(id));
+  if (folder) {
+    winWorkspace.set(id, String(folder));
+    watchFolder(String(folder), id); // auto-refresh da pasta DESTA janela (árvore/abas/git)
+  } else winWorkspace.delete(id);
+  e.sender.once('destroyed', () => {
+    unwatchFolder(winWorkspace.get(id) || String(folder || ''), id);
+    winWorkspace.delete(id);
+  });
   return { workspace: winWorkspace.get(id) || rawWorkspace() || loadConfig().workspace || '' };
 });
 // abre uma OUTRA pasta numa nova janela de workspace (cada uma com seu editor + chat + IA)
@@ -9552,10 +9602,8 @@ ipcMain.handle('db:ai-sql', async (_e, question) => {
 //  Serve os arquivos estáticos + injeta um script nas páginas HTML com:
 //  recarga automática (SSE) e o modo "apontar elemento" (🎯 → chat da Lumi)
 // ============================================================
-let liveSrv = null;
-let livePort = 0;
-let liveSse = []; // conexões SSE das páginas abertas (recebem o sinal de reload)
-let liveReloadTimer = null;
+// LIVE SERVER POR WORKSPACE: cada janela/pasta tem a SUA instância (porta própria)
+const liveServers = new Map(); // root -> { srv, port, sse: [], reloadTimer }
 const LIVE_MIME = {
   html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8', js: 'text/javascript', mjs: 'text/javascript',
   css: 'text/css', json: 'application/json', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
@@ -9587,18 +9635,20 @@ const LIVE_CLIENT_JS =
   '})();';
 
 function liveNotifyReload() {
-  if (!liveSrv) return;
-  clearTimeout(liveReloadTimer);
-  liveReloadTimer = setTimeout(() => {
-    liveSse = liveSse.filter((r) => !r.writableEnded);
-    liveSse.forEach((r) => {
-      try {
-        r.write('data: reload\n\n');
-      } catch (e) {
-        /* conexão caiu */
-      }
-    });
-  }, 120); // junta rajadas de saves num reload só
+  // avisa TODAS as instâncias (um save recarrega o preview de cada workspace aberto)
+  for (const rec of liveServers.values()) {
+    clearTimeout(rec.reloadTimer);
+    rec.reloadTimer = setTimeout(() => {
+      rec.sse = rec.sse.filter((r) => !r.writableEnded);
+      rec.sse.forEach((r) => {
+        try {
+          r.write('data: reload\n\n');
+        } catch (e) {
+          /* conexão caiu */
+        }
+      });
+    }, 120); // junta rajadas de saves num reload só
+  }
 }
 
 // pasta sem index.html → página de listagem navegável (estilo live-server clássico)
@@ -9632,8 +9682,9 @@ function liveListing(res, dir, u) {
   );
 }
 
-function liveHandler(req, res) {
-  const cfg = loadConfig();
+function makeLiveHandler(root, rec) {
+  return function liveHandler(req, res) {
+  const cfg = { workspace: root }; // serve a pasta DESTA instância (não a global)
   const u = decodeURIComponent((req.url || '/').split('?')[0]);
   if (u === '/__lumi/client.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript' });
@@ -9642,9 +9693,9 @@ function liveHandler(req, res) {
   if (u === '/__lumi/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write('retry: 800\n\n');
-    liveSse.push(res);
+    rec.sse.push(res);
     req.on('close', () => {
-      liveSse = liveSse.filter((r) => r !== res);
+      rec.sse = rec.sse.filter((r) => r !== res);
     });
     return;
   }
@@ -9687,45 +9738,51 @@ function liveHandler(req, res) {
     res.writeHead(500);
     res.end(String((e && e.message) || e));
   }
+  };
 }
 
-ipcMain.handle('live:start', async () => {
-  const cfg = loadConfig();
-  if (!cfg.workspace) return { error: 'defina o workspace primeiro (Modo arquiteto)' };
-  if (liveSrv) return { port: livePort };
+// um live server POR WORKSPACE: cada janela liga o da sua pasta (porta própria)
+ipcMain.handle('live:start', async (e) => {
+  const root = wsCfg(e).workspace;
+  if (!root) return { error: 'defina o workspace primeiro (Modo arquiteto)' };
+  const existing = liveServers.get(root);
+  if (existing) return { port: existing.port };
   const http = require('http');
-  for (let port = 5500; port < 5520; port++) {
+  const used = new Set([...liveServers.values()].map((r) => r.port));
+  for (let port = 5500; port < 5540; port++) {
+    if (used.has(port)) continue;
     try {
+      const rec = { srv: null, port, sse: [], reloadTimer: null };
       await new Promise((resolve, reject) => {
-        const s = http.createServer(liveHandler);
+        const s = http.createServer(makeLiveHandler(root, rec));
         s.once('error', reject);
         s.listen(port, '127.0.0.1', () => {
-          liveSrv = s;
-          livePort = port;
+          rec.srv = s;
           resolve();
         });
       });
-      return { port: livePort };
-    } catch (e) {
+      liveServers.set(root, rec);
+      return { port };
+    } catch (e2) {
       /* porta ocupada — tenta a próxima */
     }
   }
-  return { error: 'nenhuma porta livre entre 5500 e 5519' };
+  return { error: 'nenhuma porta livre entre 5500 e 5539' };
 });
 
-ipcMain.handle('live:stop', () => {
-  if (liveSrv) {
+ipcMain.handle('live:stop', (e) => {
+  const root = wsCfg(e).workspace;
+  const rec = liveServers.get(root);
+  if (rec) {
     try {
-      liveSse.forEach((r) => {
+      rec.sse.forEach((r) => {
         try {
           r.end();
-        } catch (e) {}
+        } catch (e2) {}
       });
-      liveSrv.close();
-    } catch (e) {}
-    liveSrv = null;
-    liveSse = [];
-    livePort = 0;
+      rec.srv.close();
+    } catch (e2) {}
+    liveServers.delete(root);
   }
   return { ok: true };
 });
@@ -9810,56 +9867,82 @@ ipcMain.handle('workspace:move', (e, { src, destDir }) => {
   }
 });
 
-// ---- watcher: avisa o editor quando arquivos mudam (auto-refresh) ----
-let wsWatcher = null;
-let wsWatchTimer = null;
-function startWorkspaceWatcher() {
-  try {
-    if (wsWatcher) wsWatcher.close();
-  } catch (e) {
-    /* ok */
+// ---- watchers POR PASTA: o global (workspace principal) + um por janela destacada ----
+// Cada pasta observada avisa com o ROOT no evento — as janelas filtram o que é delas.
+const wsWatchers = new Map(); // root -> { close(), refs: Set, timer }
+function watchFolder(root, refKey) {
+  if (!root) return;
+  let rec = wsWatchers.get(root);
+  if (rec) {
+    rec.refs.add(refKey);
+    return;
   }
-  wsWatcher = null;
-  const ws = loadConfig().workspace;
-  if (!ws) return;
+  rec = { refs: new Set([refKey]), timer: null, close: () => {} };
+  const fire = () => {
+    clearTimeout(rec.timer);
+    rec.timer = setTimeout(() => broadcast('workspace:changed', root), 300);
+  };
   try {
-    wsWatcher = fs.watch(ws, { recursive: true }, (_evt, filename) => {
+    const w = fs.watch(root, { recursive: true }, (_evt, filename) => {
       const f = String(filename || '');
       if (/(^|[\\/])(node_modules|\.git|dist|build|out|\.next|\.cache)([\\/]|$)/.test(f)) return;
       // ignora internos .lumi-* MAS deixa a memória do projeto atualizar a árvore (aparece ao ser criada)
       if (/\.lumi-/.test(f) && !/\.lumi-memory\.md$/.test(f)) return;
-      clearTimeout(wsWatchTimer);
-      wsWatchTimer = setTimeout(() => broadcast('workspace:changed'), 300);
+      fire();
     });
     // FS de rede pode emitir 'error' depois (drive caiu) — sem listener isso DERRUBA o processo
-    wsWatcher.on('error', (e) => logd('wsWatcher error (drive caiu?)', String((e && e.message) || e)));
+    w.on('error', (e) => logd('wsWatcher error (drive caiu?)', String((e && e.message) || e)));
+    rec.close = () => {
+      try {
+        w.close();
+      } catch (e) {
+        /* ok */
+      }
+    };
   } catch (e) {
     // fs.watch recursive indisponível (Linux antigo / FS de rede) -> polling leve como fallback
-    wsWatcher = { close: () => clearInterval(wsPollTimer) };
     let lastSig = '';
     const remote = !!remoteMount; // workspace via SSHFS: poll mais espaçado e SEM stat (rede)
-    const wsPollTimer = setInterval(() => {
+    const pollTimer = setInterval(() => {
       try {
         // assinatura barata: nomes (+ mtime só no local) do 1º nível
         const sig = fs
-          .readdirSync(ws)
+          .readdirSync(root)
           .filter((n) => !['node_modules', '.git', 'dist'].includes(n))
           .map((n) => {
             if (remote) return n; // sem statSync por entrada em FS de rede
             try {
-              return n + fs.statSync(path.join(ws, n)).mtimeMs;
+              return n + fs.statSync(path.join(root, n)).mtimeMs;
             } catch (_) {
               return n;
             }
           })
           .join('|');
-        if (lastSig && sig !== lastSig) broadcast('workspace:changed');
+        if (lastSig && sig !== lastSig) broadcast('workspace:changed', root);
         lastSig = sig;
       } catch (_) {
         /* workspace pode ter sumido */
       }
     }, remote ? 10000 : 3000);
+    rec.close = () => clearInterval(pollTimer);
   }
+  wsWatchers.set(root, rec);
+}
+function unwatchFolder(root, refKey) {
+  const rec = root && wsWatchers.get(root);
+  if (!rec) return;
+  rec.refs.delete(refKey);
+  if (!rec.refs.size) {
+    clearTimeout(rec.timer);
+    rec.close();
+    wsWatchers.delete(root);
+  }
+}
+function startWorkspaceWatcher() {
+  // re-aponta o watcher GLOBAL (workspace principal) — os das janelas destacadas continuam
+  for (const [root, rec] of [...wsWatchers]) if (rec.refs.has('global')) unwatchFolder(root, 'global');
+  const ws = loadConfig().workspace;
+  if (ws) watchFolder(ws, 'global');
 }
 
 ipcMain.handle('workspace:get-memory', (e) => {
@@ -10714,7 +10797,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   if (sameWorkspace) options.resume = S().claudeSessionId;
 
   const q = query({ prompt, options });
-  activeClaudeQuery = q;
+  S().claudeQuery = q;
   let full = '';
   let streamedMain = false;
   const streamedAgents = new Set();
@@ -10901,7 +10984,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   } finally {
     await refreshClaudeUsageHud();
     await capabilitiesPromise.catch(() => {});
-    if (activeClaudeQuery === q) activeClaudeQuery = null;
+    if (S().claudeQuery === q) S().claudeQuery = null;
     try {
       q.close();
     } catch (e) {
@@ -11227,8 +11310,8 @@ ipcMain.on('chat:stop', (e0) => {
   const bound = e0 && e0.sender ? winChat.get(e0.sender.id) : null;
   const sess = bound && bound !== '*' ? sessions.get(bound) || (bound === fgSession.id ? fgSession : null) : fgSession;
   if (!sess) return;
-  if (activeClaudeQuery) {
-    const q = activeClaudeQuery;
+  if (sess.claudeQuery) {
+    const q = sess.claudeQuery;
     Promise.resolve()
       .then(() => q.interrupt())
       .catch(() => {})
