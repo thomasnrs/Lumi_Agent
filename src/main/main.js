@@ -347,7 +347,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de software sênior. Implemente a tarefa de ponta a ponta: localize com find_in_code/grep_files, leia só o necessário (read_file com symbol/around_line), faça a mudança mínima seguindo o padrão do projeto, e VERIFIQUE em escada — get_problems após editar, run_tests com filter no que mexeu. Antes de concluir, olhe git_diff (o que VOCÊ mudou). Ao final, resuma: o que mudou, como verificou (comando + resultado) e pendências. Nunca afirme sucesso sem evidência.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'run_tests', 'get_problems', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'outline', 'find_usages', 'env_info', 'git_status', 'git_diff', 'git_log', 'run_tests', 'get_problems', 'locate_stack', 'apply_patch', 'db_schema', 'db_query', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
     },
     {
       name: 'Revisor',
@@ -356,7 +356,7 @@ const DEFAULT_CONFIG = {
         'Você é um revisor crítico e construtivo. Baseie a revisão em EVIDÊNCIA: comece por git_diff/git_status (o que mudou de fato) e git_log (contexto recente); rode get_problems pra erros objetivos; use locate_stack se houver traceback. Aponte bugs, riscos, segurança/performance e melhorias CONCRETAS (com o porquê, o arquivo:linha e como corrigir). Priorize o que importa; ignore estilo/nitpick. NÃO altere arquivos — apenas analise e recomende.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'get_problems', 'locate_stack', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'grep_files', 'outline', 'find_usages', 'git_status', 'git_diff', 'git_log', 'get_problems', 'locate_stack', 'read_project_memory'],
     },
     {
       name: 'Testador',
@@ -374,7 +374,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira especialista em refatoração. Melhore legibilidade, organização e qualidade SEM alterar o comportamento externo. Mudanças pequenas e seguras, no padrão do projeto — e PROVE que nada quebrou: get_problems + run_tests(filter) após cada mudança; confira o git_diff antes de concluir. Explique cada melhoria brevemente (o quê + porquê).',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'get_problems', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'outline', 'find_usages', 'git_status', 'git_diff', 'run_tests', 'get_problems', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
     },
     {
       name: 'Designer',
@@ -3974,6 +3974,8 @@ function askUserInChat(question, options, opts) {
   });
 }
 
+let _envInfoCache = null; // raio-X do ambiente (env_info) — 10 min de validade
+
 // Registro de ferramentas: schema (pro modelo) + category (permissao) + run (execucao)
 const TOOLS = {
   run_in_terminal: {
@@ -5157,6 +5159,183 @@ const TOOLS = {
       }
     },
   },
+  outline: {
+    category: 'read',
+    summary: (a) => 'mapear símbolos de "' + ((a && a.path) || '') + '"',
+    schema: {
+      name: 'outline',
+      description:
+        'MAPA de um arquivo: lista funções/classes/métodos com a linha de cada um. Use pra pular direto pro trecho certo (depois leia com read_file symbol=<nome> ou around_line=<linha>) em vez de varrer o arquivo inteiro.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+    run: async ({ path: p }) => {
+      const abs = resolvePath(p);
+      let txt;
+      try {
+        txt = readTextFileSmart(abs).text;
+      } catch (e) {
+        const sug = await suggestPaths(loadConfig(), p);
+        return { error: 'não consegui ler "' + p + '"' + (sug.length ? ' — você quis dizer: ' + sug.join(' | ') + '?' : '') };
+      }
+      if (txt.includes('\0')) return { error: 'arquivo binário' };
+      const lines = txt.split('\n');
+      const symbols = [];
+      for (let i = 0; i < lines.length && symbols.length < 400; i++) {
+        const name = defNameAt(lines[i]);
+        if (name) symbols.push({ name, line: i + 1, preview: lines[i].trim().slice(0, 120) });
+      }
+      return {
+        path: p,
+        totalLines: lines.length,
+        symbols,
+        note: symbols.length ? 'leia um símbolo com read_file(path, symbol=<name>) ou around_line=<line>' : 'nenhum símbolo reconhecido (heurística) — navegue com grep_files',
+      };
+    },
+  },
+  find_usages: {
+    category: 'read',
+    summary: (a) => 'achar usos de "' + ((a && a.symbol) || '') + '"',
+    schema: {
+      name: 'find_usages',
+      description:
+        'Acha onde um símbolo (função/classe/variável) é USADO e onde é DEFINIDO no workspace (palavra inteira). Cada match traz symbol/context. Use ANTES de renomear ou mudar assinatura pra medir o impacto.',
+      parameters: {
+        type: 'object',
+        properties: { symbol: { type: 'string' }, path: { type: 'string', description: 'limita a uma pasta (opcional)' } },
+        required: ['symbol'],
+      },
+    },
+    run: async ({ symbol, path: sub }) => {
+      const name = String(symbol || '').trim();
+      if (!/^[A-Za-z_$][\w$]*$/.test(name)) return { error: 'símbolo inválido — use um identificador simples (sem espaços/pontos)' };
+      const pattern = '\\b' + name.replace(/\$/g, '\\$') + '\\b';
+      const r = await TOOLS.grep_files.run({ pattern, path: sub, regex: true }); // reusa ripgrep+fallback+enriquecimento
+      if (r.error) return r;
+      const definitions = [];
+      const usages = [];
+      for (const m of r.matches || []) {
+        if (defNameAt(m.text) === name) definitions.push(m);
+        else usages.push(m);
+      }
+      return {
+        symbol: name,
+        definitions,
+        usages,
+        total: (r.matches || []).length,
+        truncated: r.truncated,
+        note: definitions.length ? undefined : 'nenhuma DEFINIÇÃO reconhecida (pode ser import/lib externa) — os usos listados valem',
+      };
+    },
+  },
+  env_info: {
+    category: 'read',
+    summary: () => 'raio-X do ambiente (SO, versões, gerenciador)',
+    schema: {
+      name: 'env_info',
+      description:
+        'Raio-X do AMBIENTE: SO/arch, shell, versões instaladas (node, npm/pnpm/yarn, python, go, rust, git, docker), gerenciador de pacotes DO PROJETO (lockfile) e stack detectada. Use antes de rodar comandos pra não chutar errado (ex.: npm num projeto pnpm). Cache de 10 min.',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      const now = Date.now();
+      if (_envInfoCache && now - _envInfoCache.at < 10 * 60000) return _envInfoCache.data;
+      const cfg = loadConfig();
+      const vers = {};
+      const probe = async (label, cmd) => {
+        try {
+          const { stdout } = await execAsync(cmd, { timeout: 6000, windowsHide: true });
+          const v = String(stdout || '').trim().split('\n')[0].slice(0, 60);
+          if (v) vers[label] = v;
+        } catch (e) {
+          /* ausente */
+        }
+      };
+      await Promise.all([
+        probe('node', 'node --version'),
+        probe('npm', 'npm --version'),
+        probe('pnpm', 'pnpm --version'),
+        probe('yarn', 'yarn --version'),
+        probe('python', process.platform === 'win32' ? 'python --version' : 'python3 --version'),
+        probe('go', 'go version'),
+        probe('rust', 'rustc --version'),
+        probe('git', 'git --version'),
+        probe('docker', 'docker --version'),
+      ]);
+      const has = (f) => {
+        try {
+          return !!cfg.workspace && fs.existsSync(path.join(cfg.workspace, f));
+        } catch (e) {
+          return false;
+        }
+      };
+      const pm = has('pnpm-lock.yaml') ? 'pnpm' : has('yarn.lock') ? 'yarn' : has('bun.lockb') ? 'bun' : has('package-lock.json') ? 'npm' : null;
+      const det = cfg.workspace ? detectStackCached(cfg.workspace) : {};
+      const data = {
+        os: process.platform + ' ' + require('os').release() + ' (' + process.arch + ')',
+        shell: process.platform === 'win32' ? 'PowerShell/cmd' : process.env.SHELL || 'bash',
+        versions: vers,
+        workspace: cfg.workspace || null,
+        packageManager: pm,
+        stack: det.stack || null,
+        verifyCommand: det.verify || null,
+        caps: envCaps,
+        note: pm ? 'use ' + pm + ' neste projeto (lockfile detectado)' : undefined,
+      };
+      _envInfoCache = { at: now, data };
+      return data;
+    },
+  },
+  db_schema: {
+    category: 'read',
+    summary: () => 'ver o schema do banco conectado',
+    schema: {
+      name: 'db_schema',
+      description:
+        'Schema do banco CONECTADO na aba BANCO do workspace: tabelas+colunas (pg/mysql), coleções+campos (mongo) ou dicas de comandos (redis). Use pra entender os dados antes de escrever queries ou código de backend.',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      if (!dbConn) return { error: 'nenhum banco conectado — conecte na aba BANCO do workspace (o usuário controla a conexão)' };
+      try {
+        const schema = await dbSchema();
+        return { kind: dbConn.kind, label: dbConn.label, schema: truncate(schema, 12000) };
+      } catch (e) {
+        return { error: String((e && e.message) || e).slice(0, 200) };
+      }
+    },
+  },
+  db_query: {
+    category: 'read',
+    summary: (a) => 'consultar o banco: ' + String((a && a.query) || '').slice(0, 60),
+    schema: {
+      name: 'db_query',
+      description:
+        'Consulta SOMENTE-LEITURA no banco conectado (aba BANCO). pg/mysql: SELECT/SHOW/EXPLAIN/WITH/DESCRIBE (1 statement). mongo: "colecao {filtroJSON}". redis: comandos de leitura (GET/KEYS/HGETALL/LRANGE/SCAN/TTL/TYPE...). Escrita é RECUSADA — alterações são decisão do usuário, pelo painel.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+    run: async ({ query }) => {
+      if (!dbConn) return { error: 'nenhum banco conectado — conecte na aba BANCO do workspace' };
+      const q = String(query || '').trim();
+      if (!q) return { error: 'query vazia' };
+      if (dbConn.kind === 'pg' || dbConn.kind === 'mysql') {
+        if (!/^(select|show|explain|with|describe|desc)\b/i.test(q)) return { error: 'só LEITURA (SELECT/SHOW/EXPLAIN/WITH/DESCRIBE) — escrita é do usuário, pelo painel BANCO' };
+        if (/;\s*\S/.test(q)) return { error: 'um statement por vez' };
+        if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke)\b/i.test(q)) return { error: 'a query contém palavra de ESCRITA — só leitura aqui' };
+      } else if (dbConn.kind === 'redis') {
+        if (!/^(get|mget|keys|scan|hgetall|hget|hkeys|lrange|llen|smembers|scard|zrange|zcard|ttl|type|exists|strlen|dbsize|info)\b/i.test(q)) return { error: 'só comandos de LEITURA no Redis' };
+      }
+      try {
+        const r = await dbRun(q);
+        if (r.rows && r.rows.length > 100) {
+          r.rows = r.rows.slice(0, 100);
+          r.truncated = true;
+        }
+        return { kind: dbConn.kind, columns: r.columns, rows: r.rows, rowCount: r.rowCount, truncated: r.truncated ? 'mostrando 100 linhas — refine com WHERE/LIMIT' : undefined };
+      } catch (e) {
+        return { error: String((e && e.message) || e).slice(0, 300) };
+      }
+    },
+  },
   write_file: {
     category: 'write',
     summary: (a) => `criar/sobrescrever "${a.path}"`,
@@ -5679,17 +5858,15 @@ let chatAbort = null; // AbortController do turno atual (botão Stop)
 let agentRunning = false; // há um turno do agente em andamento?
 let steerQueue = []; // mensagens enviadas DURANTE o processamento (steering)
 let activeClaudeQuery = null; // Query do Agent SDK em andamento (Stop chama interrupt/close)
-const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file'];
+const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file', 'apply_patch']; // apply_patch conta: auto-verify/self-review/checkpoint
 
 // ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
 let currentCp = null; // {id, ts, files: Map<rel, conteúdo|null>} do turno em andamento
 let checkpoints = []; // pilha dos últimos turnos com edições (memória da sessão, máx 10)
 let cpSeq = 0;
 const CHECKPOINT_TURN_BYTES = 4 * 1024 * 1024;
-function captureForCheckpoint(name, a) {
-  if (!currentCp || !['write_file', 'edit_file', 'append_file', 'delete_file'].includes(name)) return;
-  const rel = a && a.path;
-  if (!rel || currentCp.files.has(rel)) return; // só o estado ANTES da 1ª mexida no arquivo
+function snapshotForCheckpoint(rel) {
+  if (!currentCp || !rel || currentCp.files.has(rel)) return; // só o estado ANTES da 1ª mexida no arquivo
   try {
     const abs = resolvePath(rel);
     if (fs.existsSync(abs)) {
@@ -5701,6 +5878,23 @@ function captureForCheckpoint(name, a) {
   } catch (e) {
     /* snapshot é melhor-esforço */
   }
+}
+function captureForCheckpoint(name, a) {
+  if (!currentCp) return;
+  // apply_patch mexe em VÁRIOS arquivos sem args.path — extrai do próprio diff (senão o ↩ desfazer não cobria)
+  if (name === 'apply_patch' && a && a.patch) {
+    const seen = new Set();
+    for (const mm of String(a.patch).matchAll(/^(?:\+\+\+ b|--- a)\/(.+)$/gm)) {
+      const rel = mm[1].trim();
+      if (rel && rel !== '/dev/null' && !seen.has(rel)) {
+        seen.add(rel);
+        snapshotForCheckpoint(rel);
+      }
+    }
+    return;
+  }
+  if (!['write_file', 'edit_file', 'append_file', 'delete_file'].includes(name)) return;
+  snapshotForCheckpoint(a && a.path);
 }
 ipcMain.handle('checkpoint:undo', (_e, id) => {
   const idx = checkpoints.findIndex((c) => c.id === id);
@@ -6784,6 +6978,10 @@ function recordToolTrace(name, args, result) {
   const p = args && args.path;
   if (p && ['read_file', 'view_image'].includes(name)) currentTurnLog.filesRead.add(String(p));
   if (p && WRITE_TOOLS.includes(name) && status === 'success') currentTurnLog.filesChanged.add(String(p));
+  // apply_patch não tem args.path — os arquivos alterados vêm no resultado
+  if (name === 'apply_patch' && status === 'success' && result && Array.isArray(result.files)) {
+    for (const f of result.files) currentTurnLog.filesChanged.add(String(f));
+  }
 }
 function beginTurnLog() {
   resetTurnGuards(); // anti-loop + leia-antes-de-editar zeram a cada turno novo

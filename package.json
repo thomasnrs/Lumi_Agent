@@ -9,6 +9,7 @@
     "start": "npm run build && electron .",
     "electron": "electron .",
     "icon": "node scripts/make-icon.js",
+    "test": "node --test tests/helpers.test.js",
     "pack": "npm run build && electron-builder --dir",
     "dist": "node scripts/dist.js",
     "rebuild:pty": "node scripts/rebuild-pty.js"
@@ -61,6 +62,9 @@
       "icone.png"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@vscode/ripgrep/**"
+    ],
     "asarUnpack": [
       "node_modules/@anthropic-ai/claude-agent-sdk*/**/*"
     ],
