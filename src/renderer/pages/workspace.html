@@ -38,7 +38,11 @@
         font-size: 12px;
         cursor: pointer;
         transition: background 0.12s, border-color 0.12s, color 0.12s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
       }
+      #top button svg { width: 13px; height: 13px; flex: 0 0 auto; }
       #top button:hover {
         background: color-mix(in srgb, var(--accent) 14%, transparent);
         border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
@@ -410,6 +414,21 @@
         padding: 3px 6px;
         gap: 1px;
       }
+      /* nome do projeto centralizado na barra de menus (estilo VS Code) */
+      #menuProject {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        color: color-mix(in srgb, var(--text) 55%, transparent);
+        pointer-events: none;
+        max-width: 38%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .mlabel {
         padding: 4px 10px;
         cursor: pointer;
@@ -674,14 +693,14 @@
     <link rel="stylesheet" href="../../../node_modules/@xterm/xterm/css/xterm.css" />
   </head>
   <body>
-    <div id="menubar"></div>
+    <div id="menubar"><span id="menuProject"></span></div>
     <div id="top">
       <span class="path" id="curpath">Nenhum arquivo aberto</span>
-      <button id="liveBtn" title="Live Server — preview ao vivo com recarga automática">⚡ Live</button>
-      <button id="webBtn" title="Navegador embutido — acesse o localhost dos seus dev servers">🌐 Web</button>
-      <button id="toggleTerm" title="Terminal (Ctrl+`)">⌨ Terminal</button>
-      <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi">💬 Chat</button>
-      <button id="save" title="Salvar (Ctrl+S)">💾 Salvar</button>
+      <button id="liveBtn" title="Live Server — preview ao vivo com recarga automática"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>Live</button>
+      <button id="webBtn" title="Navegador embutido — acesse o localhost dos seus dev servers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>Web</button>
+      <button id="toggleTerm" title="Terminal (Ctrl+`)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Terminal</button>
+      <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>Chat</button>
+      <button id="save" title="Salvar (Ctrl+S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>Salvar</button>
     </div>
     <div id="main">
       <div id="side">
@@ -3397,11 +3416,17 @@
         if (s && cf) cf.src = 'chat.html?session=' + encodeURIComponent(s); // chat embutido = conversa própria desta janela
       })();
       const rootnameEl = document.getElementById('rootname');
+      const menuProjectEl = document.getElementById('menuProject');
       async function updateRoot() {
         try {
           const ws = boundWorkspace || (await window.api.getConfig()).workspace || '';
-          rootnameEl.textContent = ws ? ws.replace(/\\/g, '/').split('/').pop().toUpperCase() : 'Explorer';
+          const projName = ws ? ws.replace(/\\/g, '/').split('/').pop() : '';
+          rootnameEl.textContent = projName ? projName.toUpperCase() : 'Explorer';
           rootnameEl.title = ws;
+          // nome do projeto centralizado na barra de menus (estilo VS Code)
+          menuProjectEl.textContent = projName || '';
+          menuProjectEl.title = ws;
+          document.title = projName ? projName + ' — Workspace' : 'Workspace';
         } catch (e) {
           /* ok */
         }
