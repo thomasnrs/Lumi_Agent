@@ -333,6 +333,7 @@ const DEFAULT_CONFIG = {
   gfxQuality: 'balanced', // 'performance' | 'balanced' | 'quality'
   avatarScale: 1, // tamanho da janela/avatar (1 = padrao; scroll do mouse ou config ajusta)
   pageOpacity: {}, // opacidade por pagina (ex.: { chat: 0.9 }) - controle em cada janela
+  winBounds: {}, // memória de tamanho/posição por janela (reabre como estava)
   theme: {}, // cores customizadas da UI (tokens CSS) - editor na aba Tema
   acrylic: true, // efeito vidro nativo do Windows 11 nas janelas (se disponivel)
   sounds: true, // sons sutis do chat (enviar/receber) - toggle no painel rapido
@@ -7936,14 +7937,62 @@ app.on('web-contents-created', (_e, contents) => {
 
 // Janela DEDICADA de configurações: carrega o index.html em modo "?settings=1"
 // (sem avatar 3D) — redimensionável, reusa 100% do formulário/lógica existentes.
+// ---- memória de tamanho/posição das janelas: fecha e reabre EXATAMENTE como estava ----
+function winBoundsGet(key) {
+  const b = (loadConfig().winBounds || {})[key];
+  if (!b || !b.width || !b.height) return null;
+  try {
+    // monitor pode ter sumido (notebook sem a tela externa): valida se a posição ainda é visível
+    const { screen } = require('electron');
+    const visible =
+      b.x != null &&
+      screen.getAllDisplays().some((d) => {
+        const a = d.workArea;
+        return b.x < a.x + a.width - 60 && b.x + b.width > a.x + 60 && b.y >= a.y - 20 && b.y < a.y + a.height - 60;
+      });
+    return visible ? b : { width: b.width, height: b.height, max: b.max }; // fora da tela: mantém só o tamanho
+  } catch (e) {
+    return { width: b.width, height: b.height, max: b.max };
+  }
+}
+function winBoundsTrack(w2, key) {
+  let t = null;
+  const save = () => {
+    try {
+      if (w2.isDestroyed()) return;
+      const max = w2.isMaximized();
+      const nb = max ? w2.getNormalBounds() : w2.getBounds();
+      const c = loadConfig();
+      c.winBounds = c.winBounds || {};
+      c.winBounds[key] = { x: nb.x, y: nb.y, width: nb.width, height: nb.height, max };
+      saveConfig(c);
+    } catch (e) {
+      /* nunca derruba a janela por causa disso */
+    }
+  };
+  const later = () => {
+    clearTimeout(t);
+    t = setTimeout(save, 600); // debounce: salva ao terminar de arrastar/redimensionar
+  };
+  w2.on('resize', later);
+  w2.on('move', later);
+  w2.on('close', save);
+}
+// aplica o tamanho salvo na criação (x/y só se ainda visíveis) e re-maximiza se era o caso
+function winBoundsApply(saved, w2) {
+  if (saved && saved.max) w2.maximize();
+}
+
 function openSettingsWindow() {
   if (openPages.has('settings')) {
     openPages.get('settings').focus();
     return;
   }
+  const savedB = winBoundsGet('settings');
   const w = new BrowserWindow({
-    width: 780,
-    height: 700,
+    width: (savedB && savedB.width) || 780,
+    height: (savedB && savedB.height) || 700,
+    ...(savedB && savedB.x != null ? { x: savedB.x, y: savedB.y } : {}),
     minWidth: 560,
     minHeight: 480,
     title: 'Configurações — Lumi',
@@ -7961,6 +8010,8 @@ function openSettingsWindow() {
   w.setMenuBarVisibility(false);
   w.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { query: { settings: '1' } });
   w.on('closed', () => openPages.delete('settings'));
+  winBoundsApply(savedB, w);
+  winBoundsTrack(w, 'settings');
   openPages.set('settings', w);
 }
 ipcMain.on('settings:open-window', () => openSettingsWindow());
@@ -7971,14 +8022,16 @@ function openPage(id, file, title, w, h) {
     openPages.get(id).focus();
     return;
   }
+  const savedB = winBoundsGet('page:' + id); // reabre no tamanho/posição de antes
   const pageWin = new BrowserWindow({
-    width: w,
-    height: h,
+    width: (savedB && savedB.width) || w,
+    height: (savedB && savedB.height) || h,
+    ...(savedB && savedB.x != null ? { x: savedB.x, y: savedB.y } : {}),
     title,
     icon: ICON_PATH,
     resizable: true,
     minimizable: true,
-    maximizable: false,
+    maximizable: true,
     backgroundColor: '#16161e',
     autoHideMenuBar: true,
     // titleBarOverlay é SÓ Windows/macOS — no Linux mantém a decoração nativa (senão fica sem botão de fechar)
@@ -7995,15 +8048,19 @@ function openPage(id, file, title, w, h) {
   pageWin.setMenuBarVisibility(false);
   pageWin.loadFile(path.join(__dirname, '..', 'renderer', 'pages', file));
   pageWin.on('closed', () => openPages.delete(id));
+  winBoundsApply(savedB, pageWin);
+  winBoundsTrack(pageWin, 'page:' + id);
   openPages.set(id, pageWin);
 }
 
 // Janela de chat DESTACADA (multi-instância, presa a uma conversa via ?session=<id>).
 // Diferente de openPage: não é single-instance — dá pra abrir várias, cada uma numa conversa.
 function openChatWindow(chatId, title) {
+  const savedB = winBoundsGet('chat-window'); // memória compartilhada entre chats destacados
   const cw = new BrowserWindow({
-    width: 400,
-    height: 600,
+    width: (savedB && savedB.width) || 400,
+    height: (savedB && savedB.height) || 600,
+    ...(savedB && savedB.x != null ? { x: savedB.x, y: savedB.y } : {}),
     title: title || 'Chat',
     icon: ICON_PATH,
     resizable: true,
@@ -8023,6 +8080,8 @@ function openChatWindow(chatId, title) {
   });
   cw.setMenuBarVisibility(false);
   cw.loadFile(path.join(__dirname, '..', 'renderer', 'pages', 'chat.html'), { query: chatId ? { session: chatId } : {} });
+  winBoundsApply(savedB, cw);
+  winBoundsTrack(cw, 'chat-window');
   return cw;
 }
 
@@ -8042,9 +8101,11 @@ function openWorkspaceWindow(folder) {
       /* ok */
     }
   }
+  const savedB = winBoundsGet('workspace-window');
   const ww = new BrowserWindow({
-    width: 1320,
-    height: 720,
+    width: (savedB && savedB.width) || 1320,
+    height: (savedB && savedB.height) || 720,
+    ...(savedB && savedB.x != null ? { x: savedB.x, y: savedB.y } : {}),
     title: folder ? path.basename(folder) + ' — Workspace' : 'Workspace',
     icon: ICON_PATH,
     resizable: true,
@@ -8064,6 +8125,8 @@ function openWorkspaceWindow(folder) {
   });
   ww.setMenuBarVisibility(false);
   ww.loadFile(path.join(__dirname, '..', 'renderer', 'pages', 'workspace.html'), { query: folder ? { ws: folder, session } : {} });
+  winBoundsApply(savedB, ww);
+  winBoundsTrack(ww, 'workspace-window');
   return ww;
 }
 // a janela do editor se prende a uma pasta ('' = pasta global). Auto-limpa ao fechar.
