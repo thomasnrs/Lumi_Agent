@@ -86,7 +86,7 @@
 <!-- STATS -->
 <section class="stats reveal">
   <div class="stat"><b data-count="19">19</b><span>provedores de I.A.</span></div>
-  <div class="stat"><b data-count="40">~40</b><span>ferramentas nativas</span></div>
+  <div class="stat"><b data-count="55">~55</b><span>ferramentas nativas</span></div>
   <div class="stat"><b data-count="200">200</b><span>passos por turno</span></div>
   <div class="stat"><b data-count="9">9</b><span>temas prontos</span></div>
 </section>
@@ -95,7 +95,7 @@
 <section class="intro reveal">
   <p>
     <strong>Lumi</strong> é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo,
-    com um <span class="hl">harness de I.A. completo</span> integrado — chat multi-provedor, agente com ~40 ferramentas, multi-agentes
+    com um <span class="hl">harness de I.A. completo</span> integrado — chat multi-provedor, agente com ~55 ferramentas, multi-agentes
     paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até pastas remotas via SSH),
     voz, visão e memória que você enxerga e controla.
   </p>
@@ -128,7 +128,7 @@
     <article class="card reveal">
       <div class="card-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
       <h3>Agente de verdade</h3>
-      <p>~40 ferramentas nativas com sistema de permissões em cards bonitos (permitir / sempre / recusar), turnos longos até 200 passos com compactação de contexto e checkpoints com desfazer.</p>
+      <p>~55 ferramentas nativas com permissões em cards, turnos longos até 200 passos, checkpoints com desfazer — e guardrails: comandos destrutivos bloqueados, anti-loop, verificação automática e auto-revisão do próprio diff antes de entregar.</p>
     </article>
     <article class="card reveal">
       <div class="card-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></div>
@@ -167,7 +167,7 @@
 <section id="ferramentas" class="section">
   <div class="section-head reveal">
     <span class="kicker"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tool calling</span>
-    <h2>~40 ferramentas, na mão dela</h2>
+    <h2>~55 ferramentas, na mão dela</h2>
     <p>A Lumi decide quando usar cada uma. Tudo passa pelo sistema de permissões: perguntar, permitir ou bloquear — por categoria.</p>
   </div>
 
@@ -175,12 +175,15 @@
     <div class="tool-cat reveal">
       <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>Arquivos &amp; código</h4>
       <ul>
-        <li><code>read_file</code> · leitura paginada</li>
+        <li><code>read_file</code> · leitura cirúrgica (só a função)</li>
         <li><code>edit_file</code> · edição cirúrgica</li>
         <li><code>write_file</code> / <code>append_file</code></li>
         <li><code>grep_files</code> · busca regex</li>
         <li><code>find_in_code</code> · "onde está X?"</li>
+        <li><code>outline</code> · mapa de símbolos do arquivo</li>
+        <li><code>find_usages</code> · onde o símbolo é usado</li>
         <li><code>project_overview</code> · varre a stack</li>
+        <li><code>generate_project_doc</code> · escreve o CLAUDE.md</li>
         <li><code>list_dir</code> / <code>make_dir</code> / <code>delete_file</code></li>
         <li>memória por projeto (<code>.lumi-memory.md</code>)</li>
       </ul>
@@ -192,8 +195,21 @@
         <li><code>run_in_terminal</code> · processos longos</li>
         <li><code>read_terminal</code> / <code>list_terminals</code></li>
         <li><code>kill_terminal</code></li>
+        <li><code>run_tests</code> · testes focados (jest/pytest/go…)</li>
+        <li><code>env_info</code> · raio-X do ambiente</li>
         <li><code>list_ssh_hosts</code> · do seu config</li>
         <li><code>connect_remote</code> · monta pasta remota</li>
+      </ul>
+    </div>
+    <div class="tool-cat reveal">
+      <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>Git, qualidade &amp; banco</h4>
+      <ul>
+        <li><code>git_status</code> / <code>git_diff</code> / <code>git_log</code> · ela vê o próprio trabalho</li>
+        <li><code>get_problems</code> · erros reais do lint/tipos</li>
+        <li><code>locate_stack</code> · do traceback direto à linha</li>
+        <li><code>apply_patch</code> · diff multi-arquivo atômico</li>
+        <li><code>system_logs</code> · erros do sistema (crash de app/jogo)</li>
+        <li><code>db_schema</code> / <code>db_query</code> · banco conectado (só leitura)</li>
       </ul>
     </div>
     <div class="tool-cat reveal">
@@ -255,6 +271,11 @@
       <li><strong>Turnos de maratona:</strong> teto de passos (4–200) com compactação de contexto e retomada do ponto exato.</li>
       <li><strong>Steering &amp; Stop:</strong> redirecione no meio da tarefa ou pare na hora — mantendo o progresso.</li>
       <li><strong>@menções e /comandos:</strong> anexe arquivos, faça fork da conversa, busque, capture a tela.</li>
+      <li><strong>Auto-revisão com evidência:</strong> antes de dizer "pronto", ela revisa o próprio diff, roda os testes focados e reporta o que verificou — nunca afirma sem testar.</li>
+      <li><strong>Guardrails &amp; anti-loop:</strong> comandos destrutivos bloqueados, arquivos protegidos, e ela não repete uma ação que já falhou — mesmo com modelos fracos/locais.</li>
+      <li><strong>Varinha de prompt:</strong> a I.A. reescreve seu pedido (claro e específico) antes de enviar — você revisa, um clique desfaz.</li>
+      <li><strong>Sentinela de logs:</strong> varre os erros do sistema a cada 30 min e, se for do seu projeto, oferece o botão "Investigar e corrigir" — nunca age sem o seu Sim.</li>
+      <li><strong>Modelo por tarefa:</strong> resumos, commits e revisões rodam num modelo barato/grátis — sem queimar a API paga do chat.</li>
     </ul>
   </div>
   <div class="split-visual reveal">
@@ -291,6 +312,8 @@
     <div class="ws-card reveal"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tarefas &amp; túnel</h4><p>Scripts do <code>package.json</code>/<code>Makefile</code> viram menu de 1 clique; expor porta cria um túnel público (cloudflared/ngrok) na hora.</p></div>
     <div class="ws-card reveal"><h4><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C17.3 4.6 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5z"/></svg>GitHub (gh CLI)</h4><p>Status do CI da branch, PRs abertos e ✦PR — ela escreve título e descrição olhando seus commits e abre o Pull Request.</p></div>
     <div class="ws-card reveal"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect width="20" height="16" x="2" y="4" rx="2"/></svg>Editor profissional</h4><p>Ctrl+P fuzzy, sticky scroll, formatar, símbolos, zoom, ícones por tecnologia, múltiplos terminais PTY e painéis redimensionáveis que persistem.</p></div>
+    <div class="ws-card reveal"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 11 2 2 4-4"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Aba Problemas</h4><p>"Checar projeto" roda o linter/type-checker da stack e lista os erros (clique abre na linha) — e a I.A. lê os mesmos erros pra se corrigir.</p></div>
+    <div class="ws-card reveal"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="1"/><rect width="8" height="8" x="13" y="13" rx="1"/><path d="M13 3h8v8"/><path d="M3 13v8h8"/></svg>Multi-janela</h4><p>Abra outra pasta em NOVA janela: cada uma com seu explorador, git, terminal e o próprio chat — a I.A. trabalha na pasta daquela janela.</p></div>
   </div>
 </section>
 

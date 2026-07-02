@@ -32,7 +32,7 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 
 ---
 
-**Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com ~40 ferramentas, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até **pastas remotas via SSH**), voz, visão e memória que você enxerga e controla.
+**Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com **~55 ferramentas**, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até **pastas remotas via SSH**), voz, visão e memória que você enxerga e controla.
 
 Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. Já vem **montadinha**: a avatar **Cerberia** e as animações estão no repositório (troque por qualquer `.vrm` quando quiser). As chaves de I.A. são suas (**BYOK** — *bring your own key*; provedores grátis e proxies locais sem chave também funcionam).
 
@@ -46,7 +46,7 @@ Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. J
 |---|---|
 | 🧍 **Avatar vivo** | Janela transparente sempre no topo, click-through inteligente (clica através dela fora do corpo), olhos seguem o cursor, animações `.vrma`, emoções faciais reais (entende português: "empolgada", "melancólica"…), senta na barra de tarefas |
 | 🧠 **I.A. multi-provedor** | **21 provedores pré-cadastrados** (OpenCode Zen/Go, OpenAI, Anthropic, Gemini, Grok, Groq, DeepSeek, Mistral, OpenRouter, Blackbox, Kimi, GLM, Cerebras, Ollama/LM Studio local…) — com roteamento automático dos protocolos do OpenCode e loop completo de agente. Streaming, thinking, visão, fallback automático de modelo |
-| 🛠️ **Agente de verdade** | ~40 ferramentas nativas com sistema de permissões (aprovação em **cards bonitos no chat**: permitir/sempre/recusar), turnos longos configuráveis (até 200 passos) com compactação automática de contexto, checkpoints com **desfazer** |
+| 🛠️ **Agente de verdade** | **~55 ferramentas** nativas com sistema de permissões (aprovação em **cards bonitos no chat**), turnos longos (até 200 passos) com compactação automática, checkpoints com **desfazer**, **guardrails** (comandos destrutivos bloqueados + arquivos protegidos), **anti-loop**, verificação automática com correção e **auto-revisão do próprio diff** antes de entregar |
 | ✦ **Modo Claude Code** | No Modo Arquiteto, o chat pode ser assumido pelo **Claude Code oficial** usando a assinatura Claude Pro/Max via OAuth — sessões retomáveis por projeto, `CLAUDE.md`, skills, MCP, ferramentas, subagentes, streaming e permissões dentro da interface da Lumi, sem API key |
 | 🤖 **Multi-agentes** | Orquestradora delega a uma equipe (Programador, Designer, Testador…) que trabalha **em paralelo** — e você acompanha a narração de cada um **ao vivo** no chat |
 | 🖥️ **Workspace estilo VS Code** | Editor Monaco com abas, **git completo** (diff, stage, commit, push/pull, branches, revisão pré-commit pela I.A.), **Live Server** e **navegador embutidos**, aba **Docker** (+compose), terminal **PTY real** com perfis (CMD, Git Bash, **WSL**, **SSH**, venv), menu de **Tarefas**, túnel público em 1 clique, **pastas remotas via SSH** (estilo Remote-SSH), Ctrl+P, busca global, chat lateral |
@@ -64,14 +64,15 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 ### 📂 Arquivos & código
 | Ferramenta | O que faz |
 |---|---|
-| `read_file` | Lê arquivos **paginado** (offset/limit) — navega arquivos de qualquer tamanho sem truncar |
-| `edit_file` | Edição **cirúrgica**: substitui um trecho exato sem reescrever o arquivo |
-| `write_file` / `append_file` | Cria/sobrescreve · acrescenta ao fim |
-| `grep_files` | Busca texto/regex no projeto inteiro (arquivo + linha de cada match) |
+| `read_file` | Leitura **cirúrgica**: `symbol` pega só uma função, `around_line` pega só o escopo de uma linha — ou janelas offset/limit |
+| `edit_file` | Edição **cirúrgica** com rede de segurança: exige leitura prévia e, se o trecho não bater, devolve o **trecho mais parecido** pra corrigir em 1 tentativa |
+| `write_file` / `append_file` | Cria/sobrescreve (protegido contra sobrescrita às cegas) · acrescenta ao fim |
+| `grep_files` | Busca texto/regex — cada match já vem com o **símbolo que o contém** e as **linhas ao redor** (decide sem abrir o arquivo) |
 | `find_in_code` | **"Onde está X?"** — acha por nome de arquivo **e** por conteúdo de uma vez |
-| `project_overview` | **"Explica este projeto"** — varre a arquitetura, detecta a stack e resume os arquivos-chave |
+| `outline` / `find_usages` | **Mapa de símbolos** do arquivo (função/classe + linha) · onde um símbolo é **usado e definido** (mede impacto antes de mexer) |
+| `project_overview` / `generate_project_doc` | **"Explica este projeto"** (arquitetura + stack) · **gera/atualiza o `CLAUDE.md`** sob medida |
 | `list_dir` / `make_dir` / `delete_file` | Navegação e manutenção de arquivos |
-| `read_project_memory` / `update_project_memory` | Memória por projeto (`.lumi-memory.md`) — o contexto sobrevive entre sessões |
+| `read_project_memory` / `update_project_memory` | Memória por projeto (`.lumi-memory.md`) — decisões, gotchas e pendências entre sessões |
 
 ### ⚡ Execução
 | Ferramenta | O que faz |
@@ -79,7 +80,19 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 | `run_command` | Comando rápido no shell (com saída de volta pra ela) |
 | `run_in_terminal` | Processo **longo** (dev server, watch) num terminal visível — sem travar a conversa |
 | `read_terminal` / `list_terminals` / `kill_terminal` | Acompanha a saída, lista e encerra terminais |
+| `run_tests` | Roda os testes **focado** num arquivo/nome (detecta jest/vitest, pytest, go, cargo, maven, gradle) — pass/fail estruturado |
+| `env_info` | **Raio-X do ambiente**: versões instaladas, gerenciador do projeto pelo lockfile, stack — fim do "npm em projeto pnpm" |
+| `system_logs` | Lê os **erros do sistema operacional** (Event Log/journalctl) — crash de app/jogo com o comando que o lançou |
 | `list_ssh_hosts` / `connect_remote` | Lista os hosts do seu `~/.ssh/config` e **monta uma pasta remota** pra trabalhar nela |
+
+### 🧠 Git, qualidade & banco
+| Ferramenta | O que faz |
+|---|---|
+| `git_status` / `git_diff` / `git_log` | Ela **enxerga o próprio trabalho**: o que mudou, o diff exato e o histórico — antes de dizer "pronto" |
+| `get_problems` | Roda o **linter/type-checker** do projeto (eslint/tsc, ruff, go vet, cargo) e corrige com base nos **erros reais** |
+| `locate_stack` | Cola um **stack trace** e ela pula direto pras linhas culpadas **no seu código** (ignora libs) |
+| `apply_patch` | Aplica um **diff multi-arquivo** de uma vez (valida antes; recusa se não aplicar limpo) — coberto pelo desfazer |
+| `db_schema` / `db_query` | Inspeciona o **banco conectado** na aba BANCO e consulta em modo **somente-leitura** (escrita é sua, pelo painel) |
 
 ### 🌐 Web & rede
 | Ferramenta | O que faz |
@@ -120,8 +133,15 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 
 - **Modo arquiteto**: aponte um workspace e ela trabalha no projeto com memória própria, detecção de stack (Node, Python, Go, Rust, C#, Java… com boas práticas por linguagem) e comando de verificação sugerido.
 - **Regras do repositório**: se o projeto tem `CLAUDE.md`, `AGENTS.md`, `.cursorrules` ou `copilot-instructions.md`, ela **segue à risca**.
-- **Verificação automática**: após editar, roda o lint/test/build do projeto e **corrige sozinha** se falhar (até 3 tentativas).
-- **Checkpoints**: cada turno que altera arquivos vira um ponto de restauração — botão **↩ desfazer** no chat.
+- **Verificação automática**: após editar, roda o lint/test/build do projeto e **corrige sozinha** se falhar (até 3 tentativas) — com as **falhas extraídas de forma estruturada** (arquivo:linha, teste que quebrou) e **escalada pro modelo reserva** se o principal empacar.
+- **Auto-revisão antes de entregar**: um agente lê o **diff do que ela mesma fez** e aponta bugs/riscos — ela corrige antes de dizer "pronto". *Evidência, não confiança.*
+- **Excelência mesmo com modelo fraco**: anti-loop (não repete chamada que já falhou), "você quis dizer" pra ferramenta/caminho errado, trecho mais parecido quando a edição não casa, recitação do objetivo em turnos longos.
+- **Guardrails sempre ligados**: comandos destrutivos bloqueados (`rm -rf /`, `push --force`, `curl|bash`…) e **arquivos protegidos** que ela nunca apaga/sobrescreve.
+- **Memória em camadas**: `CLAUDE.md` = briefing estável do projeto (ela gera e mantém) · `.lumi-memory.md` = caderno de decisões/gotchas/pendências — sem duplicar.
+- **Modelo por tarefa**: compactação, mensagem de commit, revisão e afins rodam num **modelo barato/grátis** que você escolhe — sem queimar a API paga do chat.
+- **✨ Varinha**: a I.A. reescreve seu prompt (claro, específico, com critérios) antes de enviar — você revisa, e um clique desfaz.
+- **🛡️ Sentinela de logs** (opt-in): varre os erros do sistema a cada 30 min, correlaciona com o programa que crashou (e como foi lançado) e, se for do seu projeto, oferece um **card "Investigar e corrigir"** — ela nunca age sem o seu Sim.
+- **Checkpoints**: cada turno que altera arquivos vira um ponto de restauração — botão **↩ desfazer** no chat (cobre inclusive patches multi-arquivo).
 - **Turnos de maratona**: teto de passos configurável (4–200) com compactação interna do contexto; se bater o teto, "continua" retoma do ponto exato.
 - **Steering & Stop**: redirecione-a no meio da tarefa digitando, ou pare na hora com ⏹ (mantendo o progresso).
 - **@menções e /comandos**: `@arquivo` anexa conteúdo do projeto; `/fork`, `/buscar`, `/tela`… O **arquivo ativo do editor** vira um chip no input e é anexado automaticamente a cada mensagem.
@@ -139,6 +159,8 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 - **🐙 GitHub** (com o `gh` CLI): status do CI da branch, PRs abertos e **✦PR** — ela escreve título e descrição olhando seus commits e cria o Pull Request.
 - **Seleção → Lumi**: clique direito em qualquer trecho de código — *enviar*, *explicar* ou *refatorar* com ela, direto no chat lateral.
 - **🖱️ Arrastar pra dentro**: solte um arquivo do Explorer do Windows **direto no explorador** (igual VS Code) — cai na pasta onde você soltou. Com pasta remota montada, isso **envia pro servidor** automaticamente.
+- **🧪 Aba PROBLEMAS**: botão "Checar projeto" roda o linter/type-checker da stack e lista os erros (clique → abre direto na linha), com badge de contagem — e a I.A. lê os mesmos erros pra se corrigir.
+- **🪟 Multi-janela**: abra **outra pasta em NOVA janela** (menu Arquivo) — cada janela tem seu explorador, git, terminal **e seu próprio chat com a I.A. trabalhando naquela pasta**. Conversas também abrem em janelas separadas (↗ na lista de chats).
 - **Editor profissional**: `Ctrl+P` (abrir arquivo com busca fuzzy), sticky scroll, formatar documento, símbolos do arquivo, zoom com Ctrl+scroll, quebra de linha/minimapa configuráveis, ícones por tecnologia, indent guides.
 - **Terminal & portas**: múltiplos terminais (**PTY real**), URLs clicáveis, tracker de portas ao vivo com kill em um clique.
 - Painéis **redimensionáveis** (explorador, chat, terminal) com larguras que persistem.
@@ -243,7 +265,7 @@ A Lumi é **gratuita e open source**, feita por uma pessoa só à base de café 
 
 ## 🗺️ Roadmap
 
-✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH) · ✅ Proatividade com contexto (hora, app ativo, datas) · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · 🔜 i18n (EN) · 🎯 **Steam**
+✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets, favoritos ★) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH, Problemas) · ✅ Multi-janela (chats e workspaces independentes) · ✅ Harness de excelência (guardrails, anti-loop, auto-revisão, diagnósticos, testes focados) · ✅ Sentinela de logs · ✅ Proatividade com contexto · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · ✅ Testes do próprio harness (`npm test`) · 🔜 i18n (EN) · 🎯 **Steam**
 
 ---
 
