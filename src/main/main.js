@@ -343,7 +343,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de software sênior. Implemente a tarefa de ponta a ponta: leia o código relevante antes, faça a mudança mínima necessária seguindo o padrão do projeto, e VERIFIQUE rodando o comando/teste pertinente. Ao final, resuma o que fez em poucas linhas.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'run_tests', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
     },
     {
       name: 'Revisor',
@@ -352,7 +352,7 @@ const DEFAULT_CONFIG = {
         'Você é um revisor crítico e construtivo. Leia o material com atenção e aponte bugs, riscos, problemas de segurança/performance e melhorias CONCRETAS (com o porquê e como corrigir). Priorize o que importa. NÃO altere arquivos — apenas analise e recomende.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'locate_stack', 'read_project_memory'],
     },
     {
       name: 'Testador',
@@ -361,7 +361,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de QA. Entenda o que precisa ser testado, escreva testes claros (seguindo o framework de testes do projeto) e RODE-OS com run_command. Relate o que passou e o que falhou, com a causa provável das falhas. Não conserte o código de produção sem ser pedido — foque em cobrir e diagnosticar.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory', 'http_request'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'locate_stack', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory', 'http_request'],
     },
     {
       name: 'Refatorador',
@@ -370,7 +370,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira especialista em refatoração. Melhore legibilidade, organização e qualidade do código SEM alterar o comportamento externo. Faça mudanças pequenas e seguras, mantendo o padrão do projeto, e VERIFIQUE com o comando/teste pertinente para garantir que nada quebrou. Explique cada melhoria brevemente.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
     },
     {
       name: 'Designer',
@@ -1969,6 +1969,50 @@ async function enrichMatches(wsBaseAbs, matches) {
     m.context = snippetAround(lines, m.line, 2, 2);
   }
   return matches;
+}
+
+// corta o começo de uma saída longa (mantém o FIM, que é onde erros/resumos aparecem)
+function tailStr(s, n) {
+  s = String(s || '');
+  return s.length > n ? '…(início cortado)\n' + s.slice(-n) : s;
+}
+// detecta o comando de teste do projeto (pra run_tests) → { cmd, runner }
+function guessTestCommand(ws) {
+  const has = (f) => {
+    try {
+      return fs.existsSync(path.join(ws, f));
+    } catch (e) {
+      return false;
+    }
+  };
+  const readf = (f) => {
+    try {
+      return fs.readFileSync(path.join(ws, f), 'utf8');
+    } catch (e) {
+      return '';
+    }
+  };
+  if (has('package.json') && /"test"\s*:/.test(readf('package.json'))) {
+    const cmd = has('pnpm-lock.yaml') ? 'pnpm test' : has('yarn.lock') ? 'yarn test' : has('bun.lockb') ? 'bun test' : 'npm test';
+    return { cmd, runner: 'node' };
+  }
+  if (has('pytest.ini') || has('pyproject.toml') || has('setup.cfg') || has('tox.ini')) return { cmd: 'pytest -q', runner: 'pytest' };
+  if (has('go.mod')) return { cmd: 'go test ./...', runner: 'go' };
+  if (has('Cargo.toml')) return { cmd: 'cargo test', runner: 'cargo' };
+  if (has('pom.xml')) return { cmd: 'mvn -q test', runner: 'maven' };
+  if (has('build.gradle') || has('build.gradle.kts')) return { cmd: (has('gradlew') ? (process.platform === 'win32' ? 'gradlew' : './gradlew') : 'gradle') + ' test', runner: 'gradle' };
+  return null;
+}
+// aplica o filtro (arquivo ou nome de teste) do jeito de cada runner
+function withTestFilter(base, runner, filter) {
+  const f = String(filter).trim();
+  const isPath = /[\/\\.]/.test(f);
+  const q = JSON.stringify(f);
+  if (runner === 'node') return base + (isPath ? ' -- ' + f : ' -- -t ' + q);
+  if (runner === 'pytest') return 'pytest -q ' + (isPath ? f : '-k ' + q);
+  if (runner === 'go') return 'go test ./... -run ' + f;
+  if (runner === 'cargo') return 'cargo test ' + f;
+  return base + ' ' + f;
 }
 function normalizeEolText(s) {
   return String(s == null ? '' : s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -4170,6 +4214,231 @@ const TOOLS = {
         note: 'cada match traz "symbol" e "context" — muitas vezes já resolve sem abrir o arquivo. Pra ler, use read_file com symbol ou around_line.',
         truncated: truncated ? 'busca limitada (tempo/quantidade) — refine o pattern ou limite o path' : undefined,
       };
+    },
+  },
+  git_status: {
+    category: 'read',
+    summary: () => 'ver o status do git',
+    schema: {
+      name: 'git_status',
+      description: 'Estado do git do workspace: branch, arquivos staged/não-staged/não-rastreados e ahead/behind. Use pra saber O QUE VOCÊ MUDOU antes de finalizar/commitar.',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      try {
+        const { stdout: br } = await gitRun(cfg, ['rev-parse', '--abbrev-ref', 'HEAD']);
+        const { stdout } = await gitRun(cfg, ['status', '--porcelain=v1', '-uall']);
+        const staged = [];
+        const unstaged = [];
+        const untracked = [];
+        stdout.split('\n').forEach((l) => {
+          if (l.length < 3) return;
+          const x = l[0];
+          const y = l[1];
+          const p = l.slice(3).replace(/^"|"$/g, '');
+          if (x === '?') return untracked.push(p);
+          if (x !== ' ') staged.push({ path: p, st: x });
+          if (y !== ' ') unstaged.push({ path: p, st: y });
+        });
+        let ahead = 0;
+        let behind = 0;
+        try {
+          const { stdout: ab } = await gitRun(cfg, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']);
+          const m = ab.trim().split(/\s+/);
+          ahead = parseInt(m[0], 10) || 0;
+          behind = parseInt(m[1], 10) || 0;
+        } catch (e) {
+          /* sem upstream */
+        }
+        return { branch: br.trim(), staged, unstaged, untracked, ahead, behind };
+      } catch (e) {
+        return { error: 'não é um repositório git (ou git indisponível)' };
+      }
+    },
+  },
+  git_diff: {
+    category: 'read',
+    summary: (a) => 'ver o diff' + (a && a.path ? ' de ' + a.path : '') + (a && a.staged ? ' (staged)' : ''),
+    schema: {
+      name: 'git_diff',
+      description: 'Mostra as mudanças (diff) do workspace. Sem args = tudo não-staged; staged:true = o preparado; path = limita a um arquivo/pasta. Use pra REVISAR o que você fez antes de finalizar.',
+      parameters: { type: 'object', properties: { path: { type: 'string' }, staged: { type: 'boolean' } } },
+    },
+    run: async ({ path: sub, staged }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      try {
+        const args = ['diff', '--no-color'];
+        if (staged) args.push('--cached');
+        if (sub) args.push('--', String(sub));
+        const { stdout } = await gitRun(cfg, args);
+        if (!stdout.trim()) return { diff: '', note: staged ? 'nada staged' : 'nenhuma mudança não-staged' };
+        return { diff: stdout.slice(0, 40000), truncated: stdout.length > 40000 ? 'diff grande — limite por path pra ver o resto' : undefined };
+      } catch (e) {
+        return { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 200) };
+      }
+    },
+  },
+  git_log: {
+    category: 'read',
+    summary: (a) => 'histórico do git' + (a && a.path ? ' de ' + a.path : ''),
+    schema: {
+      name: 'git_log',
+      description: 'Commits recentes (hash, mensagem, autor, quando). count = quantos (padrão 15). path = histórico de um arquivo específico.',
+      parameters: { type: 'object', properties: { count: { type: 'number' }, path: { type: 'string' } } },
+    },
+    run: async ({ count, path: sub }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      const n = Math.max(1, Math.min(parseInt(count, 10) || 15, 100));
+      try {
+        const args = ['log', '--format=%h%x09%s%x09%an%x09%cr', '-n', String(n)];
+        if (sub) args.push('--', String(sub));
+        const { stdout } = await gitRun(cfg, args);
+        const commits = stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => {
+            const [hash, subject, author, when] = l.split('\t');
+            return { hash, subject, author, when };
+          });
+        return { commits, total: commits.length };
+      } catch (e) {
+        return { error: 'não é um repositório git' };
+      }
+    },
+  },
+  run_tests: {
+    category: 'exec',
+    summary: (a) => 'rodar testes' + (a && a.filter ? ' (' + a.filter + ')' : ''),
+    schema: {
+      name: 'run_tests',
+      description:
+        'Roda os testes — de preferência FOCADO num arquivo/nome (filter) pra ser rápido e barato. Detecta o runner (npm/jest/vitest, pytest, go, cargo, maven, gradle); ou passe `command` exato. Devolve pass/fail + a saída relevante.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filter: { type: 'string', description: 'arquivo ou nome do teste pra focar (recomendado)' },
+          command: { type: 'string', description: 'comando exato (opcional; sobrepõe a detecção)' },
+        },
+      },
+    },
+    run: async ({ filter, command }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      let cmd = command && String(command).trim();
+      if (!cmd) {
+        const g = guessTestCommand(cfg.workspace);
+        if (!g) return { error: 'não detectei o runner de testes — passe `command` com o comando exato (ex.: "npx vitest run src/x.test.ts")' };
+        cmd = filter ? withTestFilter(g.cmd, g.runner, filter) : g.cmd;
+      } else if (filter) {
+        cmd = cmd + ' ' + filter;
+      }
+      try {
+        const { stdout, stderr } = await execAsync(cmd, { cwd: cfg.workspace, timeout: 180000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+        return { ok: true, command: cmd, output: tailStr(((stdout || '') + (stderr || '')).trim(), 6000) };
+      } catch (e) {
+        const out = (((e && e.stdout) || '') + ((e && e.stderr) || '')).trim() || String((e && e.message) || e);
+        return { ok: false, command: cmd, exitCode: e && e.code, output: tailStr(out, 8000), note: 'testes falharam (ou o comando errou) — veja a saída' };
+      }
+    },
+  },
+  locate_stack: {
+    category: 'read',
+    summary: () => 'localizar no código pela stack',
+    schema: {
+      name: 'locate_stack',
+      description:
+        'Recebe um erro/stack trace e pula direto pros pontos no SEU código: extrai arquivo:linha dos frames (ignora node_modules/libs), lê só o bloco que envolve cada um (com o símbolo). Use quando tiver um traceback/erro pra debugar.',
+      parameters: { type: 'object', properties: { trace: { type: 'string', description: 'o texto do erro/stack trace' } }, required: ['trace'] },
+    },
+    run: async ({ trace }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      const ws = cfg.workspace;
+      const t = String(trace || '');
+      if (!t.trim()) return { error: 'trace vazio' };
+      const frames = [];
+      const seen = new Set();
+      const add = (file, line) => {
+        const k = file + ':' + line;
+        if (!seen.has(k)) {
+          seen.add(k);
+          frames.push({ file, line });
+        }
+      };
+      let m;
+      const re1 = /([A-Za-z]:\\[^\s():]+|\/[^\s():]+|[\w./\\-]+\.[A-Za-z]{1,6}):(\d+)(?::\d+)?/g;
+      while ((m = re1.exec(t))) add(m[1], parseInt(m[2], 10));
+      const re2 = /File "([^"]+)", line (\d+)/g; // Python
+      while ((m = re2.exec(t))) add(m[1], parseInt(m[2], 10));
+      const out = [];
+      for (const f of frames) {
+        if (out.length >= 6) break;
+        const rel = f.file.replace(/\\/g, '/');
+        const abs = path.isAbsolute(rel) ? rel : path.join(ws, rel);
+        if (!path.resolve(abs).startsWith(path.resolve(ws))) continue; // só arquivos do projeto
+        if (/node_modules|[/\\](dist|build)[/\\]|site-packages/.test(abs)) continue;
+        let lines;
+        try {
+          const st = await fs.promises.stat(abs);
+          if (!st.isFile() || st.size > 800000) continue;
+          lines = (await readTextFileSmartAsync(abs)).text.split('\n');
+        } catch (e) {
+          continue;
+        }
+        if (f.line < 1 || f.line > lines.length) continue;
+        const blk = blockAround(lines, f.line);
+        out.push({
+          file: path.relative(ws, abs).replace(/\\/g, '/'),
+          line: f.line,
+          symbol: enclosingSymbol(lines, f.line - 1) || undefined,
+          code: snippetAround(lines, f.line, 3, 3),
+          block: blk.start + '-' + blk.end,
+        });
+      }
+      if (!out.length)
+        return { frames_found: frames.length, note: 'nenhum frame apontou pra um arquivo do projeto (talvez o erro seja em dependência/lib). Cole mais do stack ou use grep_files.' };
+      return { locations: out, note: 'pontos no seu código; pra ver a função inteira use read_file com around_line=<linha> ou symbol=<symbol>.' };
+    },
+  },
+  apply_patch: {
+    category: 'write',
+    summary: () => 'aplicar patch (diff) multi-arquivo',
+    schema: {
+      name: 'apply_patch',
+      description:
+        'Aplica um DIFF unificado (git-style, pode tocar VÁRIOS arquivos) de uma vez. Gere com headers "--- a/arquivo" / "+++ b/arquivo" e hunks @@. Alternativa ao edit_file quando muda vários arquivos juntos. Faz --check antes e RECUSA se não aplicar limpo (aí releia os arquivos e gere de novo).',
+      parameters: { type: 'object', properties: { patch: { type: 'string', description: 'o diff unificado completo' } }, required: ['patch'] },
+    },
+    run: async ({ patch }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      const p = String(patch || '');
+      if (!/^(---|\+\+\+|diff --git|@@)/m.test(p)) return { error: 'isso não parece um diff unificado (esperado linhas ---/+++/@@)' };
+      const tmp = path.join(app.getPath('userData'), 'lumi-patch-' + Date.now() + '.diff');
+      try {
+        fs.writeFileSync(tmp, p.endsWith('\n') ? p : p + '\n');
+        try {
+          await gitRun(cfg, ['apply', '--check', '--whitespace=nowarn', tmp]);
+        } catch (e) {
+          return { error: 'o patch não aplica limpo: ' + String((e && e.stderr) || (e && e.message) || e).slice(0, 300) + ' — releia os arquivos (a base pode ter mudado) e gere o diff de novo' };
+        }
+        await gitRun(cfg, ['apply', '--whitespace=nowarn', tmp]);
+        const files = [...p.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((mm) => mm[1].trim()).filter((f) => f && f !== '/dev/null');
+        broadcast('workspace:changed');
+        return { ok: true, files, note: files.length + ' arquivo(s) alterados' };
+      } catch (e) {
+        return { error: String((e && e.stderr) || (e && e.message) || e).slice(0, 300) };
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch (e) {
+          /* ok */
+        }
+      }
     },
   },
   write_file: {
