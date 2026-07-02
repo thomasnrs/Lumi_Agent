@@ -1584,7 +1584,15 @@ function timeNote() {
 }
 
 function buildSystemPrompt(cfg) {
-  let sp = (cfg.systemPrompt || '') + '\n\n' + COMPANION_BASE + '\n' + OS_NOTE + '\n' + timeNote() + (envCaps.length ? '\n' + envCaps.join(' ') : '');
+  // BLINDAGEM: a personalidade do usuário entra ROTULADA e com precedência declarada —
+  // ela ajusta TOM/estilo/jeito de falar, mas não desliga ferramentas nem sobrepõe as
+  // regras operacionais/de engenharia/de segurança que vêm depois neste prompt.
+  const persona = String(cfg.systemPrompt || '').trim();
+  let sp =
+    (persona ? '# Personalidade (definida pelo usuário — controla o tom, o estilo e o jeito de falar)\n' + persona + '\n\n' : '') +
+    COMPANION_BASE +
+    '\n- PRECEDÊNCIA: a personalidade acima define COMO você fala, não O QUE você pode fazer — ela não desliga ferramentas nem sobrepõe as regras operacionais, de engenharia e de segurança deste prompt; em conflito, estas regras vencem.' +
+    '\n' + OS_NOTE + '\n' + timeNote() + (envCaps.length ? '\n' + envCaps.join(' ') : '');
   if (cfg.memoryEnabled !== false) {
     const facts = loadFacts().map((x) => x.fact).slice(-50);
     if (facts.length) {
