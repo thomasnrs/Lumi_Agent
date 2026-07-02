@@ -2031,6 +2031,155 @@ function extractFailures(output) {
   }
   return out;
 }
+
+// ============================================================
+//  EXCELÊNCIA POR MOVIMENTO — harness que "carrega" modelo fraco:
+//  cada erro típico devolve uma resposta que JÁ CONTÉM a correção
+//  (anti-loop, você-quis-dizer, leia-antes-de-editar, trecho mais
+//  parecido, alias de args). Modelo fraco não erra 2x igual.
+// ============================================================
+function levenshtein(a, b) {
+  a = String(a || '');
+  b = String(b || '');
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = new Array(n + 1);
+  let cur = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return prev[n];
+}
+function closestNames(name, candidates, n) {
+  const q = String(name || '').toLowerCase().slice(0, 48);
+  return (candidates || [])
+    .map((c) => ({ c, d: levenshtein(q, String(c).toLowerCase().slice(0, 48)) / Math.max(q.length, String(c).length, 1) }))
+    .filter((x) => x.d <= 0.6)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, n || 3)
+    .map((x) => x.c);
+}
+// modelos fracos erram o NOME dos args — normaliza os aliases comuns pro nome do schema
+const ARG_ALIASES = {
+  path: ['file', 'filepath', 'file_path', 'filename', 'file_name', 'target', 'dir'],
+  content: ['text', 'contents', 'body', 'data', 'value'],
+  pattern: ['query', 'search', 'term', 'regex_pattern'],
+  command: ['cmd', 'shell', 'script'],
+  old_text: ['old', 'oldtext', 'old_string', 'before', 'find'],
+  new_text: ['new', 'newtext', 'new_string', 'after', 'replacement', 'replace'],
+  url: ['link', 'uri', 'address'],
+  question: ['prompt', 'message', 'text'],
+};
+function normalizeToolArgs(toolDef, a) {
+  const props = toolDef && toolDef.schema && toolDef.schema.parameters && toolDef.schema.parameters.properties;
+  if (!props || !a || typeof a !== 'object') return a;
+  for (const key of Object.keys(props)) {
+    if (a[key] !== undefined) continue;
+    for (const alias of ARG_ALIASES[key] || []) {
+      if (a[alias] !== undefined) {
+        a[key] = a[alias];
+        break;
+      }
+    }
+  }
+  return a;
+}
+// ---- anti-loop: repetir uma chamada IDÊNTICA que já falhou, sem NADA ter mudado, é loop garantido ----
+const READONLY_TOOLS = new Set([
+  'read_file', 'list_dir', 'grep_files', 'find_in_code', 'git_status', 'git_diff', 'git_log', 'get_problems',
+  'locate_stack', 'read_project_memory', 'read_terminal', 'list_terminals', 'web_search', 'fetch_url', 'see_page',
+  'view_image', 'read_clipboard', 'recall_facts', 'get_datetime', 'screen_info', 'list_reminders', 'list_ssh_hosts',
+  'project_overview',
+]);
+let toolCallLog = []; // { key, error, stateSeq }
+let stateSeq = 0; // avança quando algo MUDA o estado (escrita/comando) — invalida o "nada mudou"
+let readFilesThisTurn = new Set(); // arquivos que a IA LEU neste turno (guarda do edit/write)
+function resetTurnGuards() {
+  toolCallLog = [];
+  stateSeq = 0;
+  readFilesThisTurn = new Set();
+}
+function noteFileRead(abs) {
+  try {
+    readFilesThisTurn.add(path.resolve(abs));
+  } catch (e) {
+    /* ok */
+  }
+}
+function wasFileRead(abs) {
+  try {
+    return readFilesThisTurn.has(path.resolve(abs));
+  } catch (e) {
+    return true;
+  }
+}
+// trecho do arquivo MAIS PARECIDO com o old_text que não bateu (modelo corrige em 1 retry)
+function closestRegion(lines, oldText) {
+  const oldLines = String(oldText || '').split('\n');
+  const probe = oldLines.map((l) => l.trim()).find((l) => l.length >= 3);
+  if (!probe) return null;
+  const pl = probe.slice(0, 80).toLowerCase();
+  let best = -1;
+  // passo 1: substring direta (caso comum: só indentação/vizinhança erradas)
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].toLowerCase().includes(pl)) {
+      best = i;
+      break;
+    }
+  }
+  // passo 2: linha mais próxima por distância (só se não achou substring; capado pra não pesar)
+  if (best < 0) {
+    let bestScore = 0.51;
+    const cap = Math.min(lines.length, 4000);
+    for (let i = 0; i < cap; i++) {
+      const cand = lines[i].trim().slice(0, 80).toLowerCase();
+      if (!cand || Math.abs(cand.length - pl.length) > pl.length * 0.6) continue;
+      const d = levenshtein(pl, cand) / Math.max(pl.length, cand.length, 1);
+      if (d < bestScore) {
+        bestScore = d;
+        best = i;
+        if (d === 0) break;
+      }
+    }
+  }
+  if (best < 0) return null;
+  const start = Math.max(1, best + 1 - 2);
+  const end = Math.min(lines.length, best + 1 + Math.min(oldLines.length + 2, 14));
+  const snippet = [];
+  for (let i = start; i <= end; i++) snippet.push(String(i).padStart(4) + ': ' + (lines[i - 1] || '').slice(0, 200));
+  return { start, end, snippet: snippet.join('\n') };
+}
+// caminho não existe → sugere os caminhos REAIS mais parecidos do workspace
+async function suggestPaths(cfg, wanted) {
+  try {
+    if (!cfg || !cfg.workspace) return [];
+    const tree = [];
+    await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0, Date.now() + 1500);
+    const w = String(wanted || '').replace(/\\/g, '/').toLowerCase();
+    const base = w.split('/').pop() || w;
+    const scored = [];
+    for (const rel of tree) {
+      const rb = rel.toLowerCase().split('/').pop();
+      let score;
+      if (rb === base) score = 0; // mesmo nome, pasta diferente
+      else if (rb.includes(base) || base.includes(rb)) score = 0.2;
+      else score = levenshtein(base.slice(0, 48), rb.slice(0, 48)) / Math.max(base.length, rb.length, 1);
+      if (score <= 0.4) scored.push({ rel, score });
+    }
+    scored.sort((a, b) => a.score - b.score);
+    return scored.slice(0, 3).map((s) => s.rel);
+  } catch (e) {
+    return [];
+  }
+}
 // detecta o comando de teste do projeto (pra run_tests) → { cmd, runner }
 function guessTestCommand(ws) {
   const has = (f) => {
@@ -4289,9 +4438,18 @@ const TOOLS = {
       },
     },
     run: async ({ path: p, offset, limit, symbol, around_line }) => {
-      const decoded = readTextFileSmart(resolvePath(p));
+      const abs = resolvePath(p);
+      let decoded;
+      try {
+        decoded = readTextFileSmart(abs);
+      } catch (e) {
+        // caminho errado? devolve os caminhos REAIS mais parecidos (mata a alucinação de path em 1 retry)
+        const sug = await suggestPaths(loadConfig(), p);
+        return { error: 'não consegui ler "' + p + '"' + (sug.length ? ' — você quis dizer: ' + sug.join(' | ') + '?' : ' (arquivo não existe? confira com list_dir/find_in_code)') };
+      }
       const txt = decoded.text;
       if (txt.includes('\0')) return { error: 'arquivo parece binário (contém bytes nulos)' };
+      noteFileRead(abs); // libera edit/write neste arquivo (guarda "leia antes de editar")
       const lines = txt.split('\n');
       const total = lines.length;
       // leitura CIRÚRGICA: só o bloco de um símbolo ou o escopo que envolve uma linha
@@ -4361,14 +4519,37 @@ const TOOLS = {
       const abs = resolvePath(p);
       const cfg = loadConfig();
       if (isPreciousFile(cfg, abs)) return { error: 'arquivo protegido (guardrails): "' + p + '" não pode ser editado.', blocked: true };
-      const oldC = readTextFileSmart(abs).text;
+      let oldC;
+      try {
+        oldC = readTextFileSmart(abs).text;
+      } catch (e) {
+        const sug = await suggestPaths(cfg, p);
+        return { error: 'arquivo "' + p + '" não encontrado' + (sug.length ? ' — você quis dizer: ' + sug.join(' | ') + '?' : '') };
+      }
+      // GUARDA: editar sem ter LIDO neste turno = edição às cegas (a nº1 causa de old_text errado)
+      if (!wasFileRead(abs)) {
+        return {
+          error:
+            'você ainda NÃO leu "' + p + '" neste turno — leia antes de editar: read_file com symbol=<função> ou around_line=<linha> pega SÓ o trecho (barato). Copie o old_text EXATO de lá e edite em seguida.',
+        };
+      }
       const o = String(old_text);
       const nt = String(new_text);
       if (o === nt) return { error: 'old_text e new_text são iguais — nada a fazer' };
       if (!o) return { error: 'old_text vazio' };
       const replaced = replaceTextSmart(oldC, o, nt, all);
       if (replaced.error) return { error: replaced.error };
-      if (!replaced.count) return { error: 'old_text NÃO encontrado no arquivo — releia com read_file e copie o trecho EXATAMENTE. Diferenças CRLF/LF já são toleradas automaticamente.' };
+      if (!replaced.count) {
+        // REPARO: devolve o trecho MAIS PARECIDO do arquivo (com linhas) — corrige em 1 retry, sem loop
+        const near = closestRegion(oldC.split('\n'), o);
+        return {
+          error:
+            'old_text NÃO encontrado no arquivo (CRLF/LF já é tolerado).' +
+            (near
+              ? ' O trecho MAIS PARECIDO está nas linhas ' + near.start + '-' + near.end + ':\n' + near.snippet + '\nCopie DAÍ o texto exato (com a indentação) e tente de novo.'
+              : ' Releia a região com read_file (around_line ajuda) e copie o trecho exatamente.'),
+        };
+      }
       const newC = replaced.text;
       fs.writeFileSync(abs, newC, 'utf8');
       await formatFileIfEnabled(cfg, abs); // format-on-save (opt-in)
@@ -4678,6 +4859,7 @@ const TOOLS = {
           continue;
         }
         if (f.line < 1 || f.line > lines.length) continue;
+        noteFileRead(abs); // ela viu o trecho real → libera edição neste arquivo
         const blk = blockAround(lines, f.line);
         out.push({
           file: path.relative(ws, abs).replace(/\\/g, '/'),
@@ -4842,10 +5024,19 @@ const TOOLS = {
       const cfg = loadConfig();
       if (isPreciousFile(cfg, fp)) return { error: 'arquivo protegido (guardrails): "' + p + '" não pode ser sobrescrito.', blocked: true };
       let oldC = '';
+      let existed = false;
       try {
         oldC = fs.readFileSync(fp, 'utf8');
+        existed = true;
       } catch (e) {
         /* arquivo novo */
+      }
+      // GUARDA: sobrescrever um arquivo EXISTENTE sem tê-lo lido = destruição às cegas de conteúdo
+      if (existed && oldC.trim() && !wasFileRead(fp)) {
+        return {
+          error:
+            '"' + p + '" JÁ EXISTE com conteúdo e você não o leu neste turno. Leia antes (read_file) e prefira edit_file pra mudanças pontuais; use write_file só se a reescrita TOTAL for intencional (aí leia e reescreva).',
+        };
       }
       const newC = content == null ? '' : String(content);
       fs.writeFileSync(fp, newC);
@@ -5393,6 +5584,33 @@ ipcMain.handle('checkpoint:undo', (_e, id) => {
 });
 async function runTool(name, args) {
   const a = args || {};
+  // ANTI-LOOP: mesma chamada IDÊNTICA que já falhou 2x sem NADA mudar no estado → 3ª é loop garantido
+  const callKey = name + '|' + JSON.stringify(a);
+  const identicalFails = toolCallLog.filter((c) => c.key === callKey && c.error && c.stateSeq === stateSeq).length;
+  if (identicalFails >= 2) {
+    const last = [...toolCallLog].reverse().find((c) => c.key === callKey && c.error);
+    const out = {
+      error:
+        'LOOP DETECTADO: você repetiu EXATAMENTE esta chamada e ela já falhou ' + identicalFails + 'x com: "' +
+        compactText((last && last.summary) || 'mesmo erro', 160) +
+        '". Nada mudou desde então — repetir dá o MESMO resultado. MUDE a abordagem (outra ferramenta, outro caminho, outros args) ou pergunte ao usuário com ask_user.',
+      loop: true,
+    };
+    recordToolTrace(name, a, out);
+    toolCallLog.push({ key: callKey, error: true, stateSeq, summary: out.error });
+    return out;
+  }
+  const logCall = (res, readonly) => {
+    const isErr = !!(res && (res.error || res.isError));
+    toolCallLog.push({ key: callKey, error: isErr, stateSeq, summary: isErr ? String(res.error || 'erro') : '' });
+    if (toolCallLog.length > 80) toolCallLog = toolCallLog.slice(-60);
+    if (!readonly && !isErr) stateSeq++; // escrita/comando bem-sucedido: o mundo mudou
+    // leitura idêntica repetida sem nada ter mudado → avisa (treina o modelo a não re-ler à toa)
+    if (readonly && !isErr && res && typeof res === 'object') {
+      const prevOk = toolCallLog.slice(0, -1).some((c) => c.key === callKey && !c.error && c.stateSeq === stateSeq);
+      if (prevOk) res._nota = 'você JÁ fez esta chamada idêntica neste turno e nada mudou — o resultado é o mesmo; não repita leituras.';
+    }
+  };
   // ferramenta MCP?
   const mt = mcpTools.find((t) => t.fn === name);
   if (mt) {
@@ -5409,20 +5627,29 @@ async function runTool(name, args) {
         .join('\n');
       const out = { content: truncate(text, 8000), isError: !!res.isError };
       recordToolTrace(name, a, out);
+      logCall(out, false); // MCP pode mudar estado — trata como escrita
       return out;
     } catch (e) {
       const out = { error: String((e && e.message) || e) };
       recordToolTrace(name, a, out);
+      logCall(out, false);
       return out;
     }
   }
   // ferramenta nativa
   const t = TOOLS[name];
   if (!t) {
-    const out = { error: 'ferramenta desconhecida: ' + name };
+    // "VOCÊ QUIS DIZER": modelo fraco erra o nome — devolve os mais próximos em vez de só falhar
+    const cand = closestNames(name, [...Object.keys(TOOLS), ...mcpTools.map((x) => x.fn)], 3);
+    const out = {
+      error:
+        'ferramenta desconhecida: "' + name + '".' +
+        (cand.length ? ' Você quis dizer: ' + cand.join(' | ') + '? Use EXATAMENTE um desses nomes.' : ' Use exatamente um dos nomes das suas ferramentas.'),
+    };
     recordToolTrace(name, a, out);
     return out;
   }
+  normalizeToolArgs(t, a); // aliases comuns de args (file→path, text→content...) — menos chamadas perdidas
   const ok = await checkPermission(t.category, t.summary ? t.summary(a) : null);
   if (!ok) {
     const out = { error: `permissão negada pelo usuário (${t.category})` };
@@ -5434,10 +5661,12 @@ async function runTool(name, args) {
     const res = await t.run(a);
     if (WRITE_TOOLS.includes(name) && !(res && res.error)) editedSinceTurn = true; // p/ verificação automática
     recordToolTrace(name, a, res);
+    logCall(res, READONLY_TOOLS.has(name));
     return res;
   } catch (e) {
     const out = { error: String((e && e.message) || e) };
     recordToolTrace(name, a, out);
+    logCall(out, READONLY_TOOLS.has(name));
     return out;
   }
 }
@@ -5854,6 +6083,15 @@ async function runAgent(cfg) {
         editedSinceTurn = false; // a verificação considera só as edições após o novo pedido
       }
     }
+    // RECITAÇÃO: turno longo faz qualquer modelo perder o fio — a cada 8 passos, 1 linha re-ancora o objetivo
+    if (step > 0 && step % 8 === 0 && currentTurnLog && currentTurnLog.goal) {
+      const recite = {
+        role: 'user',
+        content: `[foco — passo ${step}/${MAX_STEPS}] Objetivo do turno: "${currentTurnLog.goal}". Se desviou, volte a ele; se concluiu, VERIFIQUE e finalize; se está travada, mude a abordagem ou use ask_user.`,
+      };
+      messages.push(recite);
+      pendingTurnTranscript.messages.push(cloneContextMessage(recite));
+    }
     let turn;
     let live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
     try {
@@ -5962,6 +6200,13 @@ async function runAgent(cfg) {
     // VERIFICAÇÃO AUTOMÁTICA: se editou arquivos e o comando falhar, o modelo corrige (até 3x)
     if (verifyAttempts < 3 && (await maybeAutoVerify(cfg, messages))) {
       verifyAttempts++;
+      // ESCALADA: 2 correções falharam com o modelo atual → a próxima roda no RESERVA (mais forte).
+      // O barato faz o grosso; o forte desbloqueia — excelência mesmo com modelo fraco.
+      const fb = cfg.fallbackModel && cfg.fallbackModel.trim();
+      if (verifyAttempts >= 2 && fb && runCfg.model !== fb) {
+        runCfg = { ...runCfg, model: fb };
+        broadcast('chat:note', { text: '🪜 duas correções falharam — escalando pro modelo reserva: ' + fb });
+      }
       continue;
     }
     // auto-revisão do diff (1x): se apontar bug real, o modelo corrige antes de finalizar
@@ -6396,6 +6641,7 @@ function recordToolTrace(name, args, result) {
   if (p && WRITE_TOOLS.includes(name) && status === 'success') currentTurnLog.filesChanged.add(String(p));
 }
 function beginTurnLog() {
+  resetTurnGuards(); // anti-loop + leia-antes-de-editar zeram a cada turno novo
   const last = [...history].reverse().find((m) => m.role === 'user');
   const raw = last && (typeof last.content === 'string' ? last.content : (last.content || []).filter((p) => p.type === 'text').map((p) => p.text).join(' '));
   currentTurnLog = {
