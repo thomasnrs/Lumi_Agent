@@ -168,15 +168,16 @@
       '#lumi-opacity{position:fixed;right:8px;top:8px;z-index:99999;display:flex;align-items:center;gap:0;' +
       'padding:5px;border-radius:16px;background:rgba(20,20,28,.5);border:1px solid var(--border);' +
       'color:var(--text);font:11px "Segoe UI",sans-serif;opacity:.4;backdrop-filter:blur(6px);' +
-      'transition:opacity .2s,background .2s,gap .2s;}' +
-      '#lumi-opacity:hover{opacity:1;background:rgba(20,20,28,.92);gap:7px;}' +
+      '-webkit-app-region:no-drag;pointer-events:auto;transition:opacity .2s,background .2s,gap .2s;}' +
+      '#lumi-opacity *{-webkit-app-region:no-drag;}' +
+      '#lumi-opacity:hover,#lumi-opacity:focus-within{opacity:1;background:rgba(20,20,28,.92);gap:7px;}' +
       '#lumi-opacity svg{width:15px;height:15px;flex:0 0 auto;}' +
       '#lumi-opacity input[type=range]{width:0;opacity:0;accent-color:var(--accent);cursor:pointer;' +
-      'transition:width .2s,opacity .2s;}' +
-      '#lumi-opacity:hover input[type=range]{width:82px;opacity:1;}' +
+      'touch-action:none;transition:width .2s,opacity .2s;}' +
+      '#lumi-opacity:hover input[type=range],#lumi-opacity:focus-within input[type=range]{width:82px;opacity:1;}' +
       '#lumi-opacity .v{width:0;opacity:0;overflow:hidden;white-space:nowrap;text-align:right;' +
       'font-variant-numeric:tabular-nums;transition:width .2s,opacity .2s;}' +
-      '#lumi-opacity:hover .v{width:30px;opacity:1;}';
+      '#lumi-opacity:hover .v,#lumi-opacity:focus-within .v{width:30px;opacity:1;}';
     document.head.appendChild(css);
 
     const box = document.createElement('div');
@@ -186,7 +187,7 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
       'stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/>' +
       '<path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>' +
-      '<input type="range" min="25" max="100" step="5" /><span class="v"></span>';
+      '<input type="range" min="25" max="100" step="5" aria-label="Transparência desta janela" /><span class="v"></span>';
     document.body.appendChild(box);
 
     const slider = box.querySelector('input');
