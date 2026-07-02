@@ -40,6 +40,18 @@ Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. J
 
 ---
 
+## 🌟 Novidades da v1.1.0
+
+- **Codex dentro da Lumi:** use o Codex oficial como motor do Modo Código com a conta ChatGPT já autenticada no computador — sem copiar tokens e sem exigir API key. Threads persistem por chat/workspace, com streaming, comandos, diffs, planos, subagentes, aprovações, steering, stop e usage do plano na própria interface.
+- **Claude Code mais integrado:** sessões paralelas e retomáveis por workspace, perguntas e confirmações no chat, todos os níveis de raciocínio e leitura das skills, agentes, comandos e MCPs instalados.
+- **Uma engenheira por janela:** chats e workspaces podem trabalhar em paralelo, cada um com seu contexto, terminal, arquivos, sessão do motor de código e eventos isolados.
+- **Harness de engenharia bem mais forte:** busca e edição resistentes a projetos grandes/CRLF/encoding, diagnósticos estruturados, testes focados, outline, usos, stack traces, banco, git-awareness, auto-revisão e guardrails.
+- **Performance configurável:** presets **Batata**, Economia, Performance, Balanceado e Qualidade, com escala de renderização, FPS ativo/ocioso e efeitos reduzidos para aliviar CPU/GPU em máquinas modestas.
+- **Interface refinada:** design system compartilhado entre páginas, ícones reais de stacks no explorador, controles de janela estilo macOS em Windows/Linux e dezenas de ajustes de acabamento.
+- **Mais autonomia cotidiana:** tarefas agendadas, sentinela de logs, contexto técnico em camadas, indicadores ao vivo de tokens/contexto/usage e histórico virtualizado para conversas longas.
+
+---
+
 ## ✨ Destaques
 
 | | |
@@ -48,12 +60,14 @@ Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. J
 | 🧠 **I.A. multi-provedor** | **21 provedores pré-cadastrados** (OpenCode Zen/Go, OpenAI, Anthropic, Gemini, Grok, Groq, DeepSeek, Mistral, OpenRouter, Blackbox, Kimi, GLM, Cerebras, Ollama/LM Studio local…) — com roteamento automático dos protocolos do OpenCode e loop completo de agente. Streaming, thinking, visão, fallback automático de modelo |
 | 🛠️ **Agente de verdade** | **~55 ferramentas** nativas com sistema de permissões (aprovação em **cards bonitos no chat**), turnos longos (até 200 passos) com compactação automática, checkpoints com **desfazer**, **guardrails** (comandos destrutivos bloqueados + arquivos protegidos), **anti-loop**, verificação automática com correção e **auto-revisão do próprio diff** antes de entregar |
 | ✦ **Modo Claude Code** | No Modo Arquiteto, o chat pode ser assumido pelo **Claude Code oficial** usando a assinatura Claude Pro/Max via OAuth — sessões retomáveis por projeto, `CLAUDE.md`, skills, MCP, ferramentas, subagentes, streaming e permissões dentro da interface da Lumi, sem API key |
+| ◇ **Modo Codex** | O **Codex oficial** assume o Modo Código usando o login ChatGPT compartilhado pelo CLI/extensão da OpenAI — threads por chat/workspace, `AGENTS.md`, skills, plugins, MCPs, comandos, diffs, planos, subagentes, aprovações e usage ao vivo, sem copiar credenciais |
 | 🤖 **Multi-agentes** | Orquestradora delega a uma equipe (Programador, Designer, Testador…) que trabalha **em paralelo** — e você acompanha a narração de cada um **ao vivo** no chat |
-| 🖥️ **Workspace estilo VS Code** | Editor Monaco com abas, **git completo** (diff, stage, commit, push/pull, branches, revisão pré-commit pela I.A.), **Live Server** e **navegador embutidos**, aba **Docker** (+compose), terminal **PTY real** com perfis (CMD, Git Bash, **WSL**, **SSH**, venv), menu de **Tarefas**, túnel público em 1 clique, **pastas remotas via SSH** (estilo Remote-SSH), Ctrl+P, busca global, chat lateral |
+| 🖥️ **Workspace estilo VS Code** | Editor Monaco com abas, **git completo** (diff, stage, commit, push/pull, branches, revisão pré-commit pela I.A.), **Live Server** e **navegador embutidos**, aba **Docker** (+compose), terminal **PTY real** com perfis (CMD, Git Bash, **WSL**, **SSH**, venv), menu de **Tarefas**, túnel público em 1 clique, **pastas remotas via SSH** (estilo Remote-SSH), Ctrl+P, busca global, chat lateral e ícones reais das stacks |
 | 🗣️ **Voz completa** | TTS grátis (Edge), Gemini (vozes expressivas), XTTS no seu servidor, ElevenLabs — com **lip-sync real**. STT Whisper-compatível pelo microfone |
 | 💚 **Companheira proativa** | Lembretes falados ("me lembra em 20min…"), saudações, boas-vindas na volta, cuidado com pausas, **noção de hora** (madrugada manhosa, "vai dormir não? 👀"), reação opcional ao app em foco (Windows e Linux), **datas especiais** (te dá parabéns 🎂) — com a personalidade dela |
 | 🔍 **Transparência total** | Página de **memória** mostra tudo que ela sabe de você (edite/apague fato por fato) e o **gastômetro** acumula o custo estimado do dia no rodapé do chat |
-| 🎨 **Design refinado** | 9 temas prontos (incl. claros, AMOLED e Sakura 🌸) + editor de tema completo, vidro acrílico nativo (Win11) — até o **menu de contexto dela é de vidro** —, barras de título customizadas, menus com blur, fonte própria |
+| 🎨 **Design refinado** | 9 temas prontos (incl. claros, AMOLED e Sakura 🌸) + editor de tema completo, design system compartilhado, vidro acrílico nativo (Win11), controles estilo macOS em Windows/Linux, menus com blur e fonte própria |
+| 🥔 **Modo econômico** | Presets gráficos de **Batata a Qualidade**, escala de renderização e FPS configuráveis, efeitos reduzidos e pausa inteligente do avatar quando oculto — feito para reduzir bastante o uso em PCs modestos |
 
 ---
 
@@ -132,6 +146,7 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 ## 🦾 O modo dev (estilo Claude Code)
 
 - **Modo arquiteto**: aponte um workspace e ela trabalha no projeto com memória própria, detecção de stack (Node, Python, Go, Rust, C#, Java… com boas práticas por linguagem) e comando de verificação sugerido.
+- **Três motores de código**: escolha entre a Lumi nativa (qualquer API/proxy), **Claude Code** (assinatura Pro/Max) ou **Codex** (conta ChatGPT compartilhada). Cada motor mantém a própria sessão por chat e workspace.
 - **Regras do repositório**: se o projeto tem `CLAUDE.md`, `AGENTS.md`, `.cursorrules` ou `copilot-instructions.md`, ela **segue à risca**.
 - **Verificação automática**: após editar, roda o lint/test/build do projeto e **corrige sozinha** se falhar (até 3 tentativas) — com as **falhas extraídas de forma estruturada** (arquivo:linha, teste que quebrou) e **escalada pro modelo reserva** se o principal empacar.
 - **Auto-revisão antes de entregar**: um agente lê o **diff do que ela mesma fez** e aponta bugs/riscos — ela corrige antes de dizer "pronto". *Evidência, não confiança.*
@@ -179,6 +194,8 @@ Na **primeira execução**, o assistente de boas-vindas configura tudo em ~2 min
 1. A avatar **Cerberia já vem no repositório** — pra trocar, coloque outro `.vrm` em `assets/` (grátis no [VRoid Hub](https://hub.vroid.com)) e escolha no menu → *Personagem*.
 2. As animações `.vrma` **também já vêm** — pra trocar, é só substituir os arquivos em `animations/`.
 3. Configurações completas na engrenagem ⚙ (avatar ou bandeja): provedor, modelo, chave, voz, mic, permissões, tema.
+
+Para usar o **Modo Codex**, instale o [Codex CLI](https://developers.openai.com/codex/cli/) ou a extensão oficial da OpenAI no VS Code/Cursor e entre com sua conta ChatGPT. A Lumi detecta o executável e reutiliza a autenticação gerenciada pelo próprio Codex; ela **não lê nem salva seu token**. Para o **Modo Claude Code**, use o botão de login da seção correspondente nas Configurações.
 
 > A avatar padrão (**Cerberia**, liberada pra distribuição) e as animações `.vrma` (packs gratuitos: motions oficiais do VRoid + gestos do [vrm-viewer](https://github.com/tk256ailab/vrm-viewer)) **já vêm no repositório**. Outros `.vrm` ficam de fora por licença — cada um traz o seu.
 
@@ -231,6 +248,8 @@ src/
 │   ├── main.js        # processo principal: I.A. (provedores, agente, ferramentas,
 │   │                  # permissões, multi-agentes), terminais PTY, TTS/STT, MCP,
 │   │                  # memória, checkpoints, proatividade, janelas e bandeja
+│   ├── codex-engine.js # cliente do Codex app-server: auth, threads, streaming,
+│   │                  # tools, diffs, aprovações, planos e métricas
 │   └── preload.js     # ponte segura (contextBridge/IPC)
 └── renderer/
     ├── index.html     # avatar 3D + configurações (modo janela dedicada via ?settings=1)
@@ -265,7 +284,7 @@ A Lumi é **gratuita e open source**, feita por uma pessoa só à base de café 
 
 ## 🗺️ Roadmap
 
-✅ Avatar vivo · ✅ I.A. multi-provedor (19 presets, favoritos ★) · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH, Problemas) · ✅ Multi-janela (chats e workspaces independentes) · ✅ Harness de excelência (guardrails, anti-loop, auto-revisão, diagnósticos, testes focados) · ✅ Sentinela de logs · ✅ Proatividade com contexto · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · ✅ Testes do próprio harness (`npm test`) · 🔜 i18n (EN) · 🎯 **Steam**
+✅ Avatar vivo · ✅ I.A. multi-provedor (21 presets, favoritos ★) · ✅ Claude Code + Codex com login compartilhado · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH, Problemas) · ✅ Multi-janela e turnos paralelos · ✅ Harness de excelência (guardrails, anti-loop, auto-revisão, diagnósticos, testes focados) · ✅ Modo econômico para PCs modestos · ✅ Tarefas agendadas · ✅ Sentinela de logs · ✅ Proatividade com contexto · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · ✅ Testes do próprio harness (`npm test`) · 🔜 i18n (EN) · 🎯 **Steam**
 
 ---
 
