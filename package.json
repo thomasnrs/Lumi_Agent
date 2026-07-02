@@ -63,9 +63,7 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/@vscode/ripgrep/**"
-    ],
-    "asarUnpack": [
+      "node_modules/@vscode/ripgrep/**",
       "node_modules/@anthropic-ai/claude-agent-sdk*/**/*"
     ],
     "win": {
