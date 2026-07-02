@@ -1,8 +1,8 @@
 // Controle de transparência da janela (persistido por página em config.pageOpacity).
 // - Sempre restaura a opacidade salva ao abrir.
 // - Expõe window.__lumiSetOpacity / __lumiGetOpacity para a própria página ajustar.
-// - Injeta um controle flutuante discreto (ícone que expande no hover) — exceto onde
-//   a página já tem o seu próprio controle (ex.: o chat, que tem #chatHeader).
+// - Injeta um controle discreto (acoplado à menubar quando existe; flutuante nas demais)
+//   — exceto onde a página já tem o seu próprio controle (ex.: o chat).
 (function () {
   const chromeScriptUrl = document.currentScript && document.currentScript.src;
   const outfitUrl = chromeScriptUrl ? new URL('fonts/outfit.woff2', chromeScriptUrl).href : 'fonts/outfit.woff2';
@@ -19,7 +19,7 @@
       css.textContent =
         '#lumi-toasts{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:100000;' +
         'display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;}' +
-        '.lumi-toast{padding:8px 16px;border-radius:18px;font:12px "Segoe UI",sans-serif;color:var(--text,#eee);' +
+        '.lumi-toast{padding:8px 16px;border-radius:18px;font:12px Outfit,"Segoe UI",sans-serif;color:var(--text,#eee);' +
         'background:color-mix(in srgb, var(--surface,#24242f) 88%, transparent);border:1px solid var(--border,#2a2a38);' +
         'box-shadow:0 6px 22px rgba(0,0,0,.45);backdrop-filter:blur(8px);animation:lumiToastIn .2s ease;' +
         'max-width:80vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
@@ -39,6 +39,45 @@
     setTimeout(() => t.remove(), 2550);
   };
 
+  // Confirmação consistente com a interface (substitui o confirm() nativo nas páginas).
+  window.__lumiConfirm = function (message, options) {
+    const opts = options || {};
+    return new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'lumi-confirm';
+      dialog.innerHTML =
+        '<div class="lumi-confirm-mark" aria-hidden="true">!</div>' +
+        '<div class="lumi-confirm-copy"><strong></strong><p></p></div>' +
+        '<div class="lumi-confirm-actions">' +
+        '<button type="button" class="lumi-confirm-cancel"></button>' +
+        '<button type="button" class="lumi-confirm-ok"></button></div>';
+      dialog.querySelector('strong').textContent = opts.title || 'Confirmar ação';
+      dialog.querySelector('p').textContent = String(message || '');
+      const cancel = dialog.querySelector('.lumi-confirm-cancel');
+      const accept = dialog.querySelector('.lumi-confirm-ok');
+      cancel.textContent = opts.cancelText || 'Cancelar';
+      accept.textContent = opts.confirmText || 'Confirmar';
+      if (opts.danger !== false) accept.classList.add('danger');
+      let done = false;
+      const finish = (answer) => {
+        if (done) return;
+        done = true;
+        dialog.close();
+        dialog.remove();
+        resolve(answer);
+      };
+      cancel.addEventListener('click', () => finish(false));
+      accept.addEventListener('click', () => finish(true));
+      dialog.addEventListener('cancel', (e) => {
+        e.preventDefault();
+        finish(false);
+      });
+      document.body.appendChild(dialog);
+      dialog.showModal();
+      cancel.focus();
+    });
+  };
+
   // ---- design system compartilhado (vale em TODAS as páginas, inclusive iframes) ----
   (function designSystem() {
     const css = document.createElement('style');
@@ -50,9 +89,28 @@
       'select{appearance:none;-webkit-appearance:none;' +
       'background-image:url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23889\' stroke-width=\'2.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><path d=\'m6 9 6 6 6-6\'/></svg>");' +
       'background-repeat:no-repeat;background-position:right 8px center;padding-right:26px!important;cursor:pointer;}' +
-      'button{transition:background .12s,color .12s,border-color .12s;}';
+      'button{transition:background .12s,color .12s,border-color .12s;}' +
+      '.lumi-confirm{width:min(390px,calc(100vw - 32px));padding:18px;border:1px solid color-mix(in srgb,var(--border,#2a2a38) 82%,white 8%);' +
+      'border-radius:14px;background:color-mix(in srgb,var(--surface,#24242f) 96%,transparent);color:var(--text,#eee);' +
+      "font:13px/1.45 Outfit,'Segoe UI',sans-serif;box-shadow:0 24px 70px rgba(0,0,0,.52);animation:lumiConfirmIn .2s cubic-bezier(.16,1,.3,1);}" +
+      '.lumi-confirm::backdrop{background:rgba(4,4,9,.62);backdrop-filter:blur(5px);}' +
+      '.lumi-confirm-mark{display:grid;width:30px;height:30px;place-items:center;float:left;margin-right:11px;border-radius:9px;' +
+      'color:#ffc978;background:color-mix(in srgb,#ffc978 13%,transparent);font-weight:800;}' +
+      '.lumi-confirm-copy{min-height:42px}.lumi-confirm-copy strong{display:block;font-size:14px;margin:1px 0 3px}' +
+      '.lumi-confirm-copy p{margin:0;color:color-mix(in srgb,var(--text,#eee) 68%,transparent)}' +
+      '.lumi-confirm-actions{display:flex;justify-content:flex-end;gap:8px;clear:both;padding-top:16px}' +
+      '.lumi-confirm-actions button{min-height:34px;padding:7px 13px;border:1px solid var(--border,#2a2a38);border-radius:8px;' +
+      'color:var(--text,#eee);background:var(--surface-2,#0f0f16);cursor:pointer;font:600 12px Outfit,"Segoe UI",sans-serif;}' +
+      '.lumi-confirm-actions button:hover{border-color:color-mix(in srgb,var(--accent,#7aa2ff) 45%,var(--border,#2a2a38))}' +
+      '.lumi-confirm-actions .danger{border-color:color-mix(in srgb,#ff9b9b 34%,transparent);color:#ffb0b0;background:color-mix(in srgb,#ff9b9b 10%,transparent)}' +
+      '@keyframes lumiConfirmIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}';
     document.head.appendChild(css);
   })();
+
+  // Botões só com ícone já usam `title`; espelha o texto para leitores de tela.
+  document.querySelectorAll('button[title]:not([aria-label])').forEach((button) => {
+    button.setAttribute('aria-label', button.title);
+  });
 
   // ---- barra de título + traffic lights (Windows e Linux) ----
   (function titlebar() {
@@ -160,15 +218,16 @@
     return pageOpacity[id] != null ? pageOpacity[id] : 1;
   };
 
-  // controle flutuante discreto (só nas páginas sem cabeçalho próprio)
+  // controle discreto: acoplado à menubar ou flutuante nas páginas sem cabeçalho próprio
   function injectFloating(v) {
     if (document.getElementById('chatHeader')) return; // o chat tem o seu (painel de ajustes)
     const css = document.createElement('style');
     css.textContent =
       '#lumi-opacity{position:fixed;right:8px;top:8px;z-index:99999;display:flex;align-items:center;gap:0;' +
       'padding:5px;border-radius:16px;background:rgba(20,20,28,.5);border:1px solid var(--border);' +
-      'color:var(--text);font:11px "Segoe UI",sans-serif;opacity:.4;backdrop-filter:blur(6px);' +
+      'color:var(--text);font:11px Outfit,"Segoe UI",sans-serif;opacity:.4;backdrop-filter:blur(6px);' +
       '-webkit-app-region:no-drag;pointer-events:auto;transition:opacity .2s,background .2s,gap .2s;}' +
+      '#lumi-opacity.in-menubar{position:relative;inset:auto;margin-left:auto;flex:0 0 auto;z-index:2;}' +
       '#lumi-opacity *{-webkit-app-region:no-drag;}' +
       '#lumi-opacity:hover,#lumi-opacity:focus-within{opacity:1;background:rgba(20,20,28,.92);gap:7px;}' +
       '#lumi-opacity svg{width:15px;height:15px;flex:0 0 auto;}' +
@@ -188,7 +247,13 @@
       'stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/>' +
       '<path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>' +
       '<input type="range" min="25" max="100" step="5" aria-label="Transparência desta janela" /><span class="v"></span>';
-    document.body.appendChild(box);
+    const menuHost = document.getElementById('menubar');
+    if (menuHost) {
+      box.classList.add('in-menubar');
+      menuHost.appendChild(box);
+    } else {
+      document.body.appendChild(box);
+    }
 
     const slider = box.querySelector('input');
     const valEl = box.querySelector('.v');

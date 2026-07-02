@@ -77,14 +77,15 @@
       ::-webkit-scrollbar { width: 8px; }
       ::-webkit-scrollbar-thumb { background: #33333f; border-radius: 6px; }
     </style>
+    <link rel="stylesheet" href="ui.css" />
   </head>
-  <body>
+  <body class="lumi-page" data-lumi-page="tasks">
     <div class="scroll">
-      <h1>
+      <h1 class="lumi-page-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Tarefas agendadas
       </h1>
-      <div class="sub">
+      <div class="sub lumi-page-subtitle">
         A Lumi roda o prompt sozinha no horário, numa conversa própria ("⏰ nome" na lista de conversas) — com todas as permissões e
         guardrails de sempre. Você também pode pedir no chat: <i>"todo dia às 9h, rode os testes e me conte"</i>.
       </div>
@@ -109,13 +110,13 @@
           <input id="fMin" type="number" min="5" step="5" value="60" hidden title="a cada N minutos (mínimo 5)" />
         </div>
         <div id="btnRow">
-          <button id="saveBtn">Salvar tarefa</button>
-          <button id="cancelBtn" hidden>Cancelar edição</button>
+          <button id="saveBtn" class="lumi-btn lumi-btn-primary">Salvar tarefa</button>
+          <button id="cancelBtn" class="lumi-btn lumi-btn-secondary" hidden>Cancelar edição</button>
         </div>
       </div>
 
       <div id="list"></div>
-      <div id="empty" hidden>Nenhuma tarefa ainda.<br />Crie a primeira acima — ou peça pra Lumi no chat. ⏰</div>
+      <div id="empty" class="lumi-empty" hidden>Nenhuma tarefa ainda.<br />Crie a primeira acima — ou peça pra Lumi no chat.</div>
     </div>
 
     <script>
@@ -196,6 +197,7 @@
           tgl.className = 'tgl';
           tgl.title = t.enabled ? 'Desligar' : 'Ligar';
           tgl.innerHTML = '<input type="checkbox"' + (t.enabled ? ' checked' : '') + ' /><span></span>';
+          tgl.querySelector('input').setAttribute('aria-label', (t.enabled ? 'Desligar ' : 'Ligar ') + (t.name || 'tarefa'));
           tgl.querySelector('input').onchange = async (e) => {
             await window.api.tasksSave({ id: t.id, enabled: e.target.checked });
             render();
@@ -206,6 +208,7 @@
           const run = document.createElement('button');
           run.className = 'run';
           run.title = 'Rodar agora';
+          run.setAttribute('aria-label', 'Rodar tarefa agora');
           run.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
           run.onclick = async () => {
             await window.api.tasksRunNow(t.id);
@@ -215,9 +218,14 @@
           const del = document.createElement('button');
           del.className = 'del';
           del.title = 'Excluir tarefa';
+          del.setAttribute('aria-label', 'Excluir tarefa');
           del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
           del.onclick = async () => {
-            if (!confirm('Excluir a tarefa "' + (t.name || t.id) + '"?')) return;
+            const question = 'Excluir a tarefa "' + (t.name || t.id) + '"?';
+            const confirmed = window.__lumiConfirm
+              ? await window.__lumiConfirm(question, { title: 'Excluir tarefa', confirmText: 'Excluir' })
+              : confirm(question);
+            if (!confirmed) return;
             await window.api.tasksDelete(t.id);
             render();
           };

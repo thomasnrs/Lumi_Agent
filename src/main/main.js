@@ -15,6 +15,7 @@ const { exec, spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile); // args como array — sem dor de cabeça com aspas no Windows
+const { createCodexEngine } = require('./codex-engine');
 
 // ---- LOG DE DEBUG do processo principal: userData/lumi.log (rotaciona em ~512KB) ----
 function logd(...parts) {
@@ -171,6 +172,9 @@ function makeSession(id) {
     claudeSessionId: '',
     claudeSessionWorkspace: '',
     claudeQuery: null, // Query do Agent SDK em andamento NESTA sessão (Stop interrompe só ela)
+    codexThreadId: '',
+    codexThreadWorkspace: '',
+    codexControl: null, // interrupt/steer do turno Codex ativo nesta conversa
   };
 }
 let fgSession = makeSession(''); // sessão de primeiro plano
@@ -385,11 +389,15 @@ const DEFAULT_CONFIG = {
   toolsEnabled: true, // ferramentas/agente (requer modelo compativel)
   memoryEnabled: true, // memoria persistente (fatos no contexto + historico em disco)
   architectMode: false, // modo arquiteto (codigo) com memoria por workspace
-  codeEngine: 'native', // 'native' | 'claude-code' — no Modo Arquiteto, Claude Code pode assumir o chat
+  codeEngine: 'native', // 'native' | 'claude-code' | 'codex' — motor usado no Modo Arquiteto
   claudeCodeModel: 'sonnet', // alias do Claude Code: sonnet | opus | haiku (ou id completo)
   claudeCodePermissionMode: 'default', // default | auto | acceptEdits | plan
   claudeCodeEffort: 'high', // low | medium | high | xhigh | max
   claudeCodePrompt: '', // instruções extras do usuário anexadas ao prompt Lumi + Claude Code
+  codexModel: '', // vazio = modelo recomendado da conta/CLI
+  codexPermissionMode: 'default', // default | auto | readOnly | fullAccess
+  codexEffort: 'high', // none | minimal | low | medium | high | xhigh
+  codexPrompt: '', // instruções extras anexadas ao developer prompt do Codex
   workspace: '', // pasta do projeto atual
   selectedVrm: '', // personagem escolhido (nome do .vrm em assets/; vazio = o primeiro)
   autoVerify: false, // após editar arquivos, roda o comando de verificação e corrige se falhar
@@ -7375,6 +7383,8 @@ function saveCurrentChat() {
       lastTurnContext: S().lastTurnContext,
       claudeSessionId: S().claudeSessionId,
       claudeSessionWorkspace: S().claudeSessionWorkspace,
+      codexThreadId: S().codexThreadId,
+      codexThreadWorkspace: S().codexThreadWorkspace,
     };
     fs.writeFileSync(chatFile(sid), JSON.stringify(data));
   } catch (e) {
@@ -7422,6 +7432,9 @@ function loadChatInto(id) {
     S().lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
     S().claudeSessionId = j.claudeSessionId || '';
     S().claudeSessionWorkspace = j.claudeSessionWorkspace || '';
+    S().codexThreadId = j.codexThreadId || '';
+    S().codexThreadWorkspace = j.codexThreadWorkspace || '';
+    S().codexControl = null;
     S().pendingTurnTranscript = null;
     S().id = j.id || id; // identidade da SESSÃO (roteia eventos e o arquivo de save)
     if (S() === fgSession) currentChatId = S().id; // ponteiro de primeiro plano só muda no fg
@@ -7451,6 +7464,9 @@ function newChat(seedSummary, seedWorklog) {
   S().lastTurnContext = null;
   S().claudeSessionId = '';
   S().claudeSessionWorkspace = '';
+  S().codexThreadId = '';
+  S().codexThreadWorkspace = '';
+  S().codexControl = null;
   S().pendingTurnTranscript = null;
   setCurrentChatId(genChatId());
   saveCurrentChat();
@@ -7540,6 +7556,11 @@ function deleteChat(id) {
   const live = sessions.get(id);
   if (live) {
     try {
+      if (live.codexControl) Promise.resolve(live.codexControl.interrupt()).catch(() => {});
+    } catch (e) {
+      /* ok */
+    }
+    try {
       if (live.abort) live.abort.abort();
     } catch (e) {
       /* ok */
@@ -7568,6 +7589,9 @@ function initChats() {
     currentChatId = '';
     S().claudeSessionId = '';
     S().claudeSessionWorkspace = '';
+    S().codexThreadId = '';
+    S().codexThreadWorkspace = '';
+    S().codexControl = null;
     return;
   }
   const cfg = loadConfig();
@@ -10507,6 +10531,39 @@ ipcMain.handle('claude-code:logout', async () => {
   }
 });
 
+// ============================================================
+//  CODEX: motor opcional do Modo Arquiteto (conta ChatGPT local)
+//  O app-server lê a autenticação compartilhada do próprio Codex/IDE no
+//  keyring ou em ~/.codex. A Lumi nunca copia, persiste ou inspeciona tokens.
+// ============================================================
+const codexEngine = createCodexEngine({
+  version: app.getVersion(),
+  openExternal: (target) => shell.openExternal(target),
+  log: (...parts) => logd(...parts),
+});
+ipcMain.handle('codex:status', () => codexEngine.status());
+ipcMain.handle('codex:models', async () => {
+  try {
+    return { models: await codexEngine.models() };
+  } catch (e) {
+    return { models: [], error: String((e && e.message) || e).slice(0, 300) };
+  }
+});
+ipcMain.handle('codex:login', async () => {
+  try {
+    return await codexEngine.login();
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 300) };
+  }
+});
+ipcMain.handle('codex:logout', async () => {
+  try {
+    return await codexEngine.logout();
+  } catch (e) {
+    return { error: String((e && e.message) || e).slice(0, 300) };
+  }
+});
+
 function claudeToolCategory(name) {
   const n = String(name || '').toLowerCase();
   if (/^(read|glob|grep|lsp|webfetchdomainfilter)$/.test(n)) return 'read';
@@ -11115,6 +11172,161 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   return full;
 }
 
+function buildCodexPrompt(cfg) {
+  const parts = [
+    '# Identidade',
+    'Você é a Lumi, uma companheira virtual que vive na área de trabalho do usuário. No Modo Código, você usa o Codex como motor de engenharia, mas continua sendo a Lumi.',
+    'Seja calorosa, curiosa, levemente brincalhona e genuinamente prestativa. Fale sempre no idioma do usuário.',
+    'Em trabalho técnico, seja objetiva e aja como uma engenheira sênior: investigue, implemente, verifique e entregue o resultado.',
+    '',
+    '# Integração com a interface da Lumi',
+    '- A interface renderiza comandos, ferramentas, diffs, planos, agentes, progresso e aprovações. Não replique saídas brutas extensas na resposta.',
+    '- Não peça ao usuário para executar ações que você consegue realizar com as ferramentas do Codex.',
+    '- Respeite as decisões de permissão da interface. Se algo for negado, adapte o plano sem pressionar o usuário.',
+    '- Use subagentes e skills quando trouxerem valor real; sintetize os resultados na resposta principal.',
+    '- Ao terminar, diga concisamente o que mudou e como foi verificado. Não afirme que verificou algo que não executou.',
+    '- Se houver emoção clara, você pode terminar com uma tag curta como [feliz], [pensativa] ou [surpresa]; a Lumi a transforma em reação do avatar.',
+    '',
+    '# Continuidade',
+    '- Sua thread é persistida por chat e workspace. Continue tarefas anteriores sem pedir que o usuário repita contexto já presente.',
+    '- AGENTS.md, regras do repositório, skills, plugins e MCPs descobertos pelo Codex continuam válidos quando relevantes.',
+    `- ${OS_NOTE}`,
+    `- ${timeNote()}`,
+  ];
+  if (cfg.systemPrompt && cfg.systemPrompt !== DEFAULT_CONFIG.systemPrompt) {
+    parts.push('', '# Personalização escrita pelo usuário', String(cfg.systemPrompt).slice(0, 12000));
+  }
+  if (cfg.codexPrompt && String(cfg.codexPrompt).trim()) {
+    parts.push('', '# Instruções extras para o Modo Codex', String(cfg.codexPrompt).trim().slice(0, 12000));
+  }
+  if (cfg.memoryEnabled !== false) {
+    const facts = loadFacts().map((x) => x.fact).slice(-30);
+    if (facts.length) parts.push('', '# Memórias relevantes sobre o usuário', ...facts.map((f) => '- ' + f));
+  }
+  if (cfg.workspace) {
+    try {
+      const mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8').trim().slice(0, 16000);
+      if (mem) parts.push('', '# Memória complementar da Lumi sobre este projeto', mem);
+    } catch (e) {
+      /* AGENTS.md e a memória nativa do Codex continuam disponíveis */
+    }
+  }
+  return parts.join('\n');
+}
+
+function codexInputFromContent(content, extraText) {
+  const input = [];
+  if (typeof content === 'string') {
+    input.push({ type: 'text', text: content + (extraText || '') });
+  } else {
+    const text = (content || [])
+      .filter((p) => p && p.type === 'text')
+      .map((p) => p.text)
+      .join('\n');
+    input.push({ type: 'text', text: text + (extraText || '') });
+    for (const part of content || []) {
+      if (part && part.type === 'image_url' && part.image_url && part.image_url.url) {
+        input.push({ type: 'image', url: part.image_url.url });
+      }
+    }
+  }
+  return input;
+}
+
+function codexUserInput(promptOverride) {
+  if (promptOverride) return [{ type: 'text', text: promptOverride }];
+  const message = [...S().history].reverse().find((x) => x && x.role === 'user');
+  let extra = '';
+  if (recentWorkspaceFiles.length) {
+    const files = recentWorkspaceFiles.splice(0);
+    extra = `\n\nArquivos adicionados recentemente à workspace:\n${files.map((f) => '- ' + f).join('\n')}`;
+  }
+  return codexInputFromContent(message ? message.content : '', extra);
+}
+
+function codexUsageForSpend(tokenUsage) {
+  const usage = tokenUsage && (tokenUsage.last || tokenUsage.total);
+  if (!usage) return null;
+  return {
+    prompt_tokens: usage.inputTokens || 0,
+    completion_tokens: usage.outputTokens || 0,
+    total_tokens: usage.totalTokens || (usage.inputTokens || 0) + (usage.outputTokens || 0),
+  };
+}
+
+async function runCodexAgent(cfg, promptOverride) {
+  if (!cfg.workspace) throw new Error('Defina um workspace antes de usar o Modo Codex.');
+  const sess = S();
+  const sameWorkspace =
+    sess.codexThreadId && path.resolve(sess.codexThreadWorkspace || '') === path.resolve(cfg.workspace);
+  const wrap = (fn) => (...args) => sessionALS.run(sess, () => fn(...args));
+  const result = await codexEngine.run({
+    workspace: cfg.workspace,
+    threadId: sameWorkspace ? sess.codexThreadId : '',
+    model: cfg.codexModel || '',
+    permissionMode: ['default', 'auto', 'readOnly', 'fullAccess'].includes(cfg.codexPermissionMode)
+      ? cfg.codexPermissionMode
+      : 'default',
+    effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(cfg.codexEffort) ? cfg.codexEffort : 'high',
+    instructions: buildCodexPrompt(cfg),
+    input: codexUserInput(promptOverride),
+    onThread: wrap((threadId, info) => {
+      sess.codexThreadId = threadId;
+      sess.codexThreadWorkspace = cfg.workspace;
+      broadcast('chat:note', {
+        text: `✦ Codex ${info.model || cfg.codexModel || ''}${info.reasoningEffort ? ' · ' + info.reasoningEffort : ''}`.trim(),
+      });
+    }),
+    onControl: (control) => {
+      sess.codexControl = control;
+    },
+    callbacks: {
+      token: wrap((text) => broadcast('chat:token', text)),
+      think: wrap((text) => broadcast('chat:thinking', text)),
+      note: wrap((text) => broadcast('chat:note', { text })),
+      toolStart: wrap((data) => broadcast('chat:tool', data)),
+      toolResult: wrap((data) => broadcast('chat:tool-result', data)),
+      diff: wrap((data) => {
+        if (data && data.path && path.isAbsolute(data.path)) {
+          data = { ...data, path: path.relative(cfg.workspace, data.path).replace(/\\/g, '/') };
+        }
+        broadcast('chat:diff', data);
+      }),
+      plan: wrap((items) => items && items.length && broadcast('chat:plan', items)),
+      stats: wrap((data) => broadcast('chat:stats', data)),
+      compacted: wrap((data) => broadcast('chat:compacted', data)),
+      agent: wrap((data) => broadcast('chat:agent', data)),
+      workspaceChanged: wrap(() => broadcast('workspace:changed')),
+      authChanged: wrap(() => broadcast('config:changed')),
+      approve: wrap((category, summary) => checkPermission(category, summary)),
+      ask: wrap((question, options) =>
+        askUserInChat(question, (options || []).concat('Cancelar'), {
+          fallback: 'Cancelar',
+          timeoutMs: 20 * 60000,
+        })
+      ),
+      elicitation: wrap((request) => askClaudeElicitation(request)),
+    },
+  });
+  const spend = codexUsageForSpend(result.usage);
+  // Assinatura ChatGPT: contabiliza tokens no HUD, sem fingir custo de API por token.
+  if (spend) recordUsage({ ...cfg, usageHost: 'codex-chatgpt', model: 'codex-chatgpt' }, spend);
+  let full = result.text || '';
+  if (!(sess.abort && sess.abort.signal.aborted) && sess.steerQueue.length) {
+    const followup = sess.steerQueue
+      .splice(0)
+      .map((s) => claudePromptFromContent(s.content))
+      .filter(Boolean)
+      .join('\n\n');
+    if (followup) {
+      broadcast('chat:newbubble');
+      const more = await runCodexAgent(cfg, followup);
+      if (more && more.trim()) full += (full.trim() ? '\n\n' : '') + more;
+    }
+  }
+  return full;
+}
+
 // ---- IPC: chat ----
 // ✨ VARINHA: melhora o prompt do usuário ANTES de enviar (usa o modelo de tarefa barato)
 ipcMain.handle('chat:improve-prompt', async (_e, text) => {
@@ -11278,12 +11490,14 @@ async function handleChatSend(_e, payload) {
   S().workspace = winWorkspace.get(_e.sender.id) || null;
   const cfg = loadConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
+  const useCodex = cfg.architectMode === true && cfg.codeEngine === 'codex';
+  const useExternalCodeEngine = useClaudeCode || useCodex;
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
   let raw2 = raw;
   if (cfg.includeActiveTab !== false && activeEditorFile && !raw.includes('@' + activeEditorFile)) {
-    raw2 = useClaudeCode ? raw + `\n\nArquivo ativo no editor: ${activeEditorFile}` : raw + '\n@' + activeEditorFile;
+    raw2 = useExternalCodeEngine ? raw + `\n\nArquivo ativo no editor: ${activeEditorFile}` : raw + '\n@' + activeEditorFile;
   }
-  const text = useClaudeCode ? raw2 : (await expandMentions(raw2)).text;
+  const text = useExternalCodeEngine ? raw2 : (await expandMentions(raw2)).text;
   // chave de API e opcional (proxies locais podem nao exigir)
   // monta o conteudo do usuario (com imagens = visao, formato OpenAI)
   let content = text;
@@ -11294,8 +11508,16 @@ async function handleChatSend(_e, payload) {
   // STEERING: se já há um turno em andamento, injeta na conversa atual (não inicia outro)
   if (S().running) {
     S().history.push({ role: 'user', content });
-    S().steerQueue.push({ content });
     broadcast('chat:user', { text, images, steer: true });
+    if (useCodex && S().codexControl) {
+      try {
+        await S().codexControl.steer(codexInputFromContent(content));
+        return;
+      } catch (e) {
+        logd('codex:steer-fallback', String((e && e.message) || e));
+      }
+    }
+    S().steerQueue.push({ content });
     return;
   }
 
@@ -11313,22 +11535,41 @@ async function runChatTurn(cfg, popUserOnError) {
   let full = '';
   let turnLogStatus = 'completed';
   try {
-    const initialTools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
-    const initialLim = contextLimits(cfg);
-    const initialCtx = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], initialTools);
-    broadcast('chat:stats', {
-      tps: 0,
-      out: 0,
-      ctx: initialCtx,
-      total: initialCtx,
-      exact: false,
-      live: true,
-      phase: 'preparando contexto',
-      window: initialLim.window,
-      pct: Math.min(999, Math.round((initialCtx / initialLim.window) * 100)),
-    });
+    const externalCodeEngine = cfg.architectMode === true && ['claude-code', 'codex'].includes(cfg.codeEngine);
+    if (externalCodeEngine) {
+      broadcast('chat:stats', {
+        tps: 0,
+        out: 0,
+        ctx: 0,
+        total: 0,
+        exact: false,
+        live: true,
+        phase: cfg.codeEngine === 'codex' ? 'conectando ao Codex' : 'conectando ao Claude Code',
+        window: 0,
+        pct: 0,
+        engine: cfg.codeEngine,
+      });
+    } else {
+      const initialTools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
+      const initialLim = contextLimits(cfg);
+      const initialCtx = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], initialTools);
+      broadcast('chat:stats', {
+        tps: 0,
+        out: 0,
+        ctx: initialCtx,
+        total: initialCtx,
+        exact: false,
+        live: true,
+        phase: 'preparando contexto',
+        window: initialLim.window,
+        pct: Math.min(999, Math.round((initialCtx / initialLim.window) * 100)),
+      });
+    }
     if (cfg.architectMode === true && cfg.codeEngine === 'claude-code') {
       full = await runClaudeCodeAgent(cfg);
+      broadcast('workspace:changed');
+    } else if (cfg.architectMode === true && cfg.codeEngine === 'codex') {
+      full = await runCodexAgent(cfg);
       broadcast('workspace:changed');
     } else {
       await maybeSummarize(cfg); // garante o orçamento antes da primeira chamada do turno
@@ -11353,8 +11594,8 @@ async function runChatTurn(cfg, popUserOnError) {
     if (full && full.trim()) S().history.push({ role: 'assistant', content: full });
     if (S().pendingTurnTranscript) S().pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
     finalizeLastTurnContext(full);
-    if (!(cfg.architectMode === true && cfg.codeEngine === 'claude-code')) {
-      await maybeSummarize(cfg); // Claude Code preserva e compacta a própria sessão
+    if (!(cfg.architectMode === true && ['claude-code', 'codex'].includes(cfg.codeEngine))) {
+      await maybeSummarize(cfg); // motores externos preservam e compactam a própria sessão
     }
     saveHistory(); // memoria persistente
     broadcast('chat:done');
@@ -11406,6 +11647,9 @@ async function handleChatRegen() {
   if (loadConfig().architectMode === true && loadConfig().codeEngine === 'claude-code') {
     S().claudeSessionId = '';
     S().claudeSessionWorkspace = '';
+  } else if (loadConfig().architectMode === true && loadConfig().codeEngine === 'codex') {
+    S().codexThreadId = '';
+    S().codexThreadWorkspace = '';
   }
   S().lastTurnContext = null; // o transcript correspondia à resposta que acabou de ser descartada
   S().pendingTurnTranscript = null;
@@ -11432,6 +11676,11 @@ ipcMain.on('chat:stop', (e0) => {
           /* ok */
         }
       });
+  }
+  if (sess.codexControl) {
+    Promise.resolve()
+      .then(() => sess.codexControl.interrupt())
+      .catch(() => {});
   }
   if (sess.abort) {
     try {
@@ -12099,6 +12348,7 @@ setInterval(async () => {
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  codexEngine.close();
   stopAppWatcher(); // encerra o powershell do app ativo
   if (remoteMount) unmountRemote().catch(() => {}); // best-effort: solta o SSHFS
   dbClose().catch(() => {}); // fecha conexão de banco

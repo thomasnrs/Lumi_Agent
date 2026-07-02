@@ -1125,14 +1125,23 @@ const preciousFilesEl = document.getElementById('preciousFiles');
 const logSentinelEl = document.getElementById('logSentinel');
 const codeEngineEl = document.getElementById('codeEngine');
 const claudeCodeCardEl = document.getElementById('claudeCodeCard');
+const codeEngineTitleEl = document.getElementById('codeEngineTitle');
+const codeEngineStatusEl = document.getElementById('codeEngineStatus');
+const codeEngineScopeEl = document.getElementById('codeEngineScope');
+const claudeCodeFieldsEl = document.getElementById('claudeCodeFields');
 const claudeCodeModelEl = document.getElementById('claudeCodeModel');
 const claudeCodePermissionModeEl = document.getElementById('claudeCodePermissionMode');
 const claudeCodeEffortEl = document.getElementById('claudeCodeEffort');
 const claudeCodePromptEl = document.getElementById('claudeCodePrompt');
-const claudeCodeStatusEl = document.getElementById('claudeCodeStatus');
-const claudeCodeScopeEl = document.getElementById('claudeCodeScope');
 const claudeCodeLoginBtn = document.getElementById('claudeCodeLogin');
 const claudeCodeLogoutBtn = document.getElementById('claudeCodeLogout');
+const codexFieldsEl = document.getElementById('codexFields');
+const codexModelEl = document.getElementById('codexModel');
+const codexPermissionModeEl = document.getElementById('codexPermissionMode');
+const codexEffortEl = document.getElementById('codexEffort');
+const codexPromptEl = document.getElementById('codexPrompt');
+const codexLoginBtn = document.getElementById('codexLogin');
+const codexLogoutBtn = document.getElementById('codexLogout');
 const proactivityEl = document.getElementById('proactivity');
 const reactAppsEl = document.getElementById('reactApps');
 const watchServerEl = document.getElementById('watchServer');
@@ -1558,14 +1567,22 @@ async function openSettings() {
   preciousFilesEl.value = (Array.isArray(c.preciousFiles) ? c.preciousFiles : []).join(', ');
   logSentinelEl.value = c.logSentinel || 'off';
   codeEngineEl.value = c.codeEngine || 'native';
-  claudeCodeCardEl.classList.toggle('is-active', codeEngineEl.value === 'claude-code');
   claudeCodeModelEl.value = c.claudeCodeModel || 'sonnet';
   claudeCodePermissionModeEl.value = c.claudeCodePermissionMode || 'default';
   claudeCodeEffortEl.value = c.claudeCodeEffort || 'high';
   claudeCodePromptEl.value = c.claudeCodePrompt || '';
-  claudeCodeScopeEl.textContent = c.workspace
-    ? `Projeto inteiro disponível via cwd: ${c.workspace}. O arquivo aberto no editor é sinalizado automaticamente no próximo prompt.`
-    : 'Defina uma workspace. O Claude Code usa a pasta inteira como projeto; o arquivo aberto no editor é sinalizado no próximo prompt.';
+  codexPermissionModeEl.value = c.codexPermissionMode || 'default';
+  codexEffortEl.value = c.codexEffort || 'high';
+  codexPromptEl.value = c.codexPrompt || '';
+  if (c.codexModel && ![...codexModelEl.options].some((o) => o.value === c.codexModel)) {
+    const savedModel = document.createElement('option');
+    savedModel.value = c.codexModel;
+    savedModel.textContent = c.codexModel;
+    codexModelEl.appendChild(savedModel);
+  }
+  codexModelEl.value = c.codexModel || '';
+  updateCodeEngineUI(c.workspace || '');
+  if (codeEngineEl.value === 'codex') loadCodexModels(c.codexModel || '');
   proactivityEl.value = c.proactivity || 'normal';
   reactAppsEl.checked = !!c.reactApps;
   watchServerEl.checked = !!c.watchServer;
@@ -1606,7 +1623,7 @@ async function openSettings() {
   loadAudioDevices(c.audioInput || '', c.audioOutput || ''); // lista mics/saidas
   refreshProfiles(); // atualiza a lista de perfis salvos
   profileMsgEl.textContent = '';
-  refreshClaudeCodeStatus();
+  refreshCodeEngineStatus();
 }
 gear.addEventListener('click', () => window.api.openSettingsWindow()); // janela dedicada (redimensionável)
 
@@ -1620,53 +1637,163 @@ presetSel.addEventListener('change', () => {
 });
 
 async function refreshClaudeCodeStatus() {
-  claudeCodeStatusEl.textContent = 'verificando…';
-  claudeCodeStatusEl.dataset.state = 'loading';
+  codeEngineStatusEl.textContent = 'verificando…';
+  codeEngineStatusEl.dataset.state = 'loading';
   try {
     const s = await window.api.claudeCodeStatus();
     if (!s.installed) {
-      claudeCodeStatusEl.textContent = 'não instalado';
-      claudeCodeStatusEl.dataset.state = 'error';
+      codeEngineStatusEl.textContent = 'não instalado';
+      codeEngineStatusEl.dataset.state = 'error';
       return;
     }
     if (s.ready) {
       const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
-      claudeCodeStatusEl.textContent = `conectado · ${plan}${s.email ? ' · ' + s.email : ''}`;
-      claudeCodeStatusEl.dataset.state = 'ready';
+      codeEngineStatusEl.textContent = `conectado · ${plan}${s.email ? ' · ' + s.email : ''}`;
+      codeEngineStatusEl.dataset.state = 'ready';
       claudeCodeLoginBtn.textContent = 'Sessão Max pronta ✓';
     } else if (s.needsLogin) {
       const plan = s.subscriptionType ? String(s.subscriptionType).toUpperCase() : 'Claude.ai';
-      claudeCodeStatusEl.textContent = `conta ${plan} detectada · sessão compartilhada expirada`;
-      claudeCodeStatusEl.dataset.state = 'warning';
+      codeEngineStatusEl.textContent = `conta ${plan} detectada · sessão compartilhada expirada`;
+      codeEngineStatusEl.dataset.state = 'warning';
       claudeCodeLoginBtn.textContent = 'Renovar sessão Max';
     } else {
-      claudeCodeStatusEl.textContent = 'aguardando login';
-      claudeCodeStatusEl.dataset.state = 'warning';
+      codeEngineStatusEl.textContent = 'aguardando login';
+      codeEngineStatusEl.dataset.state = 'warning';
       claudeCodeLoginBtn.textContent = 'Entrar com Claude Max';
     }
   } catch (e) {
-    claudeCodeStatusEl.textContent = 'erro ao verificar';
-    claudeCodeStatusEl.dataset.state = 'error';
+    codeEngineStatusEl.textContent = 'erro ao verificar';
+    codeEngineStatusEl.dataset.state = 'error';
   }
 }
+
+async function loadCodexModels(selected) {
+  try {
+    const result = await window.api.codexModels();
+    const models = (result && result.models) || [];
+    codexModelEl.replaceChildren();
+    const automatic = document.createElement('option');
+    automatic.value = '';
+    automatic.textContent = 'Recomendado pela conta';
+    codexModelEl.appendChild(automatic);
+    for (const model of models) {
+      const id = model.id || model.model;
+      if (!id) continue;
+      const label = model.displayName || model.model || id;
+      const suffix = model.isDefault ? ' — padrão' : '';
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = label + suffix;
+      codexModelEl.appendChild(option);
+    }
+    codexModelEl.value = selected || '';
+    if (selected && codexModelEl.value !== selected) {
+      const option = document.createElement('option');
+      option.value = selected;
+      option.textContent = selected;
+      codexModelEl.appendChild(option);
+      codexModelEl.value = selected;
+    }
+  } catch (e) {
+    codexModelEl.innerHTML = '<option value="">Recomendado pela conta</option>';
+  }
+}
+
+async function refreshCodexStatus() {
+  codeEngineStatusEl.textContent = 'verificando login local…';
+  codeEngineStatusEl.dataset.state = 'loading';
+  try {
+    const s = await window.api.codexStatus();
+    if (!s.installed) {
+      codeEngineStatusEl.textContent = 'Codex não instalado';
+      codeEngineStatusEl.dataset.state = 'error';
+      codexLoginBtn.textContent = 'Instale o Codex primeiro';
+      return;
+    }
+    if (s.ready) {
+      const plan = s.planType ? String(s.planType).toUpperCase() : 'ChatGPT';
+      codeEngineStatusEl.textContent = `conectado · ${plan}${s.email ? ' · ' + s.email : ''}`;
+      codeEngineStatusEl.dataset.state = 'ready';
+      codexLoginBtn.textContent = 'Conta ChatGPT pronta ✓';
+      return;
+    }
+    if (s.accountType === 'apiKey') {
+      codeEngineStatusEl.textContent = 'API key detectada · entre com ChatGPT';
+      codeEngineStatusEl.dataset.state = 'warning';
+    } else {
+      codeEngineStatusEl.textContent = s.error || 'aguardando login ChatGPT';
+      codeEngineStatusEl.dataset.state = s.error ? 'error' : 'warning';
+    }
+    codexLoginBtn.textContent = 'Entrar com ChatGPT';
+  } catch (e) {
+    codeEngineStatusEl.textContent = 'erro ao verificar o Codex';
+    codeEngineStatusEl.dataset.state = 'error';
+  }
+}
+
+function updateCodeEngineUI(workspace) {
+  const engine = codeEngineEl.value;
+  const external = engine === 'claude-code' || engine === 'codex';
+  claudeCodeCardEl.classList.toggle('is-active', external);
+  claudeCodeFieldsEl.hidden = engine !== 'claude-code';
+  codexFieldsEl.hidden = engine !== 'codex';
+  codeEngineTitleEl.textContent =
+    engine === 'claude-code' ? 'Claude Code dentro da Lumi' : engine === 'codex' ? 'Codex dentro da Lumi' : 'Motor nativo da Lumi';
+  codeEngineScopeEl.textContent = workspace
+    ? `Projeto inteiro disponível via cwd: ${workspace}. O arquivo aberto no editor é sinalizado automaticamente no próximo prompt.`
+    : external
+      ? 'Defina uma workspace. O motor usa a pasta inteira como projeto e mantém uma sessão separada por chat.'
+      : 'A Lumi usa o provedor, o contexto e as ferramentas configurados nesta tela.';
+}
+
+function refreshCodeEngineStatus() {
+  if (codeEngineEl.value === 'claude-code') return refreshClaudeCodeStatus();
+  if (codeEngineEl.value === 'codex') return refreshCodexStatus();
+  codeEngineStatusEl.textContent = 'pronto · provedor configurado';
+  codeEngineStatusEl.dataset.state = 'ready';
+}
+
 codeEngineEl.addEventListener('change', () => {
-  claudeCodeCardEl.classList.toggle('is-active', codeEngineEl.value === 'claude-code');
+  updateCodeEngineUI('');
+  if (codeEngineEl.value === 'codex') loadCodexModels(codexModelEl.value);
+  refreshCodeEngineStatus();
 });
 claudeCodeLoginBtn.addEventListener('click', async () => {
-  claudeCodeStatusEl.textContent = 'abrindo login…';
-  claudeCodeStatusEl.dataset.state = 'loading';
+  codeEngineStatusEl.textContent = 'abrindo login…';
+  codeEngineStatusEl.dataset.state = 'loading';
   const r = await window.api.claudeCodeLogin();
   if (r && r.error) {
-    claudeCodeStatusEl.textContent = r.error;
-    claudeCodeStatusEl.dataset.state = 'error';
+    codeEngineStatusEl.textContent = r.error;
+    codeEngineStatusEl.dataset.state = 'error';
     return;
   }
-  claudeCodeStatusEl.textContent = 'conclua o login no navegador/terminal';
+  codeEngineStatusEl.textContent = 'conclua o login no navegador/terminal';
   setTimeout(refreshClaudeCodeStatus, 5000);
 });
 claudeCodeLogoutBtn.addEventListener('click', async () => {
   await window.api.claudeCodeLogout();
   refreshClaudeCodeStatus();
+});
+codexLoginBtn.addEventListener('click', async () => {
+  codeEngineStatusEl.textContent = 'abrindo login ChatGPT…';
+  codeEngineStatusEl.dataset.state = 'loading';
+  const result = await window.api.codexLogin();
+  if (result && result.error) {
+    codeEngineStatusEl.textContent = result.error;
+    codeEngineStatusEl.dataset.state = 'error';
+    return;
+  }
+  codeEngineStatusEl.textContent = 'conclua o login no navegador';
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts++;
+    await refreshCodexStatus();
+    if (codeEngineStatusEl.dataset.state === 'ready' || attempts >= 60) clearInterval(poll);
+  }, 2000);
+});
+codexLogoutBtn.addEventListener('click', async () => {
+  await window.api.codexLogout();
+  refreshCodexStatus();
 });
 tempEl.addEventListener('input', () => (tempValEl.textContent = tempEl.value));
 
@@ -1788,6 +1915,10 @@ function readForm() {
     claudeCodePermissionMode: claudeCodePermissionModeEl.value,
     claudeCodeEffort: claudeCodeEffortEl.value,
     claudeCodePrompt: claudeCodePromptEl.value.trim(),
+    codexModel: codexModelEl.value,
+    codexPermissionMode: codexPermissionModeEl.value,
+    codexEffort: codexEffortEl.value,
+    codexPrompt: codexPromptEl.value.trim(),
     proactivity: proactivityEl.value,
     reactApps: reactAppsEl.checked,
     watchServer: watchServerEl.checked,

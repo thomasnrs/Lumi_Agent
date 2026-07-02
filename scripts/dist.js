@@ -11,7 +11,11 @@ const builder = require('electron-builder');
 const ROOT = path.join(__dirname, '..');
 const RENDERER_ENTRY = path.join(ROOT, 'src', 'renderer', 'main.js');
 const RENDERER_OUT = path.join(ROOT, 'src', 'renderer', 'renderer.bundle.js');
-const PROTECT = [path.join(ROOT, 'src', 'main', 'main.js'), path.join(ROOT, 'src', 'main', 'preload.js')];
+const PROTECT = [
+  path.join(ROOT, 'src', 'main', 'main.js'),
+  path.join(ROOT, 'src', 'main', 'preload.js'),
+  path.join(ROOT, 'src', 'main', 'codex-engine.js'),
+];
 
 // opções conservadoras: escondem strings/lógica sem quebrar require/contextBridge/IPC
 const OBFUSCATE_OPTS = {

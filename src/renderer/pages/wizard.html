@@ -66,8 +66,9 @@
       ::-webkit-scrollbar { width: 8px; }
       ::-webkit-scrollbar-thumb { background: #33333f; border-radius: 6px; }
     </style>
+    <link rel="stylesheet" href="ui.css" />
   </head>
-  <body>
+  <body class="lumi-page" data-lumi-page="wizard">
     <div id="steps">
       <!-- 1 · boas-vindas -->
       <div class="step on" data-step="0">
@@ -89,7 +90,7 @@
           <label id="keyLabel">Chave de API <a id="keyLink" target="_blank">(pegar a chave →)</a></label>
           <input id="apiKey" type="password" placeholder="cole a chave aqui" spellcheck="false" />
           <div class="rowbtns">
-            <button class="ghost" id="testBtn">🔌 Testar conexão</button>
+            <button class="ghost lumi-btn lumi-btn-secondary" id="testBtn">Testar conexão</button>
           </div>
           <div id="testMsg"></div>
         </div>
@@ -100,8 +101,8 @@
         <h1>🧍 Meu corpo (avatar .vrm)</h1>
         <p>Eu já venho com a <b>Cerberia</b> de fábrica! 💜 Mas você pode me dar a aparência que quiser: baixe outro avatar <b>grátis</b> no <a id="vroidLink">VRoid Hub</a> (modelos com download liberado) e me aponte o arquivo <code>.vrm</code>.</p>
         <div class="rowbtns">
-          <button class="big" id="pickVrm">📁 Escolher arquivo .vrm</button>
-          <button class="ghost" id="openVroid">🌐 Abrir o VRoid Hub</button>
+          <button class="big lumi-btn lumi-btn-primary" id="pickVrm">Escolher arquivo .vrm</button>
+          <button class="ghost lumi-btn lumi-btn-secondary" id="openVroid">Abrir o VRoid Hub</button>
         </div>
         <div id="vrmMsg"></div>
         <p style="margin-top: 12px; font-size: 12px; color: #889">Animações (<code>.vrma</code>) são opcionais e vão na pasta <code>animations/</code> — tem links no README. Sem elas eu me viro com movimentos procedurais. 😊</p>
@@ -116,7 +117,7 @@
           <div class="card" id="voiceOff"><b>🔇 Sem voz</b><small>só texto no chat (dá pra ligar depois)</small></div>
         </div>
         <div class="rowbtns">
-          <button class="ghost" id="testVoice">▶ Ouvir um oizinho</button>
+          <button class="ghost lumi-btn lumi-btn-secondary" id="testVoice">Ouvir um oizinho</button>
         </div>
         <div id="voiceMsg"></div>
         <p style="font-size: 12px; color: #889">Vozes premium (Gemini expressiva, ElevenLabs, XTTS) e microfone (falar comigo) ficam nas Configurações → Voz/Mic.</p>
@@ -132,7 +133,7 @@
         <div class="tip">⌨️ <span><b>Ctrl+Shift+C</b> liga/desliga o atravessar cliques (pra eu não atrapalhar).</span></div>
         <div class="tip">🛠️ <span>No chat eu uso <b>~40 ferramentas</b>: arquivos, terminal, web, sua tela… você aprova cada categoria na 1ª vez.</span></div>
         <div class="rowbtns" style="margin-top: 16px">
-          <button class="big" id="openChat">💬 Abrir o chat e conversar</button>
+          <button class="big lumi-btn lumi-btn-primary" id="openChat">Abrir o chat e conversar</button>
         </div>
       </div>
     </div>
@@ -140,8 +141,8 @@
     <div id="foot">
       <div id="dots"></div>
       <a id="skip">pular o assistente</a>
-      <button class="ghost" id="back" hidden>← Voltar</button>
-      <button class="big" id="next">Começar →</button>
+      <button class="ghost lumi-btn lumi-btn-secondary" id="back" hidden>← Voltar</button>
+      <button class="big lumi-btn lumi-btn-primary" id="next">Começar →</button>
     </div>
 
     <script>

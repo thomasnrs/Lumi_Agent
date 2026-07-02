@@ -524,6 +524,12 @@
       }
       #settings .claude-field.wide { grid-column: 1 / -1; }
       #settings .claude-field > label { margin-top: 0; }
+      #settings .engine-panel[hidden] { display: none; }
+      #settings .engine-panel { animation: engine-panel-in .2s ease both; }
+      @keyframes engine-panel-in {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: none; }
+      }
       #settings .claude-scope {
         display: flex;
         align-items: flex-start;
@@ -663,6 +669,7 @@
         margin-top: 6px;
       }
     </style>
+    <link rel="stylesheet" href="./pages/ui.css" />
   </head>
   <body>
     <canvas id="c"></canvas>
@@ -686,7 +693,11 @@
 
     <div id="settings">
       <div class="card">
-        <h2>Configurações</h2>
+        <header class="settings-heading">
+          <span class="lumi-kicker">Central de controle</span>
+          <h2>Configurações</h2>
+          <p>Personalize como a Lumi pensa, fala, aparece e trabalha com você.</p>
+        </header>
 
         <!-- PERFIS -->
         <div class="profiles">
@@ -765,60 +776,102 @@
                 <span class="claude-mark">✦</span>
                 <div>
                   <div class="claude-kicker">Motor do Modo Código</div>
-                  <div class="claude-title">Claude Code dentro da Lumi</div>
+                  <div id="codeEngineTitle" class="claude-title">Motor nativo da Lumi</div>
                 </div>
               </div>
-              <span id="claudeCodeStatus" class="claude-status" data-state="loading">verificando…</span>
+              <span id="codeEngineStatus" class="claude-status" data-state="ready">pronto</span>
             </div>
             <div class="claude-field wide">
               <label>Motor ativo</label>
               <select id="codeEngine">
                 <option value="native">Lumi nativa — usa o provedor configurado acima</option>
                 <option value="claude-code">Claude Code — usa minha assinatura Pro/Max</option>
+                <option value="codex">Codex — usa minha conta ChatGPT</option>
               </select>
             </div>
-            <div class="claude-grid">
-              <div class="claude-field">
-                <label>Modelo</label>
-                <select id="claudeCodeModel">
-                  <option value="sonnet">Sonnet — equilibrado</option>
-                  <option value="opus">Opus — máxima capacidade</option>
-                  <option value="haiku">Haiku — rápido</option>
-                </select>
+            <div id="claudeCodeFields" class="engine-panel" hidden>
+              <div class="claude-grid">
+                <div class="claude-field">
+                  <label>Modelo</label>
+                  <select id="claudeCodeModel">
+                    <option value="sonnet">Sonnet — equilibrado</option>
+                    <option value="opus">Opus — máxima capacidade</option>
+                    <option value="haiku">Haiku — rápido</option>
+                  </select>
+                </div>
+                <div class="claude-field">
+                  <label>Permissões</label>
+                  <select id="claudeCodePermissionMode">
+                    <option value="default">Normal — perguntar quando necessário</option>
+                    <option value="auto">Auto — Claude decide aprovações simples</option>
+                    <option value="acceptEdits">Aceitar edições automaticamente</option>
+                    <option value="plan">Planejar — somente leitura</option>
+                  </select>
+                </div>
+                <div class="claude-field wide">
+                  <label>Esforço de raciocínio</label>
+                  <select id="claudeCodeEffort">
+                    <option value="low">Baixo — mais rápido e econômico</option>
+                    <option value="medium">Médio</option>
+                    <option value="high">Alto</option>
+                    <option value="xhigh">Muito alto</option>
+                    <option value="max">Máximo</option>
+                  </select>
+                </div>
               </div>
-              <div class="claude-field">
-                <label>Permissões</label>
-                <select id="claudeCodePermissionMode">
-                  <option value="default">Normal — perguntar quando necessário</option>
-                  <option value="auto">Auto — Claude decide aprovações simples</option>
-                  <option value="acceptEdits">Aceitar edições automaticamente</option>
-                  <option value="plan">Planejar — somente leitura</option>
-                </select>
+              <div class="claude-actions">
+                <button id="claudeCodeLogin" type="button">Entrar / renovar sessão Max</button>
+                <button id="claudeCodeLogout" type="button">Sair</button>
               </div>
               <div class="claude-field wide">
-                <label>Esforço de raciocínio</label>
-                <select id="claudeCodeEffort">
-                  <option value="low">Baixo — mais rápido e econômico</option>
-                  <option value="medium">Médio</option>
-                  <option value="high">Alto</option>
-                  <option value="xhigh">Muito alto</option>
-                  <option value="max">Máximo</option>
-                </select>
+                <label>Instruções extras</label>
+                <textarea id="claudeCodePrompt" rows="3" placeholder="Opcional: convenções pessoais, estilo de resposta, regras extras para projetos…"></textarea>
               </div>
+              <p class="claude-footnote">O Claude Code lê <code>CLAUDE.md</code>, comandos, agentes, skills, plugins e MCPs disponíveis no projeto.</p>
+            </div>
+            <div id="codexFields" class="engine-panel" hidden>
+              <div class="claude-grid">
+                <div class="claude-field">
+                  <label>Modelo</label>
+                  <select id="codexModel">
+                    <option value="">Recomendado pela conta</option>
+                  </select>
+                </div>
+                <div class="claude-field">
+                  <label>Permissões</label>
+                  <select id="codexPermissionMode">
+                    <option value="default">Normal — perguntar quando necessário</option>
+                    <option value="auto">Auto review — Codex avalia aprovações</option>
+                    <option value="readOnly">Somente leitura — planejar e revisar</option>
+                    <option value="fullAccess">Acesso total — sem confirmações</option>
+                  </select>
+                </div>
+                <div class="claude-field wide">
+                  <label>Esforço de raciocínio</label>
+                  <select id="codexEffort">
+                    <option value="none">Nenhum — quando o modelo aceitar</option>
+                    <option value="minimal">Mínimo — resposta imediata</option>
+                    <option value="low">Baixo</option>
+                    <option value="medium">Médio</option>
+                    <option value="high">Alto</option>
+                    <option value="xhigh">Muito alto</option>
+                  </select>
+                </div>
+              </div>
+              <div class="claude-actions">
+                <button id="codexLogin" type="button">Entrar com ChatGPT</button>
+                <button id="codexLogout" type="button">Sair</button>
+              </div>
+              <div class="claude-field wide">
+                <label>Instruções extras</label>
+                <textarea id="codexPrompt" rows="3" placeholder="Opcional: preferências pessoais, convenções e regras extras para o Codex…"></textarea>
+              </div>
+              <p class="claude-footnote">A Lumi reutiliza o login local do Codex/ChatGPT. Nenhum token é copiado. O Codex lê <code>AGENTS.md</code>, skills, plugins e MCPs da máquina/projeto.</p>
             </div>
             <div class="claude-scope">
               <span class="scope-dot"></span>
-              <span id="claudeCodeScope">Defina uma workspace. O Claude Code usa a pasta inteira como projeto; o arquivo aberto no editor é sinalizado no próximo prompt.</span>
+              <span id="codeEngineScope">Defina uma workspace para dar ao motor de código acesso ao projeto.</span>
             </div>
-            <div class="claude-actions">
-              <button id="claudeCodeLogin" type="button">Entrar / renovar sessão Max</button>
-              <button id="claudeCodeLogout" type="button">Sair</button>
-            </div>
-            <div class="claude-field wide">
-              <label>Instruções extras</label>
-              <textarea id="claudeCodePrompt" rows="3" placeholder="Opcional: convenções pessoais, estilo de resposta, regras extras para projetos…"></textarea>
-            </div>
-            <p class="claude-footnote">A sessão é mantida por chat e workspace. O Claude Code lê <code>CLAUDE.md</code>, comandos, agentes, skills, plugins e MCPs disponíveis no projeto.</p>
           </section>
 
           <label>Passos por turno (chamadas de ferramenta antes de parar)</label>
@@ -1112,13 +1165,15 @@
           <button id="themeReset" type="button">Restaurar padrão</button>
         </div>
 
-        <div class="row">
-          <button id="save">Salvar</button>
-          <button id="close">Fechar (Esc)</button>
-        </div>
-        <div class="row">
-          <button id="reset">Nova conversa (limpar memória)</button>
-        </div>
+        <footer class="settings-actions">
+          <div class="row">
+            <button id="save">Salvar</button>
+            <button id="close">Fechar (Esc)</button>
+          </div>
+          <div class="row">
+            <button id="reset">Nova conversa (limpar memória)</button>
+          </div>
+        </footer>
       </div>
     </div>
 

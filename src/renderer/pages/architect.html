@@ -117,6 +117,7 @@
         --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
       }
     </style>
+    <link rel="stylesheet" href="ui.css" />
   </head>
   <body>
     <div class="scroll">
@@ -129,8 +130,9 @@
       <select id="codeEngine">
         <option value="native">Lumi nativa (provedor das Configurações)</option>
         <option value="claude-code">Claude Code (assinatura Pro/Max)</option>
+        <option value="codex">Codex (conta ChatGPT local)</option>
       </select>
-      <div id="claudeStatus" class="hint"></div>
+      <div id="engineStatus" class="hint"></div>
 
       <label>Workspace (pasta do projeto)</label>
       <div class="row">
@@ -160,7 +162,27 @@
       const memoryEl = $('memory');
       const msgEl = $('msg');
       const codeEngineEl = $('codeEngine');
-      const claudeStatusEl = $('claudeStatus');
+      const engineStatusEl = $('engineStatus');
+
+      async function refreshEngineStatus() {
+        if (codeEngineEl.value === 'native') {
+          engineStatusEl.textContent = 'Usa o provedor e as ferramentas configurados na Lumi.';
+          return;
+        }
+        if (codeEngineEl.value === 'codex') {
+          const s = await window.api.codexStatus();
+          engineStatusEl.textContent = s && s.ready
+            ? `✦ Codex conectado via ${s.planType || 'ChatGPT'}${s.email ? ' · ' + s.email : ''}.`
+            : 'Codex ainda não autenticado — entre com ChatGPT pela janela de Configurações.';
+          return;
+        }
+        const s = await window.api.claudeCodeStatus();
+        engineStatusEl.textContent = s && s.ready
+          ? `✦ Claude Code conectado à conta ${s.subscriptionType || 'Claude.ai'}${s.email ? ' · ' + s.email : ''}.`
+          : s && s.needsLogin
+            ? `Conta ${s.subscriptionType || 'Claude.ai'} detectada, mas a sessão compartilhada expirou — renove pela janela de Configurações.`
+            : 'Claude Code ainda não autenticado — entre pela janela de Configurações.';
+      }
 
       async function loadMemory() {
         memoryEl.value = await window.api.getWorkspaceMemory();
@@ -176,13 +198,7 @@
         autoVerifyEl.checked = !!c.autoVerify;
         verifyCommandEl.value = c.verifyCommand || '';
         loadMemory();
-        window.api.claudeCodeStatus().then((s) => {
-          claudeStatusEl.textContent = s && s.ready
-            ? `✦ Claude Code conectado à conta ${s.subscriptionType || 'Claude.ai'}${s.email ? ' · ' + s.email : ''}.`
-            : s && s.needsLogin
-              ? `Conta ${s.subscriptionType || 'Claude.ai'} detectada, mas a sessão compartilhada expirou — renove pela janela de Configurações.`
-              : 'Claude Code ainda não autenticado — entre pela janela de Configurações.';
-        });
+        refreshEngineStatus();
       });
 
       // ativar/desativar salva na hora
@@ -192,7 +208,13 @@
       });
       codeEngineEl.addEventListener('change', async () => {
         await window.api.setConfig({ codeEngine: codeEngineEl.value });
-        msgEl.textContent = codeEngineEl.value === 'claude-code' ? 'Claude Code assumirá os próximos turnos de código. ✦' : 'Motor nativo da Lumi selecionado.';
+        msgEl.textContent =
+          codeEngineEl.value === 'claude-code'
+            ? 'Claude Code assumirá os próximos turnos de código. ✦'
+            : codeEngineEl.value === 'codex'
+              ? 'Codex assumirá os próximos turnos usando sua conta ChatGPT. ✦'
+              : 'Motor nativo da Lumi selecionado.';
+        refreshEngineStatus();
       });
       autoVerifyEl.addEventListener('change', async () => {
         await window.api.setConfig({ autoVerify: autoVerifyEl.checked });

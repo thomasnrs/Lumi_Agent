@@ -1278,8 +1278,9 @@
         background: #44444f;
       }
     </style>
+    <link rel="stylesheet" href="ui.css" />
   </head>
-  <body>
+  <body class="lumi-chat">
     <div id="chatHeader">
       <button id="btnList" class="hbtn" title="Conversas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/></svg></button>
       <span id="chatTitle">Conversa</span>
@@ -2368,6 +2369,8 @@
       let mpCat = null; // catálogo { current, groups, favorites }
       let mpCurModel = '';
       let usingClaudeCode = false;
+      let usingCodex = false;
+      let usingExternalCodeEngine = false;
       // estado de aberto/fechado dos grupos (persiste)
       function mpLoadCollapsed() {
         try { return new Set(JSON.parse(localStorage.getItem('lumiMpCollapsed') || '[]')); } catch (e) { return new Set(); }
@@ -2507,8 +2510,8 @@
         modelPop.style.bottom = window.innerHeight - barRect.top + 6 + 'px';
       }
       async function openModelPop() {
-        if (usingClaudeCode) {
-          toast('✦ Modelo controlado pelo Modo Claude Code nas Configurações');
+        if (usingExternalCodeEngine) {
+          toast(`✦ Modelo controlado pelo Modo ${usingCodex ? 'Codex' : 'Claude Code'} nas Configurações`);
           return;
         }
         mpCat = await window.api.modelsCatalog();
@@ -2557,7 +2560,13 @@
       });
       function syncEngineLabel(c) {
         usingClaudeCode = c.architectMode === true && c.codeEngine === 'claude-code';
-        const label = usingClaudeCode ? `Claude Code · ${c.claudeCodeModel || 'sonnet'}` : c.model;
+        usingCodex = c.architectMode === true && c.codeEngine === 'codex';
+        usingExternalCodeEngine = usingClaudeCode || usingCodex;
+        const label = usingClaudeCode
+          ? `Claude Code · ${c.claudeCodeModel || 'sonnet'}`
+          : usingCodex
+            ? `Codex · ${c.codexModel || 'recomendado'}`
+            : c.model;
         if (label) mpSetLabel(label);
       }
       window.api.getConfig().then(syncEngineLabel);
@@ -2566,7 +2575,7 @@
         window.api.onConfigChanged(async () => {
           const c = await window.api.getConfig();
           syncEngineLabel(c);
-          if (!usingClaudeCode && c.model) {
+          if (!usingExternalCodeEngine && c.model) {
             mpCurModel = c.model;
           }
         });
@@ -2722,13 +2731,14 @@
         const aprox = s.exact ? '' : '~';
         const capacity = s.window ? `/${fmtK(s.window)}${s.pct != null ? ` (${s.pct}%)` : ''}` : '';
         const phase = s.live && s.phase ? s.phase : '';
-        const usage = s.engine === 'claude-code' && s.usagePct != null ? `uso: ${fmtPct(s.usagePct)}` : '';
+        const externalEngine = s.engine === 'claude-code' || s.engine === 'codex';
+        const usage = externalEngine && s.usagePct != null ? `uso: ${fmtPct(s.usagePct)}` : '';
         statsTxt = [phase.trim(), usage, `⚡ ${s.tps} tok/s`, `🧠 ${aprox}${fmtK(s.ctx)}${capacity}`, `saída ${aprox}${fmtK(s.out)} tok`]
           .filter(Boolean)
           .join('  ·  ');
         const usageTitle =
           usage
-            ? `Claude Code usage: ${fmtPct(s.usagePct)}${s.usageLabel ? ' · janela ' + s.usageLabel : ''}${s.usageResetsAt ? ' · reseta em ' + fmtWhen(s.usageResetsAt) : ''}\n`
+            ? `${s.engine === 'codex' ? 'Codex/ChatGPT' : 'Claude Code'} usage: ${fmtPct(s.usagePct)}${s.usageLabel ? ' · janela ' + s.usageLabel : ''}${s.usageResetsAt ? ' · reseta em ' + fmtWhen(s.usageResetsAt) : ''}\n`
             : '';
         statsTitle =
           `${s.live ? 'Atualizando ao vivo' : 'Última medição'} · ${s.phase || 'resposta'}\n` +
@@ -2752,8 +2762,8 @@
         const d = document.createElement('div');
         d.className = 'msg tool';
         d.textContent =
-          info && info.engine === 'claude-code'
-            ? `🗜️ Claude Code compactou a sessão${info.beforeTokens ? ' (' + fmtK(info.beforeTokens) + ' tokens antes)' : ''}`
+          info && (info.engine === 'claude-code' || info.engine === 'codex')
+            ? `🗜️ ${info.engine === 'codex' ? 'Codex' : 'Claude Code'} compactou a sessão${info.beforeTokens ? ' (' + fmtK(info.beforeTokens) + ' tokens antes)' : ''}`
             : `🗜️ contexto compactado (resumi o histórico antigo, mantendo ${info.kept} mensagens)`;
         msgs.appendChild(d);
         scrollBottom();

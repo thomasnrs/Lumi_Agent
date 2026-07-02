@@ -105,18 +105,21 @@
         --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
       }
     </style>
+    <link rel="stylesheet" href="ui.css" />
   </head>
-  <body>
+  <body class="lumi-page" data-lumi-page="mcp">
     <div class="scroll">
-      <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;vertical-align:-3px;margin-right:6px"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>Ferramentas MCP</h1>
-      <div class="sub">Plugue servidores MCP (busca web, arquivos, GitHub...) e a Lumi ganha as ferramentas automaticamente.</div>
+      <h1 class="lumi-page-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>Ferramentas MCP</h1>
+      <div class="sub lumi-page-subtitle">Plugue servidores MCP (busca web, arquivos, GitHub...) e a Lumi ganha as ferramentas automaticamente.</div>
 
-      <label>Servidores (JSON)</label>
-      <textarea id="config" spellcheck="false"></textarea>
-      <button id="save">💾 Salvar e conectar</button>
-      <div id="status"></div>
+      <section class="mcp-editor">
+        <label for="config">Servidores (JSON)</label>
+        <textarea id="config" spellcheck="false"></textarea>
+        <button id="save" class="lumi-btn lumi-btn-primary">Salvar e conectar</button>
+        <div id="status" aria-live="polite"></div>
+      </section>
 
-      <p class="hint">
+      <p class="hint hint-card">
         Formato (nome → comando). No <b>Windows</b>, use <code>cmd /c npx</code> pra rodar pacotes npx:<br /><br />
         <code>{
   "filesystem": {
