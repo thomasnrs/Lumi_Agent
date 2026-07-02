@@ -1072,6 +1072,10 @@ const taskProviderEl = document.getElementById('taskProvider');
 const taskBaseUrlEl = document.getElementById('taskBaseUrl');
 const taskApiKeyEl = document.getElementById('taskApiKey');
 const taskModelEl = document.getElementById('taskModel');
+const autoVerifyEl = document.getElementById('autoVerify');
+const selfReviewEl = document.getElementById('selfReview');
+const formatOnSaveEl = document.getElementById('formatOnSave');
+const preciousFilesEl = document.getElementById('preciousFiles');
 const codeEngineEl = document.getElementById('codeEngine');
 const claudeCodeCardEl = document.getElementById('claudeCodeCard');
 const claudeCodeModelEl = document.getElementById('claudeCodeModel');
@@ -1440,6 +1444,10 @@ async function openSettings() {
   taskBaseUrlEl.value = c.taskBaseUrl || '';
   taskApiKeyEl.value = c.taskApiKey || '';
   taskModelEl.value = c.taskModel || '';
+  autoVerifyEl.checked = c.autoVerify === true;
+  selfReviewEl.checked = c.selfReview === true;
+  formatOnSaveEl.checked = c.formatOnSave === true;
+  preciousFilesEl.value = (Array.isArray(c.preciousFiles) ? c.preciousFiles : []).join(', ');
   codeEngineEl.value = c.codeEngine || 'native';
   claudeCodeCardEl.classList.toggle('is-active', codeEngineEl.value === 'claude-code');
   claudeCodeModelEl.value = c.claudeCodeModel || 'sonnet';
@@ -1657,6 +1665,10 @@ function readForm() {
     taskBaseUrl: taskBaseUrlEl.value.trim(),
     taskApiKey: taskApiKeyEl.value.trim(),
     taskModel: taskModelEl.value.trim(),
+    autoVerify: autoVerifyEl.checked,
+    selfReview: selfReviewEl.checked,
+    formatOnSave: formatOnSaveEl.checked,
+    preciousFiles: preciousFilesEl.value.split(',').map((s) => s.trim()).filter(Boolean),
     codeEngine: codeEngineEl.value,
     claudeCodeModel: claudeCodeModelEl.value,
     claudeCodePermissionMode: claudeCodePermissionModeEl.value,

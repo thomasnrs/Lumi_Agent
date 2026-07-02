@@ -818,6 +818,24 @@
             Apagar memória de longo prazo (fatos)
           </button>
 
+          <details class="task-model" style="margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px">
+            <summary style="cursor: pointer; font-size: 13px; color: var(--text)">🦾 Modo dev / agente (verificar, formatar, revisar, proteger)</summary>
+            <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px; margin-top: 10px">
+              <input id="autoVerify" type="checkbox" style="width: auto; margin: 0" />
+              Verificação automática (roda lint/test após editar e corrige se falhar, até 3x)
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px; margin-top: 8px">
+              <input id="selfReview" type="checkbox" style="width: auto; margin: 0" />
+              Auto-revisão do diff antes de finalizar (um agente revisa e ela corrige o que achar)
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; text-transform: none; color: #ccc; font-size: 13px; margin-top: 8px">
+              <input id="formatOnSave" type="checkbox" style="width: auto; margin: 0" />
+              Formatar ao salvar (roda o formatter do projeto após ela editar — prettier/black/gofmt/rustfmt)
+            </label>
+            <p class="hint" style="margin: 8px 0 4px">🛡️ Guardrails (comandos destrutivos bloqueados) estão sempre ligados. Arquivos protegidos (nunca apagar/sobrescrever), separados por vírgula:</p>
+            <input id="preciousFiles" type="text" placeholder="icone.png, .env, chave.pem" autocomplete="off" />
+          </details>
+
           <p class="hint">🎨 Geração de imagens fica em "Gerar imagem" (clique direito → Gerar imagem).</p>
 
           <label>Busca na web (precisão)</label>

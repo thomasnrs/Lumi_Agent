@@ -1979,6 +1979,47 @@ function tailStr(s, n) {
   s = String(s || '');
   return s.length > n ? '…(início cortado)\n' + s.slice(-n) : s;
 }
+// extrai as FALHAS de uma saída de teste/verify (arquivo:linha, testes que quebraram, erros)
+function extractFailures(output) {
+  const out = [];
+  const seen = new Set();
+  const push = (s) => {
+    s = String(s || '').trim().slice(0, 200);
+    if (s && !seen.has(s) && out.length < 20) {
+      seen.add(s);
+      out.push(s);
+    }
+  };
+  for (const l of String(output || '').split('\n')) {
+    let m = l.match(/^(.+?)\((\d+),\d+\):\s+error TS\d+:\s+(.+)/); // tsc
+    if (m) {
+      push(m[1] + ':' + m[2] + ' — ' + m[3]);
+      continue;
+    }
+    m = l.match(/^(.+?):(\d+)(?::\d+)?:\s+(.*(?:error|erro|fail|expected|cannot|undefined|n[ãa]o)\b.*)/i); // file:line: msg
+    if (m) {
+      push(m[1] + ':' + m[2] + ' — ' + m[3]);
+      continue;
+    }
+    m = l.match(/^\s*(?:✕|×|✗|FAIL|●)\s+(.+)/); // jest/vitest
+    if (m) {
+      push('✕ ' + m[1]);
+      continue;
+    }
+    m = l.match(/^(FAILED|ERROR)\s+(\S+.*)/); // pytest
+    if (m) {
+      push(m[1] + ' ' + m[2]);
+      continue;
+    }
+    m = l.match(/^--- FAIL:\s+(\S+)/); // go
+    if (m) {
+      push('FAIL ' + m[1]);
+      continue;
+    }
+    if (/\b(AssertionError|Traceback|panic:|SyntaxError|TypeError|ReferenceError|Unhandled)\b/.test(l)) push(l);
+  }
+  return out;
+}
 // detecta o comando de teste do projeto (pra run_tests) → { cmd, runner }
 function guessTestCommand(ws) {
   const has = (f) => {
@@ -4678,6 +4719,66 @@ const TOOLS = {
       };
     },
   },
+  generate_project_doc: {
+    category: 'write',
+    summary: () => 'gerar/atualizar o CLAUDE.md',
+    schema: {
+      name: 'generate_project_doc',
+      description:
+        'Varre o projeto e escreve um CLAUDE.md sob medida (stack, estrutura, como rodar/verificar, convenções) — pra dar contexto de qualidade em TODA sessão futura. force:true sobrescreve um CLAUDE.md existente.',
+      parameters: { type: 'object', properties: { force: { type: 'boolean' } } },
+    },
+    run: async ({ force }) => {
+      const cfg = loadConfig();
+      if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      const dest = path.join(cfg.workspace, 'CLAUDE.md');
+      if (fs.existsSync(dest) && !force) return { error: 'já existe um CLAUDE.md — passe force:true pra sobrescrever, ou ajuste com edit_file.' };
+      const stack = detectStack(cfg.workspace);
+      let tree = [];
+      try {
+        await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
+      } catch (e) {
+        /* ok */
+      }
+      const readSafe = (f) => {
+        try {
+          return fs.readFileSync(path.join(cfg.workspace, f), 'utf8');
+        } catch (e) {
+          return '';
+        }
+      };
+      const facts = [
+        'Pasta: ' + cfg.workspace,
+        'Stack detectada: ' + ((stack.hints || []).join(', ') || '(indefinida)'),
+        'Comando de verificação sugerido: ' + (stack.verify || '(nenhum)'),
+        readSafe('package.json') ? 'package.json:\n' + readSafe('package.json').slice(0, 2500) : '',
+        'Estrutura (amostra):\n' + tree.slice(0, 200).join('\n'),
+        (readSafe('README.md') || readSafe('readme.md')).slice(0, 2000) ? 'README (início):\n' + (readSafe('README.md') || readSafe('readme.md')).slice(0, 2000) : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+      let doc = '';
+      try {
+        doc = await llmComplete(cfg, [
+          {
+            role: 'system',
+            content:
+              'Escreva um CLAUDE.md CONCISO e ÚTIL pra orientar uma IA a trabalhar neste projeto. Português, markdown. Seções: "# <Nome>" (1 linha do que é), "## Stack", "## Estrutura" (só o essencial: onde ficam as coisas), "## Como rodar / verificar" (comandos REAIS), "## Convenções" (padrões a seguir, inferidos). Específico e curto; sem encher linguiça. Baseie-se SÓ nos fatos dados; não invente.',
+          },
+          { role: 'user', content: 'Fatos do projeto:\n\n' + facts },
+        ]);
+      } catch (e) {
+        return { error: 'falha ao gerar (modelo): ' + String((e && e.message) || e) };
+      }
+      doc = String(doc || '')
+        .replace(/^```[a-z]*\n?|```$/g, '')
+        .trim();
+      if (!doc) return { error: 'a IA não retornou conteúdo' };
+      fs.writeFileSync(dest, doc + '\n');
+      broadcast('workspace:changed');
+      return { ok: true, path: 'CLAUDE.md', bytes: doc.length, preview: doc.slice(0, 600) };
+    },
+  },
   write_file: {
     category: 'write',
     summary: (a) => `criar/sobrescrever "${a.path}"`,
@@ -5316,12 +5417,57 @@ async function maybeAutoVerify(cfg, messages) {
   if (currentTurnLog) currentTurnLog.verification.push({ command: cmd, ok: r.ok, summary: compactText(r.output, 300) });
   if (r.ok) return false; // passou -> nada a corrigir
   broadcast('chat:newbubble'); // separa a próxima resposta (a correção) num balão novo
+  const fails = extractFailures(r.output);
+  const summary = fails.length ? 'Problemas detectados:\n' + fails.map((f) => '- ' + f).join('\n') + '\n\n' : '';
   const verificationMessage = {
     role: 'user',
-    content: `[verificação automática] O comando \`${cmd}\` FALHOU. Saída:\n${r.output}\n\nCorrija a CAUSA RAIZ no código e ajuste o necessário. Depois eu rodo a verificação de novo.`,
+    content: `[verificação automática] O comando \`${cmd}\` FALHOU.\n${summary}Saída (final):\n${tailStr(r.output, 4000)}\n\nCorrija a CAUSA RAIZ desses problemas no código (use get_problems/locate_stack se ajudar). Depois eu rodo a verificação de novo.`,
   };
   messages.push(verificationMessage);
   if (pendingTurnTranscript) pendingTurnTranscript.messages.push(cloneContextMessage(verificationMessage));
+  return true;
+}
+
+// AUTO-REVISÃO: antes de finalizar um turno que mexeu em código, um agente lê o DIFF e aponta
+// bug/risco. Se achar algo real, injeta pra corrigir antes de entregar. "Evidência, não confiança."
+async function maybeSelfReview(cfg, messages) {
+  if (cfg.selfReview !== true || !cfg.workspace) return false;
+  if (!currentTurnLog || !currentTurnLog.filesChanged || !currentTurnLog.filesChanged.size) return false;
+  let diff = '';
+  try {
+    const a = await gitRun(cfg, ['diff', '--no-color']);
+    const b = await gitRun(cfg, ['diff', '--cached', '--no-color']);
+    diff = ((a.stdout || '') + '\n' + (b.stdout || '')).trim();
+  } catch (e) {
+    return false; // sem git → sem auto-revisão
+  }
+  if (!diff) return false;
+  broadcast('chat:tool', { name: 'git_diff', args: {}, agent: '🔎 auto-revisão' });
+  let review = '';
+  try {
+    review = await llmComplete(cfg, [
+      {
+        role: 'system',
+        content:
+          'Você é uma revisora de código rigorosa. Analise APENAS o diff e aponte problemas REAIS: bugs, casos não tratados, regressões, riscos de segurança/dados. Ignore estilo e nitpicks. Se estiver tudo bem, responda EXATAMENTE "OK". Senão, liste em itens curtos "- " (no máximo 6), cada um com arquivo/linha se der.',
+      },
+      { role: 'user', content: 'Revise este diff antes de finalizar:\n\n' + diff.slice(0, 16000) },
+    ]);
+  } catch (e) {
+    return false;
+  }
+  const clean = String(review || '').trim();
+  const isOk = !clean || /^ok\b/i.test(clean) || clean.length < 6;
+  broadcast('chat:tool-result', { name: 'git_diff', args: {}, result: { ok: isOk, output: isOk ? 'sem problemas' : clean }, agent: '🔎 auto-revisão' });
+  if (currentTurnLog) currentTurnLog.verification.push({ command: 'auto-revisão', ok: isOk, summary: compactText(clean, 300) });
+  if (isOk) return false;
+  broadcast('chat:newbubble');
+  const reviewMessage = {
+    role: 'user',
+    content: `[auto-revisão do seu diff] Antes de finalizar, uma revisão apontou possíveis problemas:\n${clean}\n\nCorrija os que forem REAIS. Se algum for falso positivo, explique por quê em 1 linha. Depois finalize.`,
+  };
+  messages.push(reviewMessage);
+  if (pendingTurnTranscript) pendingTurnTranscript.messages.push(cloneContextMessage(reviewMessage));
   return true;
 }
 
@@ -5643,6 +5789,7 @@ async function runAgent(cfg) {
   let tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
   let full = '';
   let verifyAttempts = 0;
+  let reviewed = false; // auto-revisão roda no máximo 1x por turno
   let runCfg = cfg; // pode trocar pro modelo reserva no meio do turno (fallback)
   let usedFallback = false;
   // teto de passos CONFIGURÁVEL (⚙ → Passos por turno): proxy local aguenta muito; API paga, menos
@@ -5770,6 +5917,11 @@ async function runAgent(cfg) {
     if (verifyAttempts < 3 && (await maybeAutoVerify(cfg, messages))) {
       verifyAttempts++;
       continue;
+    }
+    // auto-revisão do diff (1x): se apontar bug real, o modelo corrige antes de finalizar
+    if (!reviewed) {
+      reviewed = true;
+      if (await maybeSelfReview(cfg, messages)) continue;
     }
     // estatisticas: usa o "usage" exato quando vier; senao estima (~4 chars/token)
     const est = (s) => Math.round((s || '').length / 4);
