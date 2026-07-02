@@ -2668,6 +2668,7 @@
       document.getElementById('qpClose').addEventListener('click', () => (quickPanel.hidden = true));
 
       window.api.onUser((m) => {
+        flushCurAssistant(); // steering: pinta o parcial pendente antes de zerar o balão
         addUser(m.text, m.images, m.steer, Date.now());
         sndSend();
         setProcessing(true); // um turno está rodando (cobre envios vindos da barra do avatar)
@@ -2749,6 +2750,24 @@
         hideTyping();
         addThinking(t);
       });
+      // THROTTLE do render: re-parsear o markdown INTEIRO a cada lote de tokens (~24ms)
+      // trava a UI em respostas longas; 1 render a cada ~70ms é imperceptível e corta ~3x
+      // o custo. O flush garante que o texto final SEMPRE aparece completo.
+      let mdTimer = null;
+      let lastMdRender = 0;
+      function renderCurAssistant() {
+        mdTimer = null;
+        lastMdRender = Date.now();
+        if (!curAssistant) return;
+        curAssistant.innerHTML = mdToHtml(curRaw);
+        scrollBottom();
+      }
+      function flushCurAssistant() {
+        if (mdTimer) {
+          clearTimeout(mdTimer);
+          renderCurAssistant();
+        }
+      }
       window.api.onToken((t) => {
         hideTyping();
         if (!curAssistant) {
@@ -2757,10 +2776,12 @@
           curRaw = '';
         }
         curRaw += t;
-        curAssistant.innerHTML = mdToHtml(curRaw);
-        scrollBottom();
+        const since = Date.now() - lastMdRender;
+        if (since >= 70) renderCurAssistant();
+        else if (!mdTimer) mdTimer = setTimeout(renderCurAssistant, 70 - since);
       });
       function finishBubble() {
+        flushCurAssistant(); // pinta o rabo do stream antes de fechar (senão o fim da frase some)
         // fecha a bolha em andamento: realça o código, carimba a hora e ganha as ações
         if (curAssistant) {
           enhanceCode(curAssistant);
@@ -3055,6 +3076,7 @@
         }
       });
       window.api.onError((m) => {
+        flushCurAssistant(); // mostra o que já tinha saído antes do erro
         hideTyping();
         closeActivity();
         addError(m);

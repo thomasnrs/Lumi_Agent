@@ -427,11 +427,16 @@ function configPath() {
 // config.json continua sendo detectada. Sempre devolve uma CÓPIA (semântica antiga:
 // quem mutar o objeto não envenena o cache).
 let cfgCache = null; // { mtimeMs, value }
+let _cfgLastStat = 0; // micro-TTL: loadConfig roda em loops apertados — 1 statSync a cada 150ms basta
 function loadConfig() {
   try {
-    const mt = fs.statSync(configPath()).mtimeMs;
-    if (!cfgCache || cfgCache.mtimeMs !== mt) {
-      cfgCache = { mtimeMs: mt, value: { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(configPath(), 'utf8')) } };
+    const now = Date.now();
+    if (!cfgCache || now - _cfgLastStat > 150) {
+      const mt = fs.statSync(configPath()).mtimeMs;
+      _cfgLastStat = now;
+      if (!cfgCache || cfgCache.mtimeMs !== mt) {
+        cfgCache = { mtimeMs: mt, value: { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(configPath(), 'utf8')) } };
+      }
     }
     const v = { ...cfgCache.value };
     if (activeWorkspace) v.workspace = activeWorkspace; // durante um turno, a IA trabalha na pasta da sessão ativa
@@ -1106,6 +1111,30 @@ const CODING_GUIDE =
   '13. FERRAMENTA CERTA (mapa rápido): "onde está X?" → find_in_code · achar texto/usos → grep_files · ler uma função → read_file(symbol) · erro/traceback → locate_stack · checar lint/tipos → get_problems · rodar teste → run_tests(filter) · ver o que VOCÊ mudou → git_status + git_diff · mudança coordenada em vários arquivos → apply_patch · histórico → git_log.\n' +
   '14. FINALIZE COM EVIDÊNCIA: ao concluir, informe em poucas linhas O QUE mudou (arquivos), COMO verificou (comando + resultado real) e o que ficou pendente/risco. NUNCA diga que "funciona" sem ter verificado — se não testou, diga explicitamente "não testei". Confiança se ganha com evidência, não com adjetivo.';
 
+// cache do CONTEXTO DE PROJETO (regras do repo + memória): lidos a cada turno E a cada
+// subagente — em SSHFS cada read é rede. TTL 20s + invalidação quando NÓS escrevemos.
+const _projCtxCache = new Map(); // ws -> { at, rules, mem }
+function invalidateProjCtx(ws) {
+  if (ws) _projCtxCache.delete(ws);
+  else _projCtxCache.clear();
+}
+function cachedProjCtx(cfg) {
+  const ws = cfg.workspace || '';
+  const now = Date.now();
+  const hit = _projCtxCache.get(ws);
+  if (hit && now - hit.at < 20000) return hit;
+  let mem = '';
+  try {
+    mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8');
+  } catch (e) {
+    mem = '';
+  }
+  const rec = { at: now, rules: readRepoRules(ws), mem };
+  _projCtxCache.set(ws, rec);
+  if (_projCtxCache.size > 6) _projCtxCache.delete(_projCtxCache.keys().next().value);
+  return rec;
+}
+
 // Regras do repositório: se o projeto tem CLAUDE.md/AGENTS.md/.cursorrules, a Lumi
 // segue as instruções do dono do projeto — igual o Claude Code faz.
 function readRepoRules(ws) {
@@ -1154,8 +1183,50 @@ function contextLimits(cfg) {
     recentLiteral: Math.min(Math.floor(promptBudget * 0.75), Math.max(4000, parseInt(cfg.recentLiteralTokens, 10) || 24000)),
   };
 }
+// CACHE de estimativas: compactTurnMessages + liveStats rodam a CADA passo do agente e
+// re-stringificavam o contexto INTEIRO (+ schemas das tools) — em turnos longos isso vira
+// segundos de CPU. Mensagens antigas não mudam (só a compactação interna mexe, e ela muda o
+// TAMANHO — que invalida via assinatura), então cacheamos por objeto (WeakMap = zero leak).
+const _msgTokCache = new WeakMap(); // msg -> { sig, tok }
+function _msgSig(m) {
+  const c = m.content;
+  let s = typeof c === 'string' ? c.length : Array.isArray(c) ? -1 - c.length : c == null ? -1 : -2;
+  if (Array.isArray(m.tool_calls)) {
+    let a = m.tool_calls.length;
+    for (const tc of m.tool_calls) a += tc && tc.function && tc.function.arguments ? String(tc.function.arguments).length : 0;
+    s = s * 100003 + a;
+  }
+  return s;
+}
+const _toolsTokCache = new WeakMap(); // schemas de tools são estáveis dentro do turno
 function promptTokenEstimate(messages, tools) {
-  return estimateTokens(messages) + estimateTokens(tools || []);
+  let total = 0;
+  if (Array.isArray(messages)) {
+    for (const m of messages) {
+      if (!m || typeof m !== 'object') {
+        total += estimateTokens(m);
+        continue;
+      }
+      const sig = _msgSig(m);
+      const hit = _msgTokCache.get(m);
+      if (hit && hit.sig === sig) {
+        total += hit.tok;
+        continue;
+      }
+      const tok = estimateTokens(m);
+      _msgTokCache.set(m, { sig, tok });
+      total += tok;
+    }
+  } else if (messages) total += estimateTokens(messages);
+  if (tools && typeof tools === 'object') {
+    let t = _toolsTokCache.get(tools);
+    if (t == null) {
+      t = estimateTokens(tools);
+      _toolsTokCache.set(tools, t);
+    }
+    total += t;
+  } else if (tools) total += estimateTokens(tools);
+  return total;
 }
 function safeToolArguments(args) {
   if (args && typeof args === 'object' && !Array.isArray(args)) return JSON.stringify(args);
@@ -1286,6 +1357,18 @@ function compactTurnMessages(messages, cfg, tools) {
 }
 
 // Detecta a stack do projeto (pelos arquivos-chave) + sugere um comando de verificação
+// detectStack faz ~20 existsSync + reads e rodava a CADA turno/subagente — em workspace
+// remoto (SSHFS) cada checagem é uma ida à REDE. Stack não muda a cada segundo: cache 45s.
+const _stackCache = new Map(); // ws -> { at, det }
+function detectStackCached(ws) {
+  const now = Date.now();
+  const hit = _stackCache.get(ws);
+  if (hit && now - hit.at < 45000) return hit.det;
+  const det = detectStack(ws);
+  _stackCache.set(ws, { at: now, det });
+  if (_stackCache.size > 6) _stackCache.delete(_stackCache.keys().next().value);
+  return det;
+}
 function detectStack(ws) {
   const has = (f) => {
     try {
@@ -1616,14 +1699,10 @@ function buildSystemPrompt(cfg) {
   }
   // MODO ARQUITETO: injeta a memoria do projeto (contexto que sobrevive a chats novos)
   if (cfg.architectMode && cfg.workspace) {
-    let mem = '';
-    try {
-      const memChars = Math.min(64000, Math.max(12000, Math.floor(contextLimits(cfg).window * 0.1 * 3.6)));
-      mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8').slice(0, memChars);
-    } catch (e) {
-      mem = '(memória do projeto ainda vazia — crie uma com update_project_memory)';
-    }
-    const det = detectStack(cfg.workspace);
+    const pctx = cachedProjCtx(cfg); // memória + regras em cache (20s) — sem re-ler a cada turno
+    const memChars = Math.min(64000, Math.max(12000, Math.floor(contextLimits(cfg).window * 0.1 * 3.6)));
+    const mem = pctx.mem ? pctx.mem.slice(0, memChars) : '(memória do projeto ainda vazia — crie uma com update_project_memory)';
+    const det = detectStackCached(cfg.workspace);
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
@@ -1647,7 +1726,7 @@ function buildSystemPrompt(cfg) {
       /* sem .env */
     }
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
-    const rules = readRepoRules(cfg.workspace);
+    const rules = pctx.rules;
     if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (fonte da verdade sobre stack/estrutura/como rodar/convenções; SIGA À RISCA, tem prioridade sobre o guia geral)\n${rules}`;
     else proj += '\n\nEste projeto ainda NÃO tem CLAUDE.md. Quando você já tiver entendido o projeto, ofereça gerar um com generate_project_doc (briefing estável melhora todas as sessões futuras).';
     sp += '\n\n' + CODING_GUIDE + proj + `\n\n## Sua memória de trabalho (.lumi-memory.md — decisões+porquê, gotchas, tentativas falhas, preferências, pendências; complementa o briefing, NÃO o repete):\n${mem}`;
@@ -2165,8 +2244,7 @@ function closestRegion(lines, oldText) {
 async function suggestPaths(cfg, wanted) {
   try {
     if (!cfg || !cfg.workspace) return [];
-    const tree = [];
-    await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0, Date.now() + 1500);
+    const tree = await cachedWsTree(cfg); // reusa o cache da árvore (caminho de erro fica instantâneo)
     const w = String(wanted || '').replace(/\\/g, '/').toLowerCase();
     const base = w.split('/').pop() || w;
     const scored = [];
@@ -4008,7 +4086,7 @@ const TOOLS = {
     run: async () => {
       const cfg = loadConfig();
       if (!cfg.workspace) return { error: 'nenhum workspace aberto (Modo arquiteto)' };
-      const det = detectStack(cfg.workspace);
+      const det = detectStackCached(cfg.workspace);
       const tree = [];
       await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0); // já ignora node_modules/.git/etc e tem deadline
       // arquivos-chave que dão o panorama (lê os que existirem, com teto de tamanho)
@@ -4390,6 +4468,7 @@ const TOOLS = {
         }
       }
       fs.writeFileSync(fp, newC);
+      invalidateProjCtx(cfg.workspace); // memória mudou → o cache do contexto de projeto recarrega
       broadcastDiff('.lumi-memory.md', oldC, newC); // mostra no chat o que ela resumiu/mudou
       return { ok: true, compacted: compacted || undefined };
     },
@@ -4964,7 +5043,7 @@ const TOOLS = {
           /* ok */
         }
       }
-      const stack = detectStack(cfg.workspace);
+      const stack = detectStackCached(cfg.workspace);
       let tree = [];
       try {
         await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
@@ -5007,6 +5086,7 @@ const TOOLS = {
         .trim();
       if (!doc) return { error: 'a IA não retornou conteúdo' };
       fs.writeFileSync(dest, doc + '\n');
+      invalidateProjCtx(cfg.workspace); // briefing mudou → o cache do contexto de projeto recarrega
       broadcast('workspace:changed');
       return { ok: true, path: 'CLAUDE.md', bytes: doc.length, preview: doc.slice(0, 600) };
     },
@@ -5712,7 +5792,7 @@ async function runTool(name, args) {
 async function maybeAutoVerify(cfg, messages) {
   if (cfg.autoVerify !== true || !cfg.workspace || !editedSinceTurn) return false;
   if ((cfg.perms || {}).exec === 'deny') return false;
-  const cmd = (cfg.verifyCommand && cfg.verifyCommand.trim()) || detectStack(cfg.workspace).verify;
+  const cmd = (cfg.verifyCommand && cfg.verifyCommand.trim()) || detectStackCached(cfg.workspace).verify;
   if (!cmd) return false;
   editedSinceTurn = false; // consome (só verifica de novo se editar de novo)
   broadcast('chat:tool', { name: 'run_command', args: { command: cmd }, agent: '🔁 auto-verificação' });
@@ -5978,21 +6058,16 @@ function subAgentSystemPrompt(cfg, agent) {
   // memória do projeto / workspace (para o subagente "enxergar" o projeto)
   if (cfg.workspace) {
     if (isCoder) sp += '\n\n' + CODING_GUIDE;
-    let mem = '';
-    try {
-      const memChars = Math.min(64000, Math.max(12000, Math.floor(contextLimits(cfg).window * 0.1 * 3.6)));
-      mem = fs.readFileSync(workspaceMemoryPath(cfg), 'utf8').slice(0, memChars);
-    } catch (e) {
-      mem = '(memória do projeto ainda vazia)';
-    }
-    const det = detectStack(cfg.workspace);
+    const pctx = cachedProjCtx(cfg); // cache 20s — N subagentes em paralelo não re-leem N vezes
+    const memChars = Math.min(64000, Math.max(12000, Math.floor(contextLimits(cfg).window * 0.1 * 3.6)));
+    const mem = pctx.mem ? pctx.mem.slice(0, memChars) : '(memória do projeto ainda vazia)';
+    const det = detectStackCached(cfg.workspace);
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL)`;
     if (det.stack) proj += `\nStack: ${det.stack}`;
     if (isCoder && det.verify) proj += `\nVerifique suas mudanças rodando \`${det.verify}\` (run_command) e leia a saída.`;
     if (isCoder && det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
-    if (isCoder) {
-      const rules = readRepoRules(cfg.workspace);
-      if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (SIGA À RISCA)\n${rules}`;
+    if (isCoder && pctx.rules) {
+      proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (SIGA À RISCA)\n${pctx.rules}`;
     }
     sp += proj + `\n\n## Memória de trabalho do projeto (.lumi-memory.md — decisões, gotchas, pendências; complementa o briefing, não o repete):\n${mem}`;
   }
@@ -6253,7 +6328,7 @@ async function runAgent(cfg) {
     // estatisticas: usa o "usage" exato quando vier; senao estima (~4 chars/token)
     const est = (s) => Math.round((s || '').length / 4);
     const out = (turn.usage && turn.usage.completion_tokens) || est(full);
-    const ctx = (turn.usage && turn.usage.prompt_tokens) || est(JSON.stringify(messages));
+    const ctx = (turn.usage && turn.usage.prompt_tokens) || promptTokenEstimate(messages, tools); // cacheado (sem re-stringificar o contexto)
     const secs = Math.max(0.001, (turn.ms || 1) / 1000);
     const lim = contextLimits(runCfg);
     broadcast('chat:stats', {
@@ -9402,6 +9477,7 @@ ipcMain.handle('workspace:set-memory', (e, content) => {
   const cfg = wsCfg(e);
   if (!cfg.workspace) return false;
   fs.writeFileSync(workspaceMemoryPath(cfg), content || '');
+  invalidateProjCtx(cfg.workspace); // memória editada na página → cache recarrega
   return true;
 });
 
@@ -10523,19 +10599,27 @@ ipcMain.handle('chats:delete', (_e, id) => {
 
 // Expande @arquivo / @pasta do workspace, anexando o conteúdo ao prompt (estilo Claude Code)
 const FILES_SENTINEL = '\n\n===ARQUIVOS-MENCIONADOS===\n';
+// cache curto da árvore do workspace: o walk completo é caro (e em SSHFS é REDE) e rodava
+// a CADA mensagem — agora roda no máximo 1x/10s, e SÓ quando a mensagem tem @menção.
+let _wsTreeCache = { ws: '', at: 0, tree: [] };
+async function cachedWsTree(cfg) {
+  const ws = cfg.workspace || '';
+  if (!ws) return [];
+  const now = Date.now();
+  if (_wsTreeCache.ws === ws && now - _wsTreeCache.at < 10000) return _wsTreeCache.tree;
+  const tree = [];
+  try {
+    await walkWorkspace(ws, ws, tree, 0);
+  } catch (e) {
+    /* árvore parcial serve */
+  }
+  _wsTreeCache = { ws, at: now, tree };
+  return tree;
+}
 async function expandMentions(text) {
   const cfg = loadConfig();
   if (!text || !cfg.workspace) return { text: text || '', files: [] };
-  const codePct = Math.min(70, Math.max(5, parseInt(cfg.codeBudgetPct, 10) || 35));
-  let codeCharsLeft = Math.max(16000, Math.floor((contextLimits(cfg).window * codePct * 3.6) / 100));
-  let tree = [];
-  try {
-    await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0);
-  } catch (e) {
-    tree = [];
-  }
-  if (!tree.length) return { text, files: [] };
-  const treeSet = new Set(tree);
+  // 1º extrai as @menções — SEM nenhuma, não toca no disco (antes varria a árvore inteira à toa)
   const re = /(^|\s)@([^\s@]+)/g;
   const found = [];
   let mm;
@@ -10543,6 +10627,12 @@ async function expandMentions(text) {
     const p = mm[2].replace(/[.,;:!?)\]]+$/, '');
     if (p && !found.includes(p)) found.push(p);
   }
+  if (!found.length) return { text, files: [] };
+  const codePct = Math.min(70, Math.max(5, parseInt(cfg.codeBudgetPct, 10) || 35));
+  let codeCharsLeft = Math.max(16000, Math.floor((contextLimits(cfg).window * codePct * 3.6) / 100));
+  const tree = await cachedWsTree(cfg);
+  if (!tree.length) return { text, files: [] };
+  const treeSet = new Set(tree);
   const blocks = [];
   const used = [];
   for (const p of found) {
