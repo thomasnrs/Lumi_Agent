@@ -89,7 +89,7 @@ contextBridge.exposeInMainWorld('api', {
   dockerList: () => ipcRenderer.invoke('docker:list'),
   dockerAction: (id, action) => ipcRenderer.invoke('docker:action', { id, action }),
   dockerComposeFile: () => ipcRenderer.invoke('docker:compose-file'),
-  tasksList: () => ipcRenderer.invoke('tasks:list'),
+  projectTasksList: () => ipcRenderer.invoke('project-tasks:list'),
   tunnelCheck: () => ipcRenderer.invoke('tunnel:check'),
   ghCheck: () => ipcRenderer.invoke('gh:check'),
   ghPrs: () => ipcRenderer.invoke('gh:prs'),

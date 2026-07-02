@@ -3285,7 +3285,8 @@ ipcMain.handle('docker:compose-file', () => {
 });
 
 // ---- TAREFAS do projeto: scripts do package.json + alvos do Makefile ----
-ipcMain.handle('tasks:list', () => {
+// Namespace próprio: "tasks:*" pertence às tarefas AGENDADAS da Lumi.
+ipcMain.handle('project-tasks:list', () => {
   const cfg = loadConfig();
   if (!cfg.workspace) return [];
   const out = [];
@@ -11709,11 +11710,11 @@ loadTasks();
 
 ipcMain.handle('tasks:list', () => schedTasks.map((t) => ({ ...t })));
 ipcMain.handle('tasks:save', (_e, task) => {
-  const t = task || {};
-  if (!t.prompt || !String(t.prompt).trim()) return { error: 'a tarefa precisa de um prompt' };
+  const t = { ...(task || {}) };
   if (!t.id) t.id = 'tk' + ++taskSeq;
   const i = schedTasks.findIndex((x) => x.id === t.id);
   const merged = { ...(i >= 0 ? schedTasks[i] : {}), ...t };
+  if (!merged.prompt || !String(merged.prompt).trim()) return { error: 'a tarefa precisa de um prompt' };
   merged.nextRun = merged.enabled ? taskNextRun(merged, Date.now()) : 0;
   if (i >= 0) schedTasks[i] = merged;
   else schedTasks.push(merged);

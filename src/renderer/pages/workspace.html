@@ -4096,7 +4096,7 @@
         {
           label: 'Tarefas',
           items: async () => {
-            const ts = await window.api.tasksList();
+            const ts = await window.api.projectTasksList();
             if (!ts.length) return [{ label: '(sem scripts no package.json/Makefile do workspace)', fn: () => {} }];
             return ts.map((t) => ({
               label: t.label,
