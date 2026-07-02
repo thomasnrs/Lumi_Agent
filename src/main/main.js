@@ -1855,6 +1855,121 @@ function readTextFileSmart(fp) {
 async function readTextFileSmartAsync(fp) {
   return decodeTextBuffer(await fs.promises.readFile(fp));
 }
+
+// ---- navegação precisa de código (símbolo/bloco/contexto) — busca auto-suficiente + leitura cirúrgica ----
+// heurística multi-linguagem de "linha de definição" (JS/TS, Python, Go, Rust, Java/C#…), sem LSP
+const DEF_PATTERNS = [
+  /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\*?\s+([A-Za-z0-9_$]+)/,
+  /^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_$]+)/,
+  /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z0-9_$]+\s*=>|\{)/,
+  /^\s*(?:async\s+)?def\s+([A-Za-z0-9_$]+)/,
+  /^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_$]+)/,
+  /^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z0-9_$]+)/,
+  /^\s*(?:public|private|protected|internal|static|final|override|virtual|\s)+[A-Za-z0-9_<>,.[\]]+\s+([A-Za-z0-9_$]+)\s*\([^;{]*\)\s*\{?\s*$/,
+];
+const CTRL_KW = /^\s*(?:if|for|while|switch|catch|else|return|await|throw|with|do|try|elif|except|finally)\b/;
+function defNameAt(line) {
+  if (!line || CTRL_KW.test(line)) return null;
+  for (const re of DEF_PATTERNS) {
+    const m = line.match(re);
+    if (m) return m[1];
+  }
+  const mm = line.match(/^\s+([A-Za-z0-9_$]+)\s*\([^)]*\)\s*\{\s*$/); // método "nome(args) {" indentado
+  return mm ? mm[1] : null;
+}
+// nome do símbolo (função/classe) que CONTÉM a linha idx (0-based)
+function enclosingSymbol(lines, idx) {
+  for (let i = Math.min(idx, lines.length - 1); i >= 0 && idx - i < 500; i--) {
+    const name = defNameAt(lines[i]);
+    if (name) return name;
+  }
+  return null;
+}
+// N linhas ao redor (numeradas; marca a linha do match com →)
+function snippetAround(lines, line1, before, after) {
+  const start = Math.max(1, line1 - (before || 2));
+  const end = Math.min(lines.length, line1 + (after || 2));
+  const out = [];
+  for (let i = start; i <= end; i++) {
+    out.push((i === line1 ? '→' : ' ') + String(i).padStart(4) + ': ' + (lines[i - 1] || '').replace(/\s+$/, '').slice(0, 200));
+  }
+  return out.join('\n');
+}
+// escopo que envolve a linha start1 (sobe até a def; fecha por chaves {} ou por indentação)
+function blockAround(lines, start1) {
+  const n = lines.length;
+  let s = Math.max(1, Math.min(start1, n));
+  for (let i = s; i >= 1 && s - i < 500; i--) {
+    if (defNameAt(lines[i - 1])) {
+      s = i;
+      break;
+    }
+  }
+  const MAXB = 500;
+  let braceStart = -1;
+  for (let i = s; i <= Math.min(n, s + 6); i++) {
+    if ((lines[i - 1] || '').indexOf('{') >= 0) {
+      braceStart = i;
+      break;
+    }
+  }
+  if (braceStart >= 0) {
+    let depth = 0;
+    let started = false;
+    for (let i = braceStart; i <= n && i - s < MAXB; i++) {
+      for (const ch of lines[i - 1] || '') {
+        if (ch === '{') {
+          depth++;
+          started = true;
+        } else if (ch === '}') depth--;
+      }
+      if (started && depth <= 0) return { start: s, end: i };
+    }
+    return { start: s, end: Math.min(n, s + MAXB) };
+  }
+  const baseIndent = ((lines[s - 1] || '').match(/^\s*/) || [''])[0].length;
+  let end = s;
+  for (let i = s + 1; i <= n && i - s < MAXB; i++) {
+    const l = lines[i - 1];
+    if (l == null) break;
+    if (!l.trim()) {
+      end = i;
+      continue;
+    }
+    if (((l.match(/^\s*/) || [''])[0].length) <= baseIndent) break;
+    end = i;
+  }
+  return { start: s, end };
+}
+// enriquece matches de busca com { symbol, context } — I/O fica no main, NÃO nos tokens da IA
+async function enrichMatches(wsBaseAbs, matches) {
+  if (!Array.isArray(matches) || !matches.length || !wsBaseAbs) return matches;
+  const cache = new Map();
+  const getLines = async (rel) => {
+    if (cache.has(rel)) return cache.get(rel);
+    let lines = null;
+    if (cache.size < 80) {
+      try {
+        const abs = path.join(wsBaseAbs, rel);
+        const st = await fs.promises.stat(abs);
+        if (st.isFile() && st.size <= 800000) lines = (await readTextFileSmartAsync(abs)).text.split('\n');
+      } catch (e) {
+        /* ok */
+      }
+    }
+    cache.set(rel, lines);
+    return lines;
+  };
+  for (const m of matches) {
+    if (!m || !m.file || !m.line) continue;
+    const lines = await getLines(m.file);
+    if (!lines) continue;
+    const sym = enclosingSymbol(lines, m.line - 1);
+    if (sym) m.symbol = sym;
+    m.context = snippetAround(lines, m.line, 2, 2);
+  }
+  return matches;
+}
 function normalizeEolText(s) {
   return String(s == null ? '' : s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
@@ -3478,11 +3593,13 @@ const TOOLS = {
       if (!q) return { error: 'consulta vazia' };
       const rgResult = await rgFindInCode(cfg.workspace, q);
       if (rgResult) {
+        await enrichMatches(cfg.workspace, rgResult.content_matches); // + symbol + context
         return {
           query: q,
           files_matching_name: rgResult.files_matching_name,
           content_matches: rgResult.content_matches,
           engine: 'ripgrep',
+          note: 'content_matches trazem "symbol" e "context" — dá pra decidir sem abrir o arquivo. Pra ler o trecho, use read_file com symbol ou around_line.',
           truncated: rgResult.limited ? 'busca limitada para proteger memória/tempo; refine a consulta se necessário' : undefined,
         };
       }
@@ -3537,11 +3654,13 @@ const TOOLS = {
         }
       };
       await walk(cfg.workspace, 0);
+      await enrichMatches(cfg.workspace, hits); // + symbol + context
       return {
         query: q,
         files_matching_name: byName,
         content_matches: hits,
         engine: 'fallback-js',
+        note: 'content_matches trazem "symbol" e "context" — dá pra decidir sem abrir o arquivo. Pra ler o trecho, use read_file com symbol ou around_line.',
         truncated: limited ? 'busca limitada para proteger memória/tempo; refine a consulta se necessário' : undefined,
       };
     },
@@ -3827,23 +3946,53 @@ const TOOLS = {
     schema: {
       name: 'read_file',
       description:
-        'Lê um arquivo de texto. Arquivos grandes vêm em janelas de linhas: use offset/limit para ler QUALQUER trecho — a resposta informa o total de linhas e como continuar. Nunca chute conteúdo: leia o trecho exato antes de editar (grep_files ajuda a achar a linha).',
+        'Lê um arquivo de texto. LEITURA CIRÚRGICA (preferida, gasta menos): passe `symbol` (nome de função/classe) ou `around_line` (nº de linha, ex.: a de um match do grep) pra receber SÓ aquele bloco/escopo, não o arquivo todo. Sem isso, lê por janelas: use offset/limit. A resposta diz o total de linhas e como continuar. Nunca chute conteúdo.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string' },
-          offset: { type: 'number', description: 'linha inicial (1 = primeira; padrão 1)' },
+          symbol: { type: 'string', description: 'nome de uma função/classe — devolve só o bloco dela (cirúrgico)' },
+          around_line: { type: 'number', description: 'nº de linha (ex.: de um match do grep) — devolve só o escopo que a contém' },
+          offset: { type: 'number', description: 'linha inicial (1 = primeira; padrão 1) — quando não usar symbol/around_line' },
           limit: { type: 'number', description: 'quantas linhas ler (padrão 800, máx 2000)' },
         },
         required: ['path'],
       },
     },
-    run: async ({ path: p, offset, limit }) => {
+    run: async ({ path: p, offset, limit, symbol, around_line }) => {
       const decoded = readTextFileSmart(resolvePath(p));
       const txt = decoded.text;
       if (txt.includes('\0')) return { error: 'arquivo parece binário (contém bytes nulos)' };
       const lines = txt.split('\n');
       const total = lines.length;
+      // leitura CIRÚRGICA: só o bloco de um símbolo ou o escopo que envolve uma linha
+      if (symbol || around_line) {
+        let anchor = null;
+        if (around_line) anchor = Math.max(1, Math.min(parseInt(around_line, 10) || 1, total));
+        else {
+          const name = String(symbol).trim();
+          for (let i = 0; i < total; i++) {
+            if (defNameAt(lines[i]) === name) {
+              anchor = i + 1;
+              break;
+            }
+          }
+          if (!anchor) return { error: 'símbolo "' + symbol + '" não encontrado neste arquivo — confira o nome (grep_files mostra o symbol de cada match) ou leia por offset/limit' };
+        }
+        const blk = blockAround(lines, anchor);
+        let content = lines.slice(blk.start - 1, blk.end).join('\n');
+        let capped = false;
+        if (content.length > 48000) {
+          content = content.slice(0, 48000);
+          capped = true;
+        }
+        return {
+          content,
+          totalLines: total,
+          showing: `bloco linhas ${blk.start}-${blk.end} de ${total}` + (symbol ? ` (símbolo "${symbol}")` : '') + (capped ? ' — cortado por tamanho' : ''),
+          note: 'trecho cirúrgico; se precisar de mais contexto use offset/limit em volta dessas linhas',
+        };
+      }
       const start = Math.max(1, parseInt(offset, 10) || 1);
       const count = Math.max(1, Math.min(parseInt(limit, 10) || 800, 2000));
       let content = lines.slice(start - 1, start - 1 + count).join('\n');
@@ -3903,7 +4052,7 @@ const TOOLS = {
     schema: {
       name: 'grep_files',
       description:
-        'Procura um texto (ou regex) nos arquivos do workspace e retorna arquivo + linha + conteúdo de cada match. Use ANTES de mexer: ache exatamente ONDE está o código (depois leia a região com read_file offset=linha).',
+        'Procura texto (ou regex) no workspace. Cada match já vem com "symbol" (a função/classe que o contém) e "context" (linhas ao redor) — na maioria das vezes dá pra entender SEM abrir o arquivo. Se precisar do trecho, use read_file com symbol=<nome> ou around_line=<linha do match> (não leia o arquivo inteiro).',
       parameters: {
         type: 'object',
         properties: {
@@ -3934,10 +4083,12 @@ const TOOLS = {
       // 1) ripgrep: rápido, respeita .gitignore, async com timeout (nunca trava o app)
       const rg = await rgGrep(base, wsBase, pattern, !!regex);
       if (rg) {
+        await enrichMatches(wsBase, rg.matches); // + symbol (função que contém) + context (linhas ao redor)
         return {
           matches: rg.matches,
           total: rg.matches.length,
           engine: 'ripgrep',
+          note: 'cada match traz "symbol" (a função/classe onde está) e "context" (linhas ao redor) — muitas vezes já dá pra decidir SEM abrir o arquivo. Pra ler o trecho, use read_file com symbol ou around_line.',
           truncated: rg.limited ? 'há mais resultados — refine o pattern ou limite o path' : undefined,
         };
       }
@@ -4011,10 +4162,12 @@ const TOOLS = {
       };
       if (baseStat.isFile()) await tryFile(base, path.relative(wsBase, base).replace(/\\/g, '/'));
       else await walk(base, 0);
+      await enrichMatches(wsBase, matches); // + symbol + context (mesmo do ripgrep)
       return {
         matches,
         total: matches.length,
         engine: 'fallback-js',
+        note: 'cada match traz "symbol" e "context" — muitas vezes já resolve sem abrir o arquivo. Pra ler, use read_file com symbol ou around_line.',
         truncated: truncated ? 'busca limitada (tempo/quantidade) — refine o pattern ou limite o path' : undefined,
       };
     },
