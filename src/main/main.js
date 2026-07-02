@@ -123,9 +123,45 @@ function applyIgnore() {
 // Entrega também a IFRAMES (subframes) — webContents.send sozinho só alcança o frame
 // principal; o chat embutido no editor da workspace é um iframe e precisa receber tudo.
 // ---- linha do tempo do chat (persiste tool_calls/agentes/diffs pra não sumirem ao reiniciar) ----
-let chatEvents = []; // [{a: nº de msgs no history quando ocorreu, t: tipo, d: dados, ts}]
+// ============================================================
+//  SESSÕES DE CONVERSA (base do paralelismo): todo o estado de um turno vive
+//  numa Session. O AsyncLocalStorage carrega a sessão pelo contexto assíncrono
+//  do turno — código fora de turno (IPC, timers) cai na sessão de PRIMEIRO
+//  PLANO (fgSession), que é a conversa que as janelas "seguidoras" exibem.
+// ============================================================
+const { AsyncLocalStorage } = require('async_hooks');
+const sessionALS = new AsyncLocalStorage();
+function makeSession(id) {
+  return {
+    id: id || '', // chatId desta sessão
+    workspace: null, // pasta em que a IA trabalha NESTA sessão (janela de workspace própria)
+    running: false, // turno em andamento?
+    abort: null, // AbortController do turno (botão Stop)
+    steerQueue: [], // mensagens enviadas DURANTE o processamento (steering)
+    editedSinceTurn: false, // p/ verificação automática
+    cp: null, // checkpoint do turno em andamento {id, ts, files}
+    toolCallLog: [], // anti-loop { key, error, S().stateSeq }
+    stateSeq: 0, // avança quando algo MUDA o estado (escrita/comando)
+    readFilesThisTurn: new Set(), // guarda "leia antes de editar"
+    history: [],
+    convSummary: '',
+    chatEvents: [], // [{a: nº de msgs no S().history quando ocorreu, t: tipo, d: dados, ts}]
+    chatArchive: [], // mensagens antigas compactadas (só exibição)
+    worklog: [],
+    currentTurnLog: null,
+    lastTurnContext: null, // último turno técnico completo (reinjetado no prompt seguinte)
+    pendingTurnTranscript: null,
+    claudeSessionId: '',
+    claudeSessionWorkspace: '',
+  };
+}
+let fgSession = makeSession(''); // sessão de primeiro plano
+const sessions = new Map(); // chatId -> Session viva (para turnos paralelos em janelas presas)
+function S() {
+  return sessionALS.getStore() || fgSession;
+}
 // mensagens antigas COMPACTADAS saem do contexto do modelo mas ficam aqui pra UI não "perder" nada
-let chatArchive = [];
+// (sessionizado: agora vive em makeSession/S())
 function slimVal(v, depth) {
   // versão enxuta pra salvar em disco: corta strings gigantes e troca imagens por marcador
   if (typeof v === 'string') return v.length > 4000 ? v.slice(0, 4000) + '…[cortado no histórico]' : v;
@@ -143,16 +179,16 @@ function slimVal(v, depth) {
 function logChatEvent(channel, payload) {
   try {
     if (channel === 'chat:user' || channel === 'chat:done') {
-      // carimbo de hora da mensagem recém-adicionada ao history (sem duplicar)
-      const a = history.length - 1;
-      if (a >= 0 && !chatEvents.some((e) => e.t === 'mts' && e.a === a)) chatEvents.push({ a, t: 'mts', ts: Date.now() });
+      // carimbo de hora da mensagem recém-adicionada ao S().history (sem duplicar)
+      const a = S().history.length - 1;
+      if (a >= 0 && !S().chatEvents.some((e) => e.t === 'mts' && e.a === a)) S().chatEvents.push({ a, t: 'mts', ts: Date.now() });
       return;
     }
     const map = { 'chat:tool': 'tool', 'chat:tool-result': 'result', 'chat:agent': 'agent', 'chat:diff': 'diff', 'chat:note': 'note', 'chat:plan': 'plan', 'chat:ask': 'ask', 'chat:ask-done': 'askdone' };
     const t = map[channel];
     if (!t) return;
-    chatEvents.push({ a: history.length, t, d: slimVal(payload, 0), ts: Date.now() });
-    if (chatEvents.length > 400) chatEvents = chatEvents.slice(-400);
+    S().chatEvents.push({ a: S().history.length, t, d: slimVal(payload, 0), ts: Date.now() });
+    if (S().chatEvents.length > 400) S().chatEvents = S().chatEvents.slice(-400);
   } catch (e) {
     /* nunca pode derrubar o broadcast */
   }
@@ -171,16 +207,16 @@ function senderChatId(e) {
 // multi-janela de WORKSPACE: cada janela = sua própria pasta + seu próprio chat + a IA
 // trabalhando NAQUELA pasta. winWorkspace: webContents.id -> pasta.
 //  - Handlers do EDITOR usam wsCfg(e) → resolvem a pasta DA JANELA (mesmo sem ser a sessão ativa).
-//  - As ferramentas da IA seguem `activeWorkspace` (a pasta da sessão que está rodando o turno).
+//  - As ferramentas da IA seguem `S().workspace` (a pasta da sessão que está rodando o turno).
 //    Como só roda 1 turno por vez (serializado), isso é sempre bem definido e não conflita.
 // Sem binding = pasta global (comportamento atual, retrocompatível).
 const winWorkspace = new Map();
-let activeWorkspace = null; // pasta da sessão ativa durante um turno (a IA trabalha nela)
+// (sessionizado: agora vive em makeSession/S())
 function wsCfg(e) {
   const cfg = loadConfig();
   const ws = e && e.sender && winWorkspace.get(e.sender.id);
   if (ws) return { ...cfg, workspace: ws }; // janela do editor: sua própria pasta
-  if (activeWorkspace) return { ...cfg, workspace: rawWorkspace() }; // janela primária: pasta real (não a da sessão em turno)
+  if (S().workspace) return { ...cfg, workspace: rawWorkspace() }; // janela primária: pasta real (não a da sessão em turno)
   return cfg;
 }
 
@@ -439,11 +475,11 @@ function loadConfig() {
       }
     }
     const v = { ...cfgCache.value };
-    if (activeWorkspace) v.workspace = activeWorkspace; // durante um turno, a IA trabalha na pasta da sessão ativa
+    if (S().workspace) v.workspace = S().workspace; // durante um turno, a IA trabalha na pasta da sessão ativa
     return v;
   } catch (e) {
     const v = { ...DEFAULT_CONFIG };
-    if (activeWorkspace) v.workspace = activeWorkspace;
+    if (S().workspace) v.workspace = S().workspace;
     return v;
   }
 }
@@ -455,7 +491,7 @@ function rawWorkspace() {
 function saveConfig(cfg) {
   const toSave = { ...cfg };
   // blindagem: a pasta da sessão ativa NUNCA deve ser gravada como workspace global do config.json
-  if (activeWorkspace && toSave.workspace === activeWorkspace) toSave.workspace = rawWorkspace();
+  if (S().workspace && toSave.workspace === S().workspace) toSave.workspace = rawWorkspace();
   fs.writeFileSync(configPath(), JSON.stringify(toSave, null, 2));
   try {
     cfgCache = { mtimeMs: fs.statSync(configPath()).mtimeMs, value: { ...DEFAULT_CONFIG, ...toSave } };
@@ -694,7 +730,7 @@ async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify(body),
-    signal: chatAbort ? chatAbort.signal : undefined, // botão Stop
+    signal: S().abort ? S().abort.signal : undefined, // botão Stop
   });
   if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}: ${await res.text()}`);
 
@@ -734,7 +770,7 @@ async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
     });
   } catch (e) {
     // botão Stop: devolve o parcial em vez de estourar erro (mesmo contrato do openaiTurn)
-    if (chatAbort && chatAbort.signal.aborted) {
+    if (S().abort && S().abort.signal.aborted) {
       return { text, toolCalls: toolCalls.filter(Boolean), usage, ms: Date.now() - t0, aborted: true };
     }
     throw e;
@@ -844,7 +880,7 @@ async function responsesTurn(cfg, messages, tools, onToken, onThink) {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal: chatAbort ? chatAbort.signal : undefined,
+    signal: S().abort ? S().abort.signal : undefined,
   });
   if (!res.ok) throw new Error(`OpenCode Responses HTTP ${res.status}: ${await res.text()}`);
 
@@ -902,7 +938,7 @@ async function responsesTurn(cfg, messages, tools, onToken, onThink) {
       }
     });
   } catch (e) {
-    if (chatAbort && chatAbort.signal.aborted) {
+    if (S().abort && S().abort.signal.aborted) {
       return { text, toolCalls: [...calls.values()], usage, responseItems, ms: Date.now() - t0, aborted: true };
     }
     throw e;
@@ -985,7 +1021,7 @@ async function geminiTurn(cfg, messages, tools, onToken, onThink) {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal: chatAbort ? chatAbort.signal : undefined,
+    signal: S().abort ? S().abort.signal : undefined,
   });
   if (!res.ok) throw new Error(`OpenCode Gemini HTTP ${res.status}: ${await res.text()}`);
 
@@ -1032,7 +1068,7 @@ async function geminiTurn(cfg, messages, tools, onToken, onThink) {
       }
     });
   } catch (e) {
-    if (chatAbort && chatAbort.signal.aborted) {
+    if (S().abort && S().abort.signal.aborted) {
       return { text, toolCalls, usage, ms: Date.now() - t0, aborted: true };
     }
     throw e;
@@ -1686,8 +1722,8 @@ function buildSystemPrompt(cfg) {
       sp += '\n\n# O que você lembra sobre o usuário (use naturalmente):\n' + facts.map((f) => '- ' + f).join('\n');
     }
   }
-  if (convSummary) {
-    sp += '\n\n# Resumo da conversa até aqui (contexto anterior já compactado):\n' + convSummary;
+  if (S().convSummary) {
+    sp += '\n\n# Resumo da conversa até aqui (contexto anterior já compactado):\n' + S().convSummary;
   }
   const diary = worklogPrompt(cfg);
   if (diary) {
@@ -2182,24 +2218,24 @@ const READONLY_TOOLS = new Set([
   'view_image', 'read_clipboard', 'recall_facts', 'get_datetime', 'screen_info', 'list_reminders', 'list_ssh_hosts',
   'project_overview',
 ]);
-let toolCallLog = []; // { key, error, stateSeq }
-let stateSeq = 0; // avança quando algo MUDA o estado (escrita/comando) — invalida o "nada mudou"
-let readFilesThisTurn = new Set(); // arquivos que a IA LEU neste turno (guarda do edit/write)
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
 function resetTurnGuards() {
-  toolCallLog = [];
-  stateSeq = 0;
-  readFilesThisTurn = new Set();
+  S().toolCallLog = [];
+  S().stateSeq = 0;
+  S().readFilesThisTurn = new Set();
 }
 function noteFileRead(abs) {
   try {
-    readFilesThisTurn.add(path.resolve(abs));
+    S().readFilesThisTurn.add(path.resolve(abs));
   } catch (e) {
     /* ok */
   }
 }
 function wasFileRead(abs) {
   try {
-    return readFilesThisTurn.has(path.resolve(abs));
+    return S().readFilesThisTurn.has(path.resolve(abs));
   } catch (e) {
     return true;
   }
@@ -5853,34 +5889,34 @@ function toolSchemas(opts) {
   return native.concat(mcp);
 }
 
-let editedSinceTurn = false; // algum arquivo foi escrito neste turno? (p/ verificação automática)
-let chatAbort = null; // AbortController do turno atual (botão Stop)
-let agentRunning = false; // há um turno do agente em andamento?
-let steerQueue = []; // mensagens enviadas DURANTE o processamento (steering)
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
 let activeClaudeQuery = null; // Query do Agent SDK em andamento (Stop chama interrupt/close)
 const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file', 'apply_patch']; // apply_patch conta: auto-verify/self-review/checkpoint
 
 // ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
-let currentCp = null; // {id, ts, files: Map<rel, conteúdo|null>} do turno em andamento
+// (sessionizado: agora vive em makeSession/S())
 let checkpoints = []; // pilha dos últimos turnos com edições (memória da sessão, máx 10)
 let cpSeq = 0;
 const CHECKPOINT_TURN_BYTES = 4 * 1024 * 1024;
 function snapshotForCheckpoint(rel) {
-  if (!currentCp || !rel || currentCp.files.has(rel)) return; // só o estado ANTES da 1ª mexida no arquivo
+  if (!S().cp || !rel || S().cp.files.has(rel)) return; // só o estado ANTES da 1ª mexida no arquivo
   try {
     const abs = resolvePath(rel);
     if (fs.existsSync(abs)) {
       const size = fs.statSync(abs).size;
-      if (size > 2 * 1024 * 1024 || currentCp.bytes + size > CHECKPOINT_TURN_BYTES) return;
-      currentCp.files.set(rel, fs.readFileSync(abs, 'utf8'));
-      currentCp.bytes += size;
-    } else currentCp.files.set(rel, null); // não existia → desfazer = apagar
+      if (size > 2 * 1024 * 1024 || S().cp.bytes + size > CHECKPOINT_TURN_BYTES) return;
+      S().cp.files.set(rel, fs.readFileSync(abs, 'utf8'));
+      S().cp.bytes += size;
+    } else S().cp.files.set(rel, null); // não existia → desfazer = apagar
   } catch (e) {
     /* snapshot é melhor-esforço */
   }
 }
 function captureForCheckpoint(name, a) {
-  if (!currentCp) return;
+  if (!S().cp) return;
   // apply_patch mexe em VÁRIOS arquivos sem args.path — extrai do próprio diff (senão o ↩ desfazer não cobria)
   if (name === 'apply_patch' && a && a.patch) {
     const seen = new Set();
@@ -5930,7 +5966,7 @@ async function runTool(name, args) {
   const a = args || {};
   // ANTI-LOOP: mesma chamada IDÊNTICA que já falhou 2x sem NADA mudar no estado → 3ª é loop garantido
   const callKey = name + '|' + JSON.stringify(a);
-  const identicalFails = toolCallLog.filter((c) => c.key === callKey && c.error && c.stateSeq === stateSeq).length;
+  const identicalFails = S().toolCallLog.filter((c) => c.key === callKey && c.error && c.stateSeq === S().stateSeq).length;
   if (identicalFails >= 2) {
     const last = [...toolCallLog].reverse().find((c) => c.key === callKey && c.error);
     const out = {
@@ -5941,17 +5977,17 @@ async function runTool(name, args) {
       loop: true,
     };
     recordToolTrace(name, a, out);
-    toolCallLog.push({ key: callKey, error: true, stateSeq, summary: out.error });
+    S().toolCallLog.push({ key: callKey, error: true, stateSeq: S().stateSeq, summary: out.error });
     return out;
   }
   const logCall = (res, readonly) => {
     const isErr = !!(res && (res.error || res.isError));
-    toolCallLog.push({ key: callKey, error: isErr, stateSeq, summary: isErr ? String(res.error || 'erro') : '' });
-    if (toolCallLog.length > 80) toolCallLog = toolCallLog.slice(-60);
-    if (!readonly && !isErr) stateSeq++; // escrita/comando bem-sucedido: o mundo mudou
+    S().toolCallLog.push({ key: callKey, error: isErr, stateSeq: S().stateSeq, summary: isErr ? String(res.error || 'erro') : '' });
+    if (S().toolCallLog.length > 80) S().toolCallLog = S().toolCallLog.slice(-60);
+    if (!readonly && !isErr) S().stateSeq++; // escrita/comando bem-sucedido: o mundo mudou
     // leitura idêntica repetida sem nada ter mudado → avisa (treina o modelo a não re-ler à toa)
     if (readonly && !isErr && res && typeof res === 'object') {
-      const prevOk = toolCallLog.slice(0, -1).some((c) => c.key === callKey && !c.error && c.stateSeq === stateSeq);
+      const prevOk = S().toolCallLog.slice(0, -1).some((c) => c.key === callKey && !c.error && c.stateSeq === S().stateSeq);
       if (prevOk) res._nota = 'você JÁ fez esta chamada idêntica neste turno e nada mudou — o resultado é o mesmo; não repita leituras.';
     }
   };
@@ -6003,7 +6039,7 @@ async function runTool(name, args) {
   try {
     captureForCheckpoint(name, a); // snapshot do estado original (pro "↩ desfazer")
     const res = await t.run(a);
-    if (WRITE_TOOLS.includes(name) && !(res && res.error)) editedSinceTurn = true; // p/ verificação automática
+    if (WRITE_TOOLS.includes(name) && !(res && res.error)) S().editedSinceTurn = true; // p/ verificação automática
     recordToolTrace(name, a, res);
     logCall(res, READONLY_TOOLS.has(name));
     return res;
@@ -6018,11 +6054,11 @@ async function runTool(name, args) {
 // VERIFICAÇÃO AUTOMÁTICA: roda o comando do projeto após edições e devolve o resultado.
 // Retorna true se FALHOU (o orquestrador deve pedir correção ao modelo).
 async function maybeAutoVerify(cfg, messages) {
-  if (cfg.autoVerify !== true || !cfg.workspace || !editedSinceTurn) return false;
+  if (cfg.autoVerify !== true || !cfg.workspace || !S().editedSinceTurn) return false;
   if ((cfg.perms || {}).exec === 'deny') return false;
   const cmd = (cfg.verifyCommand && cfg.verifyCommand.trim()) || detectStackCached(cfg.workspace).verify;
   if (!cmd) return false;
-  editedSinceTurn = false; // consome (só verifica de novo se editar de novo)
+  S().editedSinceTurn = false; // consome (só verifica de novo se editar de novo)
   broadcast('chat:tool', { name: 'run_command', args: { command: cmd }, agent: '🔁 auto-verificação' });
   let r;
   try {
@@ -6033,7 +6069,7 @@ async function maybeAutoVerify(cfg, messages) {
   }
   broadcast('tool:animation', r.ok ? 'happy' : 'sad'); // avatar comemora/lamenta a verificação
   broadcast('chat:tool-result', { name: 'run_command', args: { command: cmd }, result: { ok: r.ok, output: r.output }, agent: '🔁 auto-verificação' });
-  if (currentTurnLog) currentTurnLog.verification.push({ command: cmd, ok: r.ok, summary: compactText(r.output, 300) });
+  if (S().currentTurnLog) S().currentTurnLog.verification.push({ command: cmd, ok: r.ok, summary: compactText(r.output, 300) });
   if (r.ok) return false; // passou -> nada a corrigir
   broadcast('chat:newbubble'); // separa a próxima resposta (a correção) num balão novo
   const fails = extractFailures(r.output);
@@ -6043,7 +6079,7 @@ async function maybeAutoVerify(cfg, messages) {
     content: `[verificação automática] O comando \`${cmd}\` FALHOU.\n${summary}Saída (final):\n${tailStr(r.output, 4000)}\n\nCorrija a CAUSA RAIZ desses problemas no código (use get_problems/locate_stack se ajudar). Depois eu rodo a verificação de novo.`,
   };
   messages.push(verificationMessage);
-  if (pendingTurnTranscript) pendingTurnTranscript.messages.push(cloneContextMessage(verificationMessage));
+  if (S().pendingTurnTranscript) S().pendingTurnTranscript.messages.push(cloneContextMessage(verificationMessage));
   return true;
 }
 
@@ -6051,7 +6087,7 @@ async function maybeAutoVerify(cfg, messages) {
 // bug/risco. Se achar algo real, injeta pra corrigir antes de entregar. "Evidência, não confiança."
 async function maybeSelfReview(cfg, messages) {
   if (cfg.selfReview !== true || !cfg.workspace) return false;
-  if (!currentTurnLog || !currentTurnLog.filesChanged || !currentTurnLog.filesChanged.size) return false;
+  if (!S().currentTurnLog || !S().currentTurnLog.filesChanged || !S().currentTurnLog.filesChanged.size) return false;
   let diff = '';
   try {
     const a = await gitRun(cfg, ['diff', '--no-color']);
@@ -6078,7 +6114,7 @@ async function maybeSelfReview(cfg, messages) {
   const clean = String(review || '').trim();
   const isOk = !clean || /^ok\b/i.test(clean) || clean.length < 6;
   broadcast('chat:tool-result', { name: 'git_diff', args: {}, result: { ok: isOk, output: isOk ? 'sem problemas' : clean }, agent: '🔎 auto-revisão' });
-  if (currentTurnLog) currentTurnLog.verification.push({ command: 'auto-revisão', ok: isOk, summary: compactText(clean, 300) });
+  if (S().currentTurnLog) S().currentTurnLog.verification.push({ command: 'auto-revisão', ok: isOk, summary: compactText(clean, 300) });
   if (isOk) return false;
   broadcast('chat:newbubble');
   const reviewMessage = {
@@ -6086,7 +6122,7 @@ async function maybeSelfReview(cfg, messages) {
     content: `[auto-revisão do seu diff] Antes de finalizar, uma revisão apontou possíveis problemas:\n${clean}\n\nCorrija os que forem REAIS. Se algum for falso positivo, explique por quê em 1 linha. Depois finalize.`,
   };
   messages.push(reviewMessage);
-  if (pendingTurnTranscript) pendingTurnTranscript.messages.push(cloneContextMessage(reviewMessage));
+  if (S().pendingTurnTranscript) S().pendingTurnTranscript.messages.push(cloneContextMessage(reviewMessage));
   return true;
 }
 
@@ -6103,7 +6139,7 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    signal: chatAbort ? chatAbort.signal : undefined, // permite o botão Stop abortar
+    signal: S().abort ? S().abort.signal : undefined, // permite o botão Stop abortar
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
 
@@ -6177,7 +6213,7 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
     });
   } catch (e) {
     // botão Stop: devolve o que já foi gerado em vez de estourar erro
-    if (chatAbort && chatAbort.signal.aborted) {
+    if (S().abort && S().abort.signal.aborted) {
       if (buf && !inThink) text += buf;
       return { text, toolCalls: toolCalls.filter(Boolean), usage, ms: Date.now() - t0, aborted: true };
     }
@@ -6300,13 +6336,13 @@ function subAgentSystemPrompt(cfg, agent) {
     sp += proj + `\n\n## Memória de trabalho do projeto (.lumi-memory.md — decisões, gotchas, pendências; complementa o briefing, não o repete):\n${mem}`;
   }
   // resumo do que já rolou na conversa principal
-  if (convSummary) {
-    sp += `\n\n# Contexto da conversa principal (resumo):\n${convSummary}`;
+  if (S().convSummary) {
+    sp += `\n\n# Contexto da conversa principal (resumo):\n${S().convSummary}`;
   }
   const diary = worklogPrompt(cfg);
   if (diary) sp += `\n\n# Diário técnico recente (não repita erros já conhecidos)\n${diary}`;
   // últimas mensagens da conversa principal (o que está rolando agora)
-  const recent = sanitizeForSave(history)
+  const recent = sanitizeForSave(S().history)
     .slice(-6)
     .map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : '[multimídia]'}`)
     .join('\n')
@@ -6337,13 +6373,13 @@ async function runSubAgent(cfg, agent, task, label) {
   const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
   const onTok = (tk) => broadcast('chat:agent-token', { agent: who, t: tk }); // narração ao vivo no chat
   for (let step = 0; step < MAX_STEPS; step++) {
-    if (chatAbort && chatAbort.signal.aborted) break; // botão Stop para os subagentes também
+    if (S().abort && S().abort.signal.aborted) break; // botão Stop para os subagentes também
     compactTurnMessages(messages, sub, tools); // subagente em tarefa longa também compacta
     let turn;
     try {
       turn = await turnFn(sub, messages, tools, onTok, () => {});
     } catch (e) {
-      if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
+      if (S().abort && S().abort.signal.aborted) break; // parado pelo usuário
       if (tools.length) {
         tools = [];
         turn = await turnFn(sub, messages, tools, onTok, () => {});
@@ -6391,11 +6427,11 @@ async function runSubAgent(cfg, agent, task, label) {
 
 async function runAgent(cfg) {
   agentSeq = {}; // zera a numeração dos subagentes a cada turno (Programador 1, 2...)
-  editedSinceTurn = false; // reseta o rastreio de edições (verificação automática)
+  S().editedSinceTurn = false; // reseta o rastreio de edições (verificação automática)
   const onToken = (t) => broadcast('chat:token', t);
   const onThink = (t) => broadcast('chat:thinking', t);
-  const currentUser = history[history.length - 1];
-  pendingTurnTranscript = {
+  const currentUser = S().history[S().history.length - 1];
+  S().pendingTurnTranscript = {
     historyTailCount: currentUser && currentUser.role === 'user' ? 1 : 0,
     messages: currentUser && currentUser.role === 'user' ? [cloneContextMessage(currentUser)] : [],
   };
@@ -6410,26 +6446,26 @@ async function runAgent(cfg) {
   const MAX_STEPS = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
   let finished = false;
   for (let step = 0; step < MAX_STEPS; step++) {
-    if (chatAbort && chatAbort.signal.aborted) break; // botão Stop
+    if (S().abort && S().abort.signal.aborted) break; // botão Stop
     compactTurnMessages(messages, runCfg, tools); // turno longo? encolhe os tool-results antigos
     // STEERING: mensagens enviadas durante o processamento entram como turno do usuário
-    if (steerQueue.length) {
-      for (const s of steerQueue.splice(0)) {
+    if (S().steerQueue.length) {
+      for (const s of S().steerQueue.splice(0)) {
         const steering = { role: 'user', content: s.content };
         messages.push(steering);
-        pendingTurnTranscript.messages.push(cloneContextMessage(steering));
-        pendingTurnTranscript.historyTailCount++;
-        editedSinceTurn = false; // a verificação considera só as edições após o novo pedido
+        S().pendingTurnTranscript.messages.push(cloneContextMessage(steering));
+        S().pendingTurnTranscript.historyTailCount++;
+        S().editedSinceTurn = false; // a verificação considera só as edições após o novo pedido
       }
     }
     // RECITAÇÃO: turno longo faz qualquer modelo perder o fio — a cada 8 passos, 1 linha re-ancora o objetivo
-    if (step > 0 && step % 8 === 0 && currentTurnLog && currentTurnLog.goal) {
+    if (step > 0 && step % 8 === 0 && S().currentTurnLog && S().currentTurnLog.goal) {
       const recite = {
         role: 'user',
-        content: `[foco — passo ${step}/${MAX_STEPS}] Objetivo do turno: "${currentTurnLog.goal}". Se desviou, volte a ele; se concluiu, VERIFIQUE e finalize; se está travada, mude a abordagem ou use ask_user.`,
+        content: `[foco — passo ${step}/${MAX_STEPS}] Objetivo do turno: "${S().currentTurnLog.goal}". Se desviou, volte a ele; se concluiu, VERIFIQUE e finalize; se está travada, mude a abordagem ou use ask_user.`,
       };
       messages.push(recite);
-      pendingTurnTranscript.messages.push(cloneContextMessage(recite));
+      S().pendingTurnTranscript.messages.push(cloneContextMessage(recite));
     }
     let turn;
     let live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
@@ -6437,7 +6473,7 @@ async function runAgent(cfg) {
       turn = await turnAdapter(runCfg)(runCfg, messages, tools, live.onToken, live.onThink);
     } catch (e) {
       live.fail();
-      if (chatAbort && chatAbort.signal.aborted) break; // parado pelo usuário
+      if (S().abort && S().abort.signal.aborted) break; // parado pelo usuário
       // FALLBACK: modelo principal falhou → tenta o reserva (mantendo as ferramentas)
       if (!usedFallback && cfg.fallbackModel && cfg.fallbackModel.trim()) {
         usedFallback = true;
@@ -6464,7 +6500,7 @@ async function runAgent(cfg) {
         _responsesItems: turn.responseItems,
       };
       messages.push(assistantTools);
-      pendingTurnTranscript.messages.push(cloneContextMessage(assistantTools));
+      S().pendingTurnTranscript.messages.push(cloneContextMessage(assistantTools));
       const toolLim = contextLimits(runCfg);
       const toolCtx = (turn.usage && turn.usage.prompt_tokens) || promptTokenEstimate(messages, tools);
       broadcast('chat:stats', {
@@ -6493,7 +6529,7 @@ async function runAgent(cfg) {
           const note = result._imageNote || 'Esta é a captura da minha tela agora:';
           const toolMessage = { role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, note: 'Imagem anexada como visão.' }) };
           messages.push(toolMessage);
-          pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
+          S().pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
           messages.push({
             role: 'user',
             content: [
@@ -6510,7 +6546,7 @@ async function runAgent(cfg) {
               : result;
           const toolMessage = { role: 'tool', tool_call_id: tc.id, content: JSON.stringify(forModel) };
           messages.push(toolMessage);
-          pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
+          S().pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
         }
       }
 
@@ -6529,13 +6565,13 @@ async function runAgent(cfg) {
         for (const { id, result } of dres) {
           const toolMessage = { role: 'tool', tool_call_id: id, content: JSON.stringify(result) };
           messages.push(toolMessage);
-          pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
+          S().pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
         }
       }
       continue; // volta pro modelo com os resultados
     }
     full = turn.text;
-    if (turn.aborted || (chatAbort && chatAbort.signal.aborted)) break; // botão Stop: mantém o parcial, não verifica
+    if (turn.aborted || (S().abort && S().abort.signal.aborted)) break; // botão Stop: mantém o parcial, não verifica
     // VERIFICAÇÃO AUTOMÁTICA: se editou arquivos e o comando falhar, o modelo corrige (até 3x)
     if (verifyAttempts < 3 && (await maybeAutoVerify(cfg, messages))) {
       verifyAttempts++;
@@ -6574,7 +6610,7 @@ async function runAgent(cfg) {
     break;
   }
   // bateu o teto sem terminar? avisa e deixa retomável (o histórico guarda o progresso)
-  if (!finished && !(chatAbort && chatAbort.signal.aborted)) {
+  if (!finished && !(S().abort && S().abort.signal.aborted)) {
     const max = Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48));
     broadcast('chat:note', { text: '⚠ teto de ' + max + ' passos atingido — diga "continua" pra ela retomar (ajustável em ⚙ → Passos por turno)' });
     if (!full || !full.trim()) full = 'Cheguei ao teto de passos deste turno antes de terminar tudo. Diga "continua" que eu retomo exatamente de onde parei! 🔁';
@@ -6878,13 +6914,12 @@ async function synthesize(cfg, text) {
 }
 
 // Historico da conversa + resumo (gestao de contexto)
-let history = [];
-let convSummary = '';
-let worklog = [];
-let currentTurnLog = null;
-let lastTurnContext = null; // último turno técnico completo (tool_calls + results), reinjetado no prompt seguinte
-let pendingTurnTranscript = null;
-
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
 function cloneContextMessage(m) {
   if (!m || typeof m !== 'object') return m;
   try {
@@ -6913,13 +6948,13 @@ function cloneContextMessage(m) {
   }
 }
 function contextMessagesForTurn() {
-  if (!lastTurnContext || !Array.isArray(lastTurnContext.messages)) return history.map(cloneContextMessage).filter(Boolean);
-  const anchor = parseInt(lastTurnContext.anchor, 10);
-  const tailCount = Math.max(0, parseInt(lastTurnContext.historyTailCount, 10) || 0);
+  if (!S().lastTurnContext || !Array.isArray(S().lastTurnContext.messages)) return S().history.map(cloneContextMessage).filter(Boolean);
+  const anchor = parseInt(S().lastTurnContext.anchor, 10);
+  const tailCount = Math.max(0, parseInt(S().lastTurnContext.historyTailCount, 10) || 0);
   const start = anchor - tailCount;
-  if (start < 0 || anchor > history.length) {
-    lastTurnContext = null;
-    return history.map(cloneContextMessage).filter(Boolean);
+  if (start < 0 || anchor > S().history.length) {
+    S().lastTurnContext = null;
+    return S().history.map(cloneContextMessage).filter(Boolean);
   }
   return [
     ...history.slice(0, start).map(cloneContextMessage).filter(Boolean),
@@ -6928,18 +6963,18 @@ function contextMessagesForTurn() {
   ];
 }
 function finalizeLastTurnContext(finalText) {
-  if (!pendingTurnTranscript || !pendingTurnTranscript.messages.length) {
-    pendingTurnTranscript = null;
+  if (!S().pendingTurnTranscript || !S().pendingTurnTranscript.messages.length) {
+    S().pendingTurnTranscript = null;
     return;
   }
-  if (finalText && String(finalText).trim()) pendingTurnTranscript.messages.push({ role: 'assistant', content: String(finalText) });
-  lastTurnContext = {
-    anchor: history.length,
-    historyTailCount: pendingTurnTranscript.historyTailCount,
-    messages: pendingTurnTranscript.messages.map(cloneContextMessage).filter(Boolean),
+  if (finalText && String(finalText).trim()) S().pendingTurnTranscript.messages.push({ role: 'assistant', content: String(finalText) });
+  S().lastTurnContext = {
+    anchor: S().history.length,
+    historyTailCount: S().pendingTurnTranscript.historyTailCount,
+    messages: S().pendingTurnTranscript.messages.map(cloneContextMessage).filter(Boolean),
     at: new Date().toISOString(),
   };
-  pendingTurnTranscript = null;
+  S().pendingTurnTranscript = null;
 }
 
 function compactText(v, max) {
@@ -6966,28 +7001,28 @@ function toolTraceSummary(name, args, result) {
   return compactText(result, 280);
 }
 function recordToolTrace(name, args, result) {
-  if (!currentTurnLog) return;
+  if (!S().currentTurnLog) return;
   const status = result && (result.error || result.isError || result.ok === false || Number(result.status) >= 400) ? 'failed' : 'success';
-  currentTurnLog.tools.push({
+  S().currentTurnLog.tools.push({
     tool: name,
     status,
     target: compactText((args && (args.path || args.query || args.pattern || args.command || args.url || args.agent)) || '', 180),
     summary: toolTraceSummary(name, args || {}, result),
   });
-  if (currentTurnLog.tools.length > 40) currentTurnLog.tools.shift();
+  if (S().currentTurnLog.tools.length > 40) S().currentTurnLog.tools.shift();
   const p = args && args.path;
-  if (p && ['read_file', 'view_image'].includes(name)) currentTurnLog.filesRead.add(String(p));
-  if (p && WRITE_TOOLS.includes(name) && status === 'success') currentTurnLog.filesChanged.add(String(p));
+  if (p && ['read_file', 'view_image'].includes(name)) S().currentTurnLog.filesRead.add(String(p));
+  if (p && WRITE_TOOLS.includes(name) && status === 'success') S().currentTurnLog.filesChanged.add(String(p));
   // apply_patch não tem args.path — os arquivos alterados vêm no resultado
   if (name === 'apply_patch' && status === 'success' && result && Array.isArray(result.files)) {
-    for (const f of result.files) currentTurnLog.filesChanged.add(String(f));
+    for (const f of result.files) S().currentTurnLog.filesChanged.add(String(f));
   }
 }
 function beginTurnLog() {
   resetTurnGuards(); // anti-loop + leia-antes-de-editar zeram a cada turno novo
   const last = [...history].reverse().find((m) => m.role === 'user');
   const raw = last && (typeof last.content === 'string' ? last.content : (last.content || []).filter((p) => p.type === 'text').map((p) => p.text).join(' '));
-  currentTurnLog = {
+  S().currentTurnLog = {
     at: new Date().toISOString(),
     goal: compactText(String(raw || '').split(FILES_SENTINEL)[0], 500),
     tools: [],
@@ -6997,28 +7032,28 @@ function beginTurnLog() {
   };
 }
 function finishTurnLog(outcome, status) {
-  if (!currentTurnLog) return;
-  if (!currentTurnLog.tools.length && !currentTurnLog.verification.length && !currentTurnLog.filesChanged.size) {
-    currentTurnLog = null;
+  if (!S().currentTurnLog) return;
+  if (!S().currentTurnLog.tools.length && !S().currentTurnLog.verification.length && !S().currentTurnLog.filesChanged.size) {
+    S().currentTurnLog = null;
     return;
   }
   const entry = {
-    at: currentTurnLog.at,
-    goal: currentTurnLog.goal,
+    at: S().currentTurnLog.at,
+    goal: S().currentTurnLog.goal,
     status: status || 'completed',
     filesRead: [...currentTurnLog.filesRead].slice(0, 40),
     filesChanged: [...currentTurnLog.filesChanged].slice(0, 40),
-    tools: currentTurnLog.tools,
-    verification: currentTurnLog.verification.slice(-6),
+    tools: S().currentTurnLog.tools,
+    verification: S().currentTurnLog.verification.slice(-6),
     outcome: compactText(outcome, 700),
   };
-  worklog.push(entry);
-  if (worklog.length > 60) worklog = worklog.slice(-60);
-  currentTurnLog = null;
+  S().worklog.push(entry);
+  if (S().worklog.length > 60) S().worklog = S().worklog.slice(-60);
+  S().currentTurnLog = null;
 }
 function worklogPrompt(cfg) {
-  if (!worklog.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
-  const recent = worklog.slice(-10).map((e) => {
+  if (!S().worklog.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
+  const recent = S().worklog.slice(-10).map((e) => {
     const tools = (e.tools || []).map((t) => `${t.status === 'success' ? '✓' : '✗'} ${t.tool}${t.target ? ` (${t.target})` : ''}: ${t.summary}`).join('\n');
     return [
       `## ${String(e.at || '').slice(0, 16).replace('T', ' ')} — ${e.goal || 'turno técnico'} [${e.status || 'completed'}]`,
@@ -7096,21 +7131,21 @@ async function llmComplete(cfg, messages) {
 
 // Quando o historico cresce, resume as mensagens antigas (contexto "infinito")
 async function maybeSummarize(cfg) {
-  if (history.length <= 4) return;
+  if (S().history.length <= 4) return;
   const lim = contextLimits(cfg);
   const tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
   const projected = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], tools);
   if (projected < lim.promptBudget) return;
   let keptTokens = 0;
-  let keepFrom = history.length;
-  for (let i = history.length - 1; i >= 0; i--) {
-    keptTokens += estimateTokens(history[i]);
+  let keepFrom = S().history.length;
+  for (let i = S().history.length - 1; i >= 0; i--) {
+    keptTokens += estimateTokens(S().history[i]);
     keepFrom = i;
-    if (keptTokens > lim.recentLiteral && history.length - i >= 4) break;
+    if (keptTokens > lim.recentLiteral && S().history.length - i >= 4) break;
   }
   const cut = Math.max(1, keepFrom);
-  const toSum = history.slice(0, cut);
-  const rest = history.slice(cut);
+  const toSum = S().history.slice(0, cut);
+  const rest = S().history.slice(cut);
   if (!toSum.length || !rest.length) return;
   const sourceChars = Math.min(120000, Math.max(12000, lim.promptBudget * 2));
   const text = toSum
@@ -7124,21 +7159,21 @@ async function maybeSummarize(cfg) {
         content:
           'Você compacta conversas preservando: objetivo atual, decisões (e o porquê), requisitos, fatos, preferências e pendências. PRESERVE LITERALMENTE nomes exatos — caminhos de arquivo, funções, comandos, URLs, IDs (são o fio da continuidade; resumo genérico os destrói). Não copie saídas brutas de ferramentas; priorize conclusões técnicas e o estado do trabalho (feito × em andamento × pendente). Conciso, completo, em português.',
       },
-      { role: 'user', content: `Resumo anterior:\n${convSummary || '(nenhum)'}\n\nIncorpore estas mensagens ao resumo:\n${text}` },
+      { role: 'user', content: `Resumo anterior:\n${S().convSummary || '(nenhum)'}\n\nIncorpore estas mensagens ao resumo:\n${text}` },
     ]);
     if (summary && summary.trim()) {
-      convSummary = summary.trim();
-      history = rest;
-      if (lastTurnContext) {
-        const shiftedAnchor = Number(lastTurnContext.anchor) - cut;
-        const shiftedStart = shiftedAnchor - Number(lastTurnContext.historyTailCount || 0);
-        if (shiftedStart >= 0) lastTurnContext.anchor = shiftedAnchor;
-        else lastTurnContext = null;
+      S().convSummary = summary.trim();
+      S().history = rest;
+      if (S().lastTurnContext) {
+        const shiftedAnchor = Number(S().lastTurnContext.anchor) - cut;
+        const shiftedStart = shiftedAnchor - Number(S().lastTurnContext.historyTailCount || 0);
+        if (shiftedStart >= 0) S().lastTurnContext.anchor = shiftedAnchor;
+        else S().lastTurnContext = null;
       }
       // as msgs resumidas saem do CONTEXTO mas vão pro arquivo morto (a UI continua mostrando tudo)
-      chatArchive = chatArchive.concat(sanitizeForSave(toSum)).slice(-300);
+      S().chatArchive = S().chatArchive.concat(sanitizeForSave(toSum)).slice(-300);
       // realinha a linha do tempo: as msgs antigas saíram, então desloca os anchors
-      chatEvents = chatEvents.map((e) => ({ ...e, a: e.a - cut })).filter((e) => e.a >= 0);
+      S().chatEvents = S().chatEvents.map((e) => ({ ...e, a: e.a - cut })).filter((e) => e.a >= 0);
       saveSummary();
       saveHistory();
       broadcast('chat:compacted', { kept: rest.length, beforeTokens: projected, budgetTokens: lim.promptBudget });
@@ -7163,9 +7198,8 @@ function chatsDir() {
 //  MULTI-CHAT: várias conversas salvas (chats/<id>.json)
 // ============================================================
 let currentChatId = '';
-let claudeSessionId = '';
-let claudeSessionWorkspace = '';
-
+// (sessionizado: agora vive em makeSession/S())
+// (sessionizado: agora vive em makeSession/S())
 function chatFile(id) {
   return path.join(chatsDir(), id + '.json');
 }
@@ -7194,18 +7228,18 @@ function saveCurrentChat() {
     }
     const data = {
       id: currentChatId,
-      title: meta.customTitle ? meta.title : titleFromHistory(history),
+      title: meta.customTitle ? meta.title : titleFromHistory(S().history),
       customTitle: !!meta.customTitle,
       createdAt: meta.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      summary: convSummary,
-      history: sanitizeForSave(history),
-      events: chatEvents, // linha do tempo (tools/agentes/diffs/horários) — sobrevive ao reiniciar
-      archive: chatArchive, // mensagens antigas compactadas (só pra exibição)
-      worklog,
-      lastTurnContext,
-      claudeSessionId,
-      claudeSessionWorkspace,
+      summary: S().convSummary,
+      history: sanitizeForSave(S().history),
+      events: S().chatEvents, // linha do tempo (tools/agentes/diffs/horários) — sobrevive ao reiniciar
+      archive: S().chatArchive, // mensagens antigas compactadas (só pra exibição)
+      worklog: S().worklog,
+      lastTurnContext: S().lastTurnContext,
+      claudeSessionId: S().claudeSessionId,
+      claudeSessionWorkspace: S().claudeSessionWorkspace,
     };
     fs.writeFileSync(chatFile(currentChatId), JSON.stringify(data));
   } catch (e) {
@@ -7243,15 +7277,15 @@ function listChats() {
 function loadChatInto(id) {
   try {
     const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {};
-    history = Array.isArray(j.history) ? j.history : [];
-    convSummary = j.summary || '';
-    chatEvents = Array.isArray(j.events) ? j.events : [];
-    chatArchive = Array.isArray(j.archive) ? j.archive : [];
-    worklog = Array.isArray(j.worklog) ? j.worklog.slice(-60) : [];
-    lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
-    claudeSessionId = j.claudeSessionId || '';
-    claudeSessionWorkspace = j.claudeSessionWorkspace || '';
-    pendingTurnTranscript = null;
+    S().history = Array.isArray(j.history) ? j.history : [];
+    S().convSummary = j.summary || '';
+    S().chatEvents = Array.isArray(j.events) ? j.events : [];
+    S().chatArchive = Array.isArray(j.archive) ? j.archive : [];
+    S().worklog = Array.isArray(j.worklog) ? j.worklog.slice(-60) : [];
+    S().lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
+    S().claudeSessionId = j.claudeSessionId || '';
+    S().claudeSessionWorkspace = j.claudeSessionWorkspace || '';
+    S().pendingTurnTranscript = null;
     currentChatId = j.id || id;
     return true;
   } catch (e) {
@@ -7270,15 +7304,15 @@ function setCurrentChatId(id) {
 }
 // começa um chat novo (opcionalmente semeado com um resumo) e o torna atual
 function newChat(seedSummary, seedWorklog) {
-  history = [];
-  convSummary = seedSummary || '';
-  chatEvents = [];
-  chatArchive = [];
-  worklog = Array.isArray(seedWorklog) ? seedWorklog.slice(-12) : [];
-  lastTurnContext = null;
-  claudeSessionId = '';
-  claudeSessionWorkspace = '';
-  pendingTurnTranscript = null;
+  S().history = [];
+  S().convSummary = seedSummary || '';
+  S().chatEvents = [];
+  S().chatArchive = [];
+  S().worklog = Array.isArray(seedWorklog) ? seedWorklog.slice(-12) : [];
+  S().lastTurnContext = null;
+  S().claudeSessionId = '';
+  S().claudeSessionWorkspace = '';
+  S().pendingTurnTranscript = null;
   setCurrentChatId(genChatId());
   saveCurrentChat();
   return currentChatId;
@@ -7340,14 +7374,14 @@ function deleteChat(id) {
 // inicialização: retoma o chat atual, ou migra o formato antigo, ou cria um novo
 function initChats() {
   if (loadConfig().memoryEnabled === false) {
-    history = [];
-    convSummary = '';
-    worklog = [];
-    lastTurnContext = null;
-    pendingTurnTranscript = null;
+    S().history = [];
+    S().convSummary = '';
+    S().worklog = [];
+    S().lastTurnContext = null;
+    S().pendingTurnTranscript = null;
     currentChatId = '';
-    claudeSessionId = '';
-    claudeSessionWorkspace = '';
+    S().claudeSessionId = '';
+    S().claudeSessionWorkspace = '';
     return;
   }
   const cfg = loadConfig();
@@ -7361,11 +7395,11 @@ function initChats() {
     setCurrentChatId(list[0].id);
     return;
   }
-  // migração do formato antigo (history.json + summary.txt)
+  // migração do formato antigo (S().history.json + summary.txt)
   const old = loadHistory();
   if (old.length) {
-    history = old;
-    convSummary = loadSummary();
+    S().history = old;
+    S().convSummary = loadSummary();
     setCurrentChatId(genChatId());
     saveCurrentChat();
     return;
@@ -7375,11 +7409,11 @@ function initChats() {
 
 // Resume TODA a conversa atual (incorpora o resumo anterior) -> novo resumo
 async function summarizeAll(cfg) {
-  const text = history
+  const text = S().history
     .map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : '[conteúdo multimídia]'}`)
     .join('\n')
     .slice(0, 16000);
-  if (!text.trim()) return convSummary;
+  if (!text.trim()) return S().convSummary;
   const summary = await llmComplete(cfg, [
     {
       role: 'system',
@@ -7389,28 +7423,28 @@ async function summarizeAll(cfg) {
     {
       role: 'user',
       content:
-        `Resumo anterior:\n${convSummary || '(nenhum)'}\n\n` +
+        `Resumo anterior:\n${S().convSummary || '(nenhum)'}\n\n` +
         `Incorpore TODA esta conversa ao resumo, para continuarmos em um NOVO chat sem perder o contexto:\n${text}`,
     },
   ]);
-  return summary && summary.trim() ? summary.trim() : convSummary;
+  return summary && summary.trim() ? summary.trim() : S().convSummary;
 }
 
 // Forka: salva o chat atual e abre um chat NOVO levando o resumo (contexto leve)
 async function forkConversation() {
   const cfg = loadConfig();
-  let seed = convSummary;
+  let seed = S().convSummary;
   try {
-    seed = (await summarizeAll(cfg)) || convSummary || '';
+    seed = (await summarizeAll(cfg)) || S().convSummary || '';
   } catch (e) {
     /* se o resumo falhar, segue com o resumo atual */
   }
-  const technicalSeed = worklog.slice(-12);
+  const technicalSeed = S().worklog.slice(-12);
   saveCurrentChat(); // o chat original continua salvo (na sua própria conversa)
   newChat(seed, technicalSeed); // novo chat, leve, com resumo + diário técnico recente
   broadcast('chat:reload');
-  broadcast('chat:forked', { hasSummary: !!convSummary, archived: true });
-  return { ok: true, hasSummary: !!convSummary };
+  broadcast('chat:forked', { hasSummary: !!S().convSummary, archived: true });
+  return { ok: true, hasSummary: !!S().convSummary };
 }
 
 // Última captura de tela (para mapear coordenadas da imagem -> tela real, no modo controle)
@@ -8278,7 +8312,7 @@ app.whenReady().then(() => {
 
   // saudação ao abrir (proatividade ≥ discreta) — com a persona dela
   setTimeout(async () => {
-    if (proactivityLevel() < 1 || agentRunning) return;
+    if (proactivityLevel() < 1 || S().running) return;
     const h = new Date().getHours();
     const momento = h < 6 ? 'madrugada' : h < 12 ? 'manhã' : h < 18 ? 'tarde' : 'noite';
     proactiveSay(
@@ -10503,7 +10537,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   const { query } = await claudeSdk();
   const started = Date.now();
   const prompt = promptOverride || claudeUserPrompt();
-  const sameWorkspace = claudeSessionId && path.resolve(claudeSessionWorkspace || '') === path.resolve(cfg.workspace);
+  const sameWorkspace = S().claudeSessionId && path.resolve(S().claudeSessionWorkspace || '') === path.resolve(cfg.workspace);
   const mode = ['default', 'auto', 'acceptEdits', 'plan'].includes(cfg.claudeCodePermissionMode) ? cfg.claudeCodePermissionMode : 'default';
   const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.claudeCodeEffort) ? cfg.claudeCodeEffort : 'high';
   const options = {
@@ -10545,7 +10579,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
     },
     stderr: (data) => logd('claude-code:stderr', truncate(String(data), 1000)),
   };
-  if (sameWorkspace) options.resume = claudeSessionId;
+  if (sameWorkspace) options.resume = S().claudeSessionId;
 
   const q = query({ prompt, options });
   activeClaudeQuery = q;
@@ -10579,7 +10613,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
     refreshClaudeUsageHud(),
   ]).then(([commands, agents]) => {
     publishClaudeCapabilities({
-      sessionId: claudeSessionId,
+      sessionId: S().claudeSessionId,
       commands: (commands || []).map((c) => ({
         name: c.name,
         description: c.description || '',
@@ -10593,8 +10627,8 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   try {
     for await (const msg of q) {
       if (msg && msg.session_id) {
-        claudeSessionId = msg.session_id;
-        claudeSessionWorkspace = cfg.workspace;
+        S().claudeSessionId = msg.session_id;
+        S().claudeSessionWorkspace = cfg.workspace;
       }
       if (msg.type === 'stream_event' && msg.event) {
         const ev = msg.event;
@@ -10725,7 +10759,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
         if (msg.is_error) {
           const detail = (msg.errors || []).join('\n') || msg.result || msg.stop_reason || 'Claude Code encerrou com erro';
           if (/auth|401|credential/i.test(detail)) {
-            claudeSessionId = '';
+            S().claudeSessionId = '';
             throw new Error('A sessão do Claude Max expirou ou ficou inválida. Clique em “Entrar com Claude Max” nas Configurações para renovar o login.');
           }
           throw new Error(detail);
@@ -10745,8 +10779,8 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   claudeUsageStats(finalUsage, started, 'concluído', false, generatedChars, claudeLimitHud);
   const mappedUsage = claudeUsageToChatUsage(finalUsage);
   if (mappedUsage) recordUsage({ ...cfg, usageHost: 'claude-code', model: 'claude-code' }, mappedUsage);
-  if (!(chatAbort && chatAbort.signal.aborted) && steerQueue.length) {
-    const followup = steerQueue.splice(0).map((s) => claudePromptFromContent(s.content)).filter(Boolean).join('\n\n');
+  if (!(S().abort && S().abort.signal.aborted) && S().steerQueue.length) {
+    const followup = S().steerQueue.splice(0).map((s) => claudePromptFromContent(s.content)).filter(Boolean).join('\n\n');
     if (followup) {
       broadcast('chat:newbubble');
       const more = await runClaudeCodeAgent(cfg, followup);
@@ -10788,9 +10822,9 @@ ipcMain.handle('chat:bind', (e, session) => {
   e.sender.once('destroyed', () => winChat.delete(id));
   return true;
 });
-ipcMain.handle('chat:history', (e) => {
+ipcMain.handle('chat:S().history', (e) => {
   const id = senderChatId(e);
-  if (id === currentChatId) return { messages: history, events: chatEvents, archive: chatArchive };
+  if (id === currentChatId) return { messages: S().history, events: S().chatEvents, archive: S().chatArchive };
   try {
     const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {}; // janela destacada: lê do disco
     return { messages: j.history || [], events: j.events || [], archive: j.archive || [] };
@@ -10810,7 +10844,7 @@ ipcMain.handle('chats:list', () => listChats());
 ipcMain.handle('chats:current', (e) => {
   const id = senderChatId(e);
   const found = listChats().find((c) => c.id === id);
-  return { id, title: (found && found.title) || (id === currentChatId ? titleFromHistory(history) : 'Conversa') };
+  return { id, title: (found && found.title) || (id === currentChatId ? titleFromHistory(S().history) : 'Conversa') };
 });
 ipcMain.handle('chats:new', () => {
   startNewChat();
@@ -10906,7 +10940,7 @@ ipcMain.on('chat:send', async (_e, payload) => {
   // Um turno por vez (serializado): se já há agente rodando, avisa e não interrompe.
   const wantId = winChat.get(_e.sender.id);
   if (wantId && wantId !== '*' && wantId !== currentChatId) {
-    if (agentRunning) {
+    if (S().running) {
       _e.sender.send('chat:note', { text: '⏳ Outra conversa está processando — espere ela terminar antes de enviar aqui.' });
       return;
     }
@@ -10914,7 +10948,7 @@ ipcMain.on('chat:send', async (_e, payload) => {
     if (loadChatInto(wantId)) setCurrentChatId(wantId);
   }
   // a IA trabalha na PASTA DESTA JANELA (workspace window) — ou global se a janela não tem pasta própria
-  activeWorkspace = winWorkspace.get(_e.sender.id) || null;
+  S().workspace = winWorkspace.get(_e.sender.id) || null;
   const cfg = loadConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
@@ -10931,23 +10965,23 @@ ipcMain.on('chat:send', async (_e, payload) => {
     images.forEach((url) => content.push({ type: 'image_url', image_url: { url } }));
   }
   // STEERING: se já há um turno em andamento, injeta na conversa atual (não inicia outro)
-  if (agentRunning) {
-    history.push({ role: 'user', content });
-    steerQueue.push({ content });
+  if (S().running) {
+    S().history.push({ role: 'user', content });
+    S().steerQueue.push({ content });
     broadcast('chat:user', { text, images, steer: true });
     return;
   }
 
-  history.push({ role: 'user', content });
+  S().history.push({ role: 'user', content });
   broadcast('chat:user', { text, images }); // mostra em todas as janelas
   await runChatTurn(cfg, true);
 });
 
-// Roda um turno completo do agente sobre o history atual (usado pelo enviar E pelo regenerar)
+// Roda um turno completo do agente sobre o S().history atual (usado pelo enviar E pelo regenerar)
 async function runChatTurn(cfg, popUserOnError) {
-  agentRunning = true;
-  chatAbort = new AbortController();
-  currentCp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map(), bytes: 0 }; // checkpoint deste turno
+  S().running = true;
+  S().abort = new AbortController();
+  S().cp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map(), bytes: 0 }; // checkpoint deste turno
   beginTurnLog();
   let full = '';
   let turnLogStatus = 'completed';
@@ -10989,8 +11023,8 @@ async function runChatTurn(cfg, popUserOnError) {
     }
     if (e2) broadcast('tool:animation', e2); // mesmo canal do play_animation → avatar reage
     // turno só-ferramenta pode terminar sem texto — não salva balão vazio no histórico
-    if (full && full.trim()) history.push({ role: 'assistant', content: full });
-    if (pendingTurnTranscript) pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
+    if (full && full.trim()) S().history.push({ role: 'assistant', content: full });
+    if (S().pendingTurnTranscript) S().pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
     finalizeLastTurnContext(full);
     if (!(cfg.architectMode === true && cfg.codeEngine === 'claude-code')) {
       await maybeSummarize(cfg); // Claude Code preserva e compacta a própria sessão
@@ -10998,20 +11032,20 @@ async function runChatTurn(cfg, popUserOnError) {
     saveHistory(); // memoria persistente
     broadcast('chat:done');
   } catch (err) {
-    if (chatAbort && chatAbort.signal.aborted) {
+    if (S().abort && S().abort.signal.aborted) {
       turnLogStatus = 'stopped';
       // parado pelo usuário: salva o que já saiu (não é erro)
-      if (full && full.trim()) history.push({ role: 'assistant', content: full });
-      if (pendingTurnTranscript) pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
+      if (full && full.trim()) S().history.push({ role: 'assistant', content: full });
+      if (S().pendingTurnTranscript) S().pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
       finalizeLastTurnContext(full);
       saveHistory();
       broadcast('chat:done');
     } else {
       turnLogStatus = 'failed';
-      pendingTurnTranscript = null;
-      if (popUserOnError) history.pop(); // remove a mensagem do usuario que falhou (no regen não há)
+      S().pendingTurnTranscript = null;
+      if (popUserOnError) S().history.pop(); // remove a mensagem do usuario que falhou (no regen não há)
       // descarta eventos do turno que falhou (anchors apontariam pra msgs que não existem mais)
-      chatEvents = chatEvents.filter((e) => (e.t === 'mts' ? e.a < history.length : e.a <= history.length));
+      S().chatEvents = S().chatEvents.filter((e) => (e.t === 'mts' ? e.a < S().history.length : e.a <= S().history.length));
       broadcast('chat:error', String((err && err.message) || err));
       broadcast('tool:animation', 'sad'); // o avatar sente o erro 💔
     }
@@ -11019,31 +11053,31 @@ async function runChatTurn(cfg, popUserOnError) {
     finishTurnLog(full, turnLogStatus);
     saveHistory();
     // fecha o checkpoint do turno: se editou arquivos, vira um ponto de restauração
-    if (currentCp && currentCp.files.size) {
-      checkpoints.push(currentCp);
+    if (S().cp && S().cp.files.size) {
+      checkpoints.push(S().cp);
       if (checkpoints.length > 10) checkpoints.shift();
-      broadcast('chat:checkpoint', { id: currentCp.id, count: currentCp.files.size, files: [...currentCp.files.keys()] });
+      broadcast('chat:checkpoint', { id: S().cp.id, count: S().cp.files.size, files: [...currentCp.files.keys()] });
     }
-    currentCp = null;
-    agentRunning = false;
-    chatAbort = null;
-    steerQueue = [];
+    S().cp = null;
+    S().running = false;
+    S().abort = null;
+    S().steerQueue = [];
   }
 }
 
 // Regenerar: descarta a última resposta e roda o turno de novo sobre o mesmo pedido
 ipcMain.on('chat:regen', async () => {
-  if (agentRunning) return; // não regenera no meio de um turno
-  if (!history.length || history[history.length - 1].role !== 'assistant') return;
-  history.pop();
+  if (S().running) return; // não regenera no meio de um turno
+  if (!S().history.length || S().history[S().history.length - 1].role !== 'assistant') return;
+  S().history.pop();
   if (loadConfig().architectMode === true && loadConfig().codeEngine === 'claude-code') {
-    claudeSessionId = '';
-    claudeSessionWorkspace = '';
+    S().claudeSessionId = '';
+    S().claudeSessionWorkspace = '';
   }
-  lastTurnContext = null; // o transcript correspondia à resposta que acabou de ser descartada
-  pendingTurnTranscript = null;
+  S().lastTurnContext = null; // o transcript correspondia à resposta que acabou de ser descartada
+  S().pendingTurnTranscript = null;
   // remove os eventos do turno descartado (as ferramentas/horário daquela resposta)
-  chatEvents = chatEvents.filter((e) => e.a < history.length);
+  S().chatEvents = S().chatEvents.filter((e) => e.a < S().history.length);
   broadcast('chat:reload'); // a UI re-renderiza sem a última resposta
   await runChatTurn(loadConfig(), false);
 });
@@ -11063,16 +11097,16 @@ ipcMain.on('chat:stop', () => {
         }
       });
   }
-  if (chatAbort) {
+  if (S().abort) {
     try {
-      chatAbort.abort();
+      S().abort.abort();
     } catch (e) {
       /* ok */
     }
   }
   for (const ask of [...pendingAsks.values()]) ask.finish('(o usuário parou a tarefa)'); // destrava loops aguardando resposta
   for (const fin of [...pendingPerms.values()]) fin({ allow: false }); // permissões pendentes = negadas
-  steerQueue = [];
+  S().steerQueue = [];
   broadcast('chat:stopped');
 });
 
@@ -11243,8 +11277,8 @@ function proactivityLevel() {
 
 // Fala espontânea: entra no histórico + bolha/chat/TTS pelos canais normais de streaming
 function proactiveSay(text, emotion) {
-  if (!text || !text.trim() || agentRunning) return false; // nunca atropela um turno
-  history.push({ role: 'assistant', content: text });
+  if (!text || !text.trim() || S().running) return false; // nunca atropela um turno
+  S().history.push({ role: 'assistant', content: text });
   broadcast('chat:token', text);
   broadcast('chat:done');
   broadcast('tool:animation', emotion || 'happy');
@@ -11305,7 +11339,7 @@ function fmtHour(ms) {
 // montado e a Lumi AVISA (sem virar spam — só quando algo novo fica crítico)
 let srvWatchState = { disk: false, failed: '' };
 setInterval(async () => {
-  if (!loadConfig().watchServer || !remoteMount || agentRunning || proactivityLevel() < 1) return;
+  if (!loadConfig().watchServer || !remoteMount || S().running || proactivityLevel() < 1) return;
   try {
     const out = await serverRun("echo D:$(df / | awk 'NR==2{print $5}'); echo F:$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | wc -l):$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | head -3 | awk '{print $1}' | tr '\\n' ' ')", 12000);
     const diskPct = parseInt((/D:(\d+)/.exec(out) || [])[1], 10) || 0;
@@ -11327,7 +11361,7 @@ setInterval(async () => {
 
 // loop dos lembretes: dispara os vencidos (espera o turno atual acabar, se houver)
 setInterval(() => {
-  if (!reminders.length || agentRunning) return;
+  if (!reminders.length || S().running) return;
   const now = Date.now();
   const due = reminders.filter((r) => r.at <= now);
   if (!due.length) return;
@@ -11503,7 +11537,7 @@ async function logSentinelSweep() {
               '[🛡️ sentinela — APROVADO pelo usuário] Investigue estes erros do sistema relacionados ao projeto:\n\n' + brief +
               '\n\nAche a causa NO PROJETO e corrija se aplicável (system_logs/locate_stack/get_problems ajudam). Se concluir que NÃO é do projeto, explique em 1-2 linhas e pare.',
           };
-          if (agentRunning) sentinelQueued = msg; // espera o turno atual acabar (dispatcher abaixo)
+          if (S().running) sentinelQueued = msg; // espera o turno atual acabar (dispatcher abaixo)
           else ipcMain.emit('chat:send', { sender: { id: -9, send: () => {} } }, msg);
         })
         .catch(() => {
@@ -11518,7 +11552,7 @@ setInterval(logSentinelSweep, 30 * 60 * 1000); // varre a cada 30 min (no-op qua
 setTimeout(logSentinelSweep, 4 * 60 * 1000); // primeira varredura ~4 min após abrir (pega o que aconteceu antes)
 // investigação aprovada com agente ocupado → dispara assim que ele liberar
 setInterval(() => {
-  if (sentinelQueued && !agentRunning) {
+  if (sentinelQueued && !S().running) {
     const msg = sentinelQueued;
     sentinelQueued = null;
     ipcMain.emit('chat:send', { sender: { id: -9, send: () => {} } }, msg);
