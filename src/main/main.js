@@ -317,7 +317,7 @@ const DEFAULT_CONFIG = {
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
   watchServer: false, // opt-in: vigia o servidor remoto montado (disco cheio / serviço caído) e avisa
-  logSentinel: 'off', // 🛡️ sentinela de logs do SISTEMA: 'off' | 'notify' (avisa erros novos a cada 30min) | 'fix' (avisa + investiga sozinha se for do projeto)
+  logSentinel: 'off', // 🛡️ sentinela de logs do SISTEMA: 'off' | 'notify' (avisa erros novos a cada 30min) | 'fix' (avisa + CARD de confirmação — só investiga com o SIM do usuário)
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   contextWindow: 128000,
   compactAtPct: 80,
@@ -11023,7 +11023,23 @@ setInterval(() => {
 //  processos em execução (quem lançou, com que comando) e: avisa (notify)
 //  ou dispara a investigação sozinha se o erro parecer do projeto (fix).
 // ============================================================
-let procSnapshot = new Map(); // nome do exe → linha de comando (última varredura)
+// HISTÓRICO de processos (acumula entre varreduras): nome → { cmd, last }. Assim, um app/jogo
+// que CRASHOU e já morreu continua correlacionável ("de onde veio, com que comando foi aberto").
+let procSnapshot = new Map();
+function procRemember(name, cmd) {
+  const k = String(name || '').toLowerCase();
+  if (!k || !cmd) return;
+  procSnapshot.set(k, { cmd: String(cmd).slice(0, 300), last: Date.now() });
+  if (procSnapshot.size > 700) {
+    // esquece os mais antigos (mapa preserva ordem de inserção; re-inserir atualiza a posição)
+    const oldest = [...procSnapshot.entries()].sort((a, b) => a[1].last - b[1].last).slice(0, 200);
+    for (const [k2] of oldest) procSnapshot.delete(k2);
+  }
+}
+function procLaunchOf(name) {
+  const r = procSnapshot.get(String(name || '').toLowerCase());
+  return r ? r.cmd : null;
+}
 async function refreshProcessSnapshot() {
   try {
     if (process.platform === 'win32') {
@@ -11032,20 +11048,16 @@ async function refreshProcessSnapshot() {
         { timeout: 20000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }
       );
       const arr = JSON.parse(stdout || '[]');
-      const next = new Map();
       for (const p of Array.isArray(arr) ? arr : [arr]) {
-        if (p && p.Name && p.CommandLine && !next.has(p.Name.toLowerCase())) next.set(p.Name.toLowerCase(), String(p.CommandLine).slice(0, 300));
+        if (p && p.Name && p.CommandLine) procRemember(p.Name, p.CommandLine);
       }
-      procSnapshot = next;
     } else {
       const { stdout } = await execAsync(process.platform === 'darwin' ? 'ps -axo comm=,args=' : 'ps -eo comm:32,args --no-headers', { timeout: 15000, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
-      const next = new Map();
       for (const l of stdout.split('\n')) {
-        const name = l.slice(0, 32).trim().toLowerCase();
+        const name = l.slice(0, 32).trim();
         const args = l.slice(32).trim();
-        if (name && args && !next.has(name)) next.set(name, args.slice(0, 300));
+        if (name && args) procRemember(name, args);
       }
-      procSnapshot = next;
     }
   } catch (e) {
     /* snapshot é best-effort */
@@ -11086,20 +11098,38 @@ async function readSystemLogs(minutes, level) {
       if (m) entries.push({ time: m[1], source: m[2], level: 'error', message: m[3].slice(0, 500) });
     }
   }
-  // correlação: erro menciona um exe que está rodando? anexa COMO ele foi lançado (comando)
+  // correlação: liga o erro ao programa (exe citado, caminho completo ou a própria origem)
+  // e anexa COMO ele foi lançado (linha de comando do histórico de processos)
   for (const e of entries) {
-    const m = String(e.message || '').match(/([\w.-]+\.exe)/i);
-    const key = m && m[1] ? m[1].toLowerCase() : null;
-    if (key && procSnapshot.has(key)) e.launch = procSnapshot.get(key);
+    const msg = String(e.message || '');
+    const pathM = msg.match(/([A-Za-z]:\\[^,;"']+\.exe)/i); // caminho completo (ex.: eventos 1000 de crash)
+    if (pathM) e.appPath = pathM[1];
+    const exeM = msg.match(/([\w .-]+?\.exe)/i);
+    const keys = [exeM && exeM[1] ? exeM[1].trim() : null, pathM ? path.basename(pathM[1]) : null, e.source].filter(Boolean);
+    for (const k of keys) {
+      const launch = procLaunchOf(k);
+      if (launch) {
+        e.launch = launch;
+        break;
+      }
+    }
   }
   return { entries: entries.slice(0, 60) };
 }
-let sentinelSeen = new Set(); // assinaturas já tratadas (não re-alertar/re-corrigir o mesmo erro)
+let sentinelSeen = new Set(); // assinaturas já tratadas (não re-alertar/re-perguntar o mesmo erro)
+let sentinelAsking = false; // no máx. 1 card de confirmação pendente por vez
+let sentinelQueued = null; // investigação aprovada esperando o agente ficar livre
+function sentinelBrief(list) {
+  return list
+    .slice(0, 2)
+    .map((e) => '[' + (e.time || '') + ' ' + (e.source || '') + (e.id ? '#' + e.id : '') + '] ' + compactText(e.message, 450) + (e.appPath ? '\n(app: ' + e.appPath + ')' : '') + (e.launch ? '\n(lançado com: ' + e.launch + ')' : ''))
+    .join('\n\n');
+}
 async function logSentinelSweep() {
   const cfg = loadConfig();
   if (cfg.logSentinel !== 'notify' && cfg.logSentinel !== 'fix') return;
   try {
-    await refreshProcessSnapshot(); // atualiza "quem está rodando + comando de lançamento"
+    await refreshProcessSnapshot(); // atualiza o histórico "programa → como foi lançado"
     const { entries } = await readSystemLogs(35, 'error');
     const fresh = entries.filter((e) => {
       const k = (e.source || '') + '|' + (e.id || '') + '|' + String(e.message || '').slice(0, 100);
@@ -11113,20 +11143,50 @@ async function logSentinelSweep() {
     const wsName = ws ? path.basename(ws).toLowerCase() : '';
     const related = wsName
       ? fresh.filter((e) => {
-          const m = (String(e.message || '') + ' ' + String(e.launch || '')).toLowerCase();
+          const m = (String(e.message || '') + ' ' + String(e.launch || '') + ' ' + String(e.appPath || '')).toLowerCase();
           return m.includes(wsName) || (ws && m.includes(ws.toLowerCase().replace(/\\/g, '/')));
         })
       : [];
-    const top = fresh.slice(0, 3).map((e) => (e.source || '?') + ': ' + compactText(e.message, 110)).join(' · ');
+    // TRIAGEM por IA (modelo de tarefa, best-effort): o que houve, dá pra evitar, é do projeto?
+    let triage = '';
+    try {
+      const t = await llmComplete(cfg, [
+        {
+          role: 'system',
+          content:
+            'Você triageia erros do sistema operacional pro usuário em 1-2 frases diretas (português): o que aconteceu, se é grave/ignorável, e se dá pra PREVENIR algo. Sem tecniquês desnecessário, sem markdown.',
+        },
+        { role: 'user', content: fresh.slice(0, 5).map((e) => (e.source || '?') + ': ' + compactText(e.message, 220) + (e.launch ? ' (lançado: ' + compactText(e.launch, 100) + ')' : '')).join('\n') },
+      ]);
+      triage = String(t || '').trim().slice(0, 380);
+    } catch (e) {
+      triage = fresh.slice(0, 3).map((e) => (e.source || '?') + ': ' + compactText(e.message, 110)).join(' · ');
+    }
     broadcast('chat:note', {
-      text: '🛡️ Sentinela: ' + fresh.length + ' erro(s) novo(s) no sistema' + (related.length ? ' — ' + related.length + ' parece(m) do SEU projeto' : '') + '. ' + top + (related.length && cfg.logSentinel !== 'fix' ? ' (peça "investiga isso" ou ligue o modo corrigir)' : ''),
+      text: '🛡️ Sentinela: ' + fresh.length + ' erro(s) novo(s) no sistema' + (related.length ? ' — ' + related.length + ' parece(m) do SEU projeto' : '') + '. ' + triage,
     });
-    // modo FIX: erro do projeto → dispara a investigação sozinha (1 por varredura; nunca re-dispara o mesmo erro)
-    if (cfg.logSentinel === 'fix' && related.length && !agentRunning) {
-      const brief = related.slice(0, 2).map((e) => '[' + (e.time || '') + ' ' + (e.source || '') + (e.id ? '#' + e.id : '') + '] ' + compactText(e.message, 450) + (e.launch ? '\n(processo lançado com: ' + e.launch + ')' : '')).join('\n\n');
-      ipcMain.emit('chat:send', { sender: { id: -9, send: () => {} } }, {
-        text: '[🛡️ sentinela de logs — automático] O sistema registrou erro(s) que parecem relacionados ao projeto atual:\n\n' + brief + '\n\nInvestigue a causa NO PROJETO e corrija se aplicável (system_logs/locate_stack/get_problems ajudam). Se concluir que NÃO é do projeto, explique em 1-2 linhas e pare.',
-      });
+    // modo FIX: erro do projeto → CARD com botão. NUNCA age sem o "sim" do usuário.
+    if (cfg.logSentinel === 'fix' && related.length && !sentinelAsking) {
+      sentinelAsking = true;
+      const brief = sentinelBrief(related);
+      askUserInChat('🛡️ Sentinela: erro(s) do sistema que parecem do SEU projeto:\n\n' + brief + '\n\nQuer que eu investigue e corrija?', ['🔍 Investigar e corrigir agora', 'Ignorar'], {
+        timeoutMs: 15 * 60000,
+        fallback: 'Ignorar',
+      })
+        .then((answer) => {
+          sentinelAsking = false;
+          if (!/investigar/i.test(String(answer || ''))) return; // só age com o SIM explícito
+          const msg = {
+            text:
+              '[🛡️ sentinela — APROVADO pelo usuário] Investigue estes erros do sistema relacionados ao projeto:\n\n' + brief +
+              '\n\nAche a causa NO PROJETO e corrija se aplicável (system_logs/locate_stack/get_problems ajudam). Se concluir que NÃO é do projeto, explique em 1-2 linhas e pare.',
+          };
+          if (agentRunning) sentinelQueued = msg; // espera o turno atual acabar (dispatcher abaixo)
+          else ipcMain.emit('chat:send', { sender: { id: -9, send: () => {} } }, msg);
+        })
+        .catch(() => {
+          sentinelAsking = false;
+        });
     }
   } catch (e) {
     logd('logSentinel', String((e && e.message) || e));
@@ -11134,6 +11194,14 @@ async function logSentinelSweep() {
 }
 setInterval(logSentinelSweep, 30 * 60 * 1000); // varre a cada 30 min (no-op quando desligada)
 setTimeout(logSentinelSweep, 4 * 60 * 1000); // primeira varredura ~4 min após abrir (pega o que aconteceu antes)
+// investigação aprovada com agente ocupado → dispara assim que ele liberar
+setInterval(() => {
+  if (sentinelQueued && !agentRunning) {
+    const msg = sentinelQueued;
+    sentinelQueued = null;
+    ipcMain.emit('chat:send', { sender: { id: -9, send: () => {} } }, msg);
+  }
+}, 60 * 1000);
 
 // loop do companheirismo (1x/min)
 setInterval(async () => {
