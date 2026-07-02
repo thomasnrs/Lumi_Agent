@@ -1537,19 +1537,33 @@
 
       // auto-refresh: o main avisa quando arquivos mudam (cria/edita/apaga, inclusive a Lumi)
       let refreshTimer = null;
+      let refreshPending = false;
+      function doWorkspaceRefresh() {
+        loadTree();
+        if (sideMode === 'git') loadGitPanel(); // painel git acompanha as mudanças
+        // abas: a ativa recarrega na hora (se você não tiver edição pendente); as outras
+        // ficam marcadas e recarregam quando você clicar nelas
+        openTabs.forEach((t) => (t.stale = true));
+        const cur = active && findTab(active);
+        if (cur) refreshTab(cur);
+        updateGitGutter();
+      }
       window.api.onWorkspaceChanged(() => {
         if (document.querySelector('.modal')) return; // não atrapalha criação/rename em andamento
+        // janela em BACKGROUND: adia (a IA editando N arquivos disparava N walks da árvore
+        // sem ninguém olhando — em remoto isso é rede). Refaz UMA vez ao voltar o foco.
+        if (document.hidden) {
+          refreshPending = true;
+          return;
+        }
         clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(() => {
-          loadTree();
-          if (sideMode === 'git') loadGitPanel(); // painel git acompanha as mudanças
-          // abas: a ativa recarrega na hora (se você não tiver edição pendente); as outras
-          // ficam marcadas e recarregam quando você clicar nelas
-          openTabs.forEach((t) => (t.stale = true));
-          const cur = active && findTab(active);
-          if (cur) refreshTab(cur);
-          updateGitGutter();
-        }, 150);
+        refreshTimer = setTimeout(doWorkspaceRefresh, 150);
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && refreshPending) {
+          refreshPending = false;
+          doWorkspaceRefresh();
+        }
       });
 
       // ============================================================

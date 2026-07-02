@@ -2924,22 +2924,38 @@ function htmlToText(html) {
 function lineDiff(oldStr, newStr) {
   const a = (oldStr || '').split('\n');
   const b = (newStr || '').split('\n');
-  const m = a.length;
-  const n = b.length;
+  // PODA de prefixo/sufixo comuns ANTES do LCS: a edição típica muda uma região pequena —
+  // sem isso, editar um arquivo de 3000 linhas alocava uma matriz 3000×3000 (~9M células)
+  // A CADA edição (GC + dezenas de ms). Com a poda, o LCS roda só na janela alterada.
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > pre && endB > pre && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const m = endA - pre;
+  const n = endB - pre;
   const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
   for (let i = m - 1; i >= 0; i--)
     for (let j = n - 1; j >= 0; j--)
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      dp[i][j] = a[pre + i] === b[pre + j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
   const out = [];
+  for (let k = 0; k < pre; k++) out.push({ t: ' ', v: a[k], j: k }); // prefixo comum (contexto)
   let i = 0;
   let j = 0;
   while (i < m && j < n) {
-    if (a[i] === b[j]) out.push({ t: ' ', v: a[i++], j: j++ });
-    else if (dp[i + 1][j] >= dp[i][j + 1]) out.push({ t: '-', v: a[i++] });
-    else out.push({ t: '+', v: b[j++] });
+    if (a[pre + i] === b[pre + j]) {
+      out.push({ t: ' ', v: a[pre + i], j: pre + j });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) out.push({ t: '-', v: a[pre + i++] });
+    else out.push({ t: '+', v: b[pre + j++] });
   }
-  while (i < m) out.push({ t: '-', v: a[i++] });
-  while (j < n) out.push({ t: '+', v: b[j++] });
+  while (i < m) out.push({ t: '-', v: a[pre + i++] });
+  while (j < n) out.push({ t: '+', v: b[pre + j++] });
+  for (let k = endB; k < b.length; k++) out.push({ t: ' ', v: b[k], j: k }); // sufixo comum (contexto)
   return out;
 }
 function broadcastDiff(relPath, oldC, newC) {
@@ -2989,6 +3005,20 @@ let termSeq = 0;
 
 // Dual-mode: PTY real (node-pty) quando compilado pro Electron; senão PIPE (spawn) —
 // funciona em qualquer máquina (sem toolchain), só perde interatividade/cores ricas.
+// batch da saída dos terminais (~16ms): coalesce de chunks antes do IPC — imperceptível
+// no eco de digitação, e corta drasticamente o custo em builds com saída pesada
+const termBatch = new Map(); // id -> texto acumulado
+let termFlushTimer = null;
+function flushTermBatch() {
+  if (termFlushTimer) {
+    clearTimeout(termFlushTimer);
+    termFlushTimer = null;
+  }
+  if (!termBatch.size) return;
+  for (const [id, data] of termBatch) sendToAll('term:data', { id, data });
+  termBatch.clear();
+}
+
 function createTerminal(opts) {
   const o = opts || {};
   // perfil customizado (WSL, CMD, Git Bash, SSH, docker logs/exec...) ou o shell padrão
@@ -3001,9 +3031,13 @@ function createTerminal(opts) {
   const rec = { p: null, pty: false, title, buf: '', ai: !!o.ai }; // ai = aberto pela Lumi (política de limpeza)
   const push = (d) => {
     rec.buf = (rec.buf + d).slice(-200000); // final do scrollback (replay da UI + leitura da IA)
-    broadcast('term:data', { id, data: d });
+    // BATCH 16ms: build despejando MB/s virava um IPC por chunk × janelas × frames — e cada
+    // broadcast ainda descarregava o batch de tokens do chat. Junta e envia direto (sendToAll).
+    termBatch.set(id, (termBatch.get(id) || '') + d);
+    if (!termFlushTimer) termFlushTimer = setTimeout(flushTermBatch, 16);
   };
   const onExit = (code) => {
+    flushTermBatch(); // entrega o resto da saída ANTES do exit (ordem preservada)
     broadcast('term:exit', { id, exitCode: code });
     terminals.delete(id);
   };
