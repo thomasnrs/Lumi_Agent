@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tarefas agendadas</title>
+    <style>
+      :root {
+        --bg: #16161e; --surface: #24242f; --surface-2: #0f0f16;
+        --accent: #7aa2ff; --accent-text: #fff; --text: #eee; --border: #2a2a38;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; height: 100%; font-family: "Segoe UI", sans-serif;
+        background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+      }
+      .scroll { flex: 1; overflow-y: auto; padding: 16px; }
+      h1 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+      h1 svg { width: 18px; height: 18px; color: var(--accent); }
+      .sub { font-size: 12px; color: #8a8a99; margin-bottom: 14px; line-height: 1.5; }
+      /* formulário */
+      #form {
+        background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+        padding: 12px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px;
+      }
+      #form label { font-size: 11px; color: #8a8a99; text-transform: uppercase; letter-spacing: 0.3px; }
+      #form input[type="text"], #form textarea, #form select, #form input[type="time"], #form input[type="number"] {
+        background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+        padding: 8px 10px; font-size: 13px; font-family: inherit; outline: none; width: 100%;
+      }
+      #form textarea { min-height: 72px; resize: vertical; line-height: 1.5; }
+      #form input:focus, #form textarea:focus, #form select:focus { border-color: var(--accent); }
+      .schedrow { display: flex; gap: 8px; align-items: center; }
+      .schedrow > * { width: auto !important; flex: 1; }
+      #btnRow { display: flex; gap: 8px; margin-top: 2px; }
+      #saveBtn {
+        border: none; background: var(--accent); color: var(--accent-text); border-radius: 8px;
+        padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+      }
+      #cancelBtn {
+        border: 1px solid var(--border); background: transparent; color: #9aa; border-radius: 8px;
+        padding: 9px 14px; font-size: 12.5px; cursor: pointer;
+      }
+      #cancelBtn:hover { color: var(--text); }
+      /* cards de tarefa */
+      .task {
+        background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+        padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start;
+      }
+      .task.off { opacity: 0.55; }
+      .task .col { flex: 1; min-width: 0; cursor: pointer; }
+      .task .nm { font-size: 13.5px; font-weight: 600; margin-bottom: 2px; }
+      .task .sc { font-size: 11.5px; color: var(--accent); }
+      .task .pv { font-size: 12px; color: #99a; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .task .dt { font-size: 10.5px; color: #667; margin-top: 4px; }
+      .task .acts { display: flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+      .task .acts button {
+        width: 28px; height: 28px; border: none; border-radius: 7px; cursor: pointer;
+        background: transparent; color: #9aa; display: flex; align-items: center; justify-content: center;
+      }
+      .task .acts button svg { width: 15px; height: 15px; }
+      .task .acts button:hover { background: var(--border); color: var(--text); }
+      .task .acts button.del:hover { background: #3a2030; color: #ff9b9b; }
+      .task .acts button.run:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+      /* toggle liga/desliga */
+      .tgl { position: relative; width: 34px; height: 19px; flex: 0 0 auto; cursor: pointer; }
+      .tgl input { display: none; }
+      .tgl span {
+        position: absolute; inset: 0; background: var(--border); border-radius: 12px; transition: background 0.15s;
+      }
+      .tgl span::after {
+        content: ''; position: absolute; width: 13px; height: 13px; border-radius: 50%; background: #99a;
+        top: 3px; left: 3px; transition: left 0.15s, background 0.15s;
+      }
+      .tgl input:checked + span { background: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+      .tgl input:checked + span::after { left: 18px; background: #fff; }
+      #empty { text-align: center; color: #667; font-size: 13px; padding: 26px 10px; line-height: 1.6; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-thumb { background: #33333f; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="scroll">
+      <h1>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Tarefas agendadas
+      </h1>
+      <div class="sub">
+        A Lumi roda o prompt sozinha no horário, numa conversa própria ("⏰ nome" na lista de conversas) — com todas as permissões e
+        guardrails de sempre. Você também pode pedir no chat: <i>"todo dia às 9h, rode os testes e me conte"</i>.
+      </div>
+
+      <div id="form">
+        <label>Nome</label>
+        <input id="fName" type="text" placeholder="ex.: Checar os testes de manhã" maxlength="60" />
+        <label>O que fazer (prompt)</label>
+        <textarea id="fPrompt" placeholder="ex.: Rode os testes do projeto (run_tests) e me diga em 2 linhas se algo quebrou e o quê."></textarea>
+        <label>Quando</label>
+        <div class="schedrow">
+          <select id="fSched">
+            <option value="daily">Diariamente às…</option>
+            <option value="weekly">Semanalmente…</option>
+            <option value="interval">A cada N minutos…</option>
+          </select>
+          <select id="fDow" hidden>
+            <option value="1">segunda</option><option value="2">terça</option><option value="3">quarta</option>
+            <option value="4">quinta</option><option value="5">sexta</option><option value="6">sábado</option><option value="0">domingo</option>
+          </select>
+          <input id="fTime" type="time" value="09:00" />
+          <input id="fMin" type="number" min="5" step="5" value="60" hidden title="a cada N minutos (mínimo 5)" />
+        </div>
+        <div id="btnRow">
+          <button id="saveBtn">Salvar tarefa</button>
+          <button id="cancelBtn" hidden>Cancelar edição</button>
+        </div>
+      </div>
+
+      <div id="list"></div>
+      <div id="empty" hidden>Nenhuma tarefa ainda.<br />Crie a primeira acima — ou peça pra Lumi no chat. ⏰</div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const DOWS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+      let editingId = null;
+
+      function schedLabel(t) {
+        if (t.schedule === 'interval') return 'a cada ' + (t.everyMin || 60) + ' min';
+        if (t.schedule === 'weekly') return DOWS[t.dow || 0] + ' às ' + (t.time || '09:00');
+        return 'todo dia às ' + (t.time || '09:00');
+      }
+      function fmt(ms) {
+        if (!ms) return '—';
+        const d = new Date(ms);
+        return d.toLocaleDateString() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      }
+
+      $('fSched').addEventListener('change', () => {
+        const v = $('fSched').value;
+        $('fDow').hidden = v !== 'weekly';
+        $('fTime').hidden = v === 'interval';
+        $('fMin').hidden = v !== 'interval';
+      });
+
+      function fillForm(t) {
+        editingId = t ? t.id : null;
+        $('fName').value = t ? t.name || '' : '';
+        $('fPrompt').value = t ? t.prompt || '' : '';
+        $('fSched').value = t ? t.schedule : 'daily';
+        $('fDow').value = String(t && t.dow != null ? t.dow : 1);
+        $('fTime').value = (t && t.time) || '09:00';
+        $('fMin').value = String((t && t.everyMin) || 60);
+        $('fSched').dispatchEvent(new Event('change'));
+        $('saveBtn').textContent = t ? 'Salvar alterações' : 'Salvar tarefa';
+        $('cancelBtn').hidden = !t;
+      }
+      $('cancelBtn').onclick = () => fillForm(null);
+
+      $('saveBtn').onclick = async () => {
+        const t = {
+          id: editingId || undefined,
+          name: $('fName').value.trim() || 'Tarefa',
+          prompt: $('fPrompt').value.trim(),
+          schedule: $('fSched').value,
+          time: $('fTime').value || '09:00',
+          dow: parseInt($('fDow').value, 10) || 0,
+          everyMin: Math.max(5, parseInt($('fMin').value, 10) || 60),
+          enabled: true,
+        };
+        if (!t.prompt) return alert('Escreva o que a Lumi deve fazer.');
+        const r = await window.api.tasksSave(t);
+        if (r && r.error) return alert(r.error);
+        fillForm(null);
+        render();
+      };
+
+      async function render() {
+        const tasks = (await window.api.tasksList()) || [];
+        const list = $('list');
+        list.innerHTML = '';
+        $('empty').hidden = tasks.length > 0;
+        tasks.forEach((t) => {
+          const el = document.createElement('div');
+          el.className = 'task' + (t.enabled ? '' : ' off');
+          const col = document.createElement('div');
+          col.className = 'col';
+          col.title = 'Clique para editar';
+          col.innerHTML =
+            '<div class="nm"></div><div class="sc"></div><div class="pv"></div>' +
+            '<div class="dt">última: ' + fmt(t.lastRun) + '  ·  próxima: ' + (t.enabled ? fmt(t.nextRun) : 'desligada') + '</div>';
+          col.querySelector('.nm').textContent = '⏰ ' + (t.name || t.id);
+          col.querySelector('.sc').textContent = schedLabel(t) + (t.createdBy === 'lumi' ? '  ·  criada pela Lumi' : '');
+          col.querySelector('.pv').textContent = t.prompt || '';
+          col.onclick = () => fillForm(t);
+
+          const tgl = document.createElement('label');
+          tgl.className = 'tgl';
+          tgl.title = t.enabled ? 'Desligar' : 'Ligar';
+          tgl.innerHTML = '<input type="checkbox"' + (t.enabled ? ' checked' : '') + ' /><span></span>';
+          tgl.querySelector('input').onchange = async (e) => {
+            await window.api.tasksSave({ id: t.id, enabled: e.target.checked });
+            render();
+          };
+
+          const acts = document.createElement('div');
+          acts.className = 'acts';
+          const run = document.createElement('button');
+          run.className = 'run';
+          run.title = 'Rodar agora';
+          run.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
+          run.onclick = async () => {
+            await window.api.tasksRunNow(t.id);
+            run.style.color = 'var(--accent)';
+            setTimeout(() => (run.style.color = ''), 1200);
+          };
+          const del = document.createElement('button');
+          del.className = 'del';
+          del.title = 'Excluir tarefa';
+          del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+          del.onclick = async () => {
+            if (!confirm('Excluir a tarefa "' + (t.name || t.id) + '"?')) return;
+            await window.api.tasksDelete(t.id);
+            render();
+          };
+          acts.appendChild(tgl);
+          acts.appendChild(run);
+          acts.appendChild(del);
+
+          el.appendChild(col);
+          el.appendChild(acts);
+          list.appendChild(el);
+        });
+      }
+      fillForm(null);
+      render();
+      setInterval(() => {
+        if (!document.hidden) render(); // atualiza "última/próxima" de tempos em tempos
+      }, 30000);
+    </script>
+  </body>
+</html>

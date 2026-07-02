@@ -5436,6 +5436,53 @@ const TOOLS = {
       }
     },
   },
+  schedule_task: {
+    category: 'exec',
+    summary: (a) => 'agendar tarefa recorrente: "' + ((a && a.name) || '') + '"',
+    schema: {
+      name: 'schedule_task',
+      description:
+        'Agenda uma TAREFA RECORRENTE: no horário, você roda o prompt como um turno completo (com ferramentas), numa conversa própria "⏰ nome". Use quando o usuário pedir algo periódico ("todo dia às 9h...", "a cada 2 horas..."). schedule: "interval" (everyMin, mín 5) | "daily" (time HH:MM) | "weekly" (time + dow 0-6, domingo=0).',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'nome curto da tarefa' },
+          prompt: { type: 'string', description: 'o que fazer em cada execução (seja específica)' },
+          schedule: { type: 'string', description: 'interval | daily | weekly' },
+          time: { type: 'string', description: 'HH:MM (daily/weekly)' },
+          dow: { type: 'number', description: 'dia da semana 0-6 (weekly, domingo=0)' },
+          everyMin: { type: 'number', description: 'a cada N minutos (interval, mín 5)' },
+        },
+        required: ['name', 'prompt', 'schedule'],
+      },
+    },
+    run: async ({ name, prompt, schedule, time, dow, everyMin }) => {
+      if (!['interval', 'daily', 'weekly'].includes(schedule)) return { error: 'schedule deve ser interval, daily ou weekly' };
+      const t = { id: 'tk' + ++taskSeq, name: String(name || '').slice(0, 60), prompt: String(prompt || '').slice(0, 4000), schedule, time: time || '09:00', dow: dow || 0, everyMin: everyMin || 60, enabled: true, createdBy: 'lumi' };
+      t.nextRun = taskNextRun(t, Date.now());
+      schedTasks.push(t);
+      saveTasks();
+      return { ok: true, id: t.id, next: new Date(t.nextRun).toLocaleString(), note: 'tarefa criada — o usuário gerencia em menu → Tarefas agendadas' };
+    },
+  },
+  list_scheduled_tasks: {
+    category: null,
+    schema: { name: 'list_scheduled_tasks', description: 'Lista as tarefas agendadas (nome, agenda, próxima execução, ativa?).', parameters: { type: 'object', properties: {} } },
+    run: async () => ({
+      tasks: schedTasks.map((t) => ({ id: t.id, name: t.name, schedule: t.schedule, time: t.time, everyMin: t.everyMin, enabled: !!t.enabled, next: t.nextRun ? new Date(t.nextRun).toLocaleString() : null })),
+    }),
+  },
+  cancel_scheduled_task: {
+    category: 'exec',
+    summary: (a) => 'cancelar a tarefa agendada ' + ((a && a.id) || ''),
+    schema: { name: 'cancel_scheduled_task', description: 'Cancela (remove) uma tarefa agendada pelo id (veja list_scheduled_tasks).', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+    run: async ({ id }) => {
+      const before = schedTasks.length;
+      schedTasks = schedTasks.filter((t) => t.id !== id);
+      saveTasks();
+      return before === schedTasks.length ? { error: 'tarefa não encontrada: ' + id } : { ok: true };
+    },
+  },
   write_file: {
     category: 'write',
     summary: (a) => `criar/sobrescrever "${a.path}"`,
@@ -7332,6 +7379,8 @@ function listChats() {
         updatedAt: j.updatedAt || j.at || '',
         count: hist.length,
         current: id === currentChatId,
+        // turno rodando nesta conversa (em paralelo ou no primeiro plano) → bolinha na lista
+        running: (sessions.has(id) && sessions.get(id).running) || (id === currentChatId && fgSession.running),
       });
     } catch (e) {
       /* ignora arquivo corrompido */
@@ -7911,6 +7960,7 @@ function createTray() {
       { label: 'Agentes (multi-agente)', click: () => openPage('agents', 'agents.html', 'Agentes', 620, 680) },
       { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
       { label: 'Memória da Lumi', click: () => openPage('memory', 'memory.html', 'Memória', 540, 640) },
+    { label: '⏰ Tarefas agendadas', click: () => openPage('tasks', 'tasks.html', 'Tarefas agendadas', 600, 680) },
       { label: 'Assistente de configuração', click: () => openPage('wizard', 'wizard.html', 'Bem-vindo', 640, 700) },
       { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
       { label: 'Personagem', submenu: vrmMenuItems() },
@@ -8212,6 +8262,7 @@ function ctxTemplate() {
     { label: 'Agentes (multi-agente)', click: () => openPage('agents', 'agents.html', 'Agentes', 620, 680) },
     { label: 'Galeria', click: () => openPage('gallery', 'gallery.html', 'Galeria', 540, 560) },
     { label: 'Memória da Lumi', click: () => openPage('memory', 'memory.html', 'Memória', 540, 640) },
+    { label: '⏰ Tarefas agendadas', click: () => openPage('tasks', 'tasks.html', 'Tarefas agendadas', 600, 680) },
     { label: 'Assistente de configuração', click: () => openPage('wizard', 'wizard.html', 'Bem-vindo', 640, 700) },
     { label: 'Animações (testar)', click: () => openPage('anims', 'animations.html', 'Animações', 360, 500) },
     { label: 'Personagem', submenu: vrmMenuItems() },
@@ -11560,6 +11611,125 @@ function fmtHour(ms) {
   const d = new Date(ms);
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
+
+// ============================================================
+//  ⏰ TAREFAS AGENDADAS (cron da Lumi): prompts que RODAM sozinhos no horário.
+//  Cada tarefa tem a PRÓPRIA conversa ("⏰ nome" na lista — não polui seu chat)
+//  e roda como turno normal: TODAS as permissões/guardrails valem igual.
+// ============================================================
+function tasksPath() {
+  return path.join(app.getPath('userData'), 'tasks.json');
+}
+let schedTasks = [];
+let taskSeq = 0;
+function loadTasks() {
+  try {
+    schedTasks = JSON.parse(fs.readFileSync(tasksPath(), 'utf8')) || [];
+    taskSeq = schedTasks.reduce((m, t) => Math.max(m, parseInt(String(t.id).slice(2), 10) || 0), 0);
+  } catch (e) {
+    schedTasks = [];
+  }
+}
+function saveTasks() {
+  try {
+    fs.writeFileSync(tasksPath(), JSON.stringify(schedTasks, null, 2));
+  } catch (e) {
+    /* ok */
+  }
+}
+// calcula a próxima execução (interval usa o lastRun; daily/weekly usam HH:MM local)
+function taskNextRun(t, fromMs) {
+  const from = fromMs || Date.now();
+  if (t.schedule === 'interval') {
+    const min = Math.max(5, parseInt(t.everyMin, 10) || 60);
+    return (t.lastRun || from) + min * 60000;
+  }
+  const parts = String(t.time || '09:00').split(':');
+  const hh = parseInt(parts[0], 10) || 0;
+  const mm = parseInt(parts[1], 10) || 0;
+  const d = new Date(from);
+  const next = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hh, mm, 0, 0);
+  if (t.schedule === 'weekly') {
+    const dow = Math.min(6, Math.max(0, parseInt(t.dow, 10) || 0));
+    while (next.getDay() !== dow || next.getTime() <= from) next.setDate(next.getDate() + 1);
+    return next.getTime();
+  }
+  if (next.getTime() <= from) next.setDate(next.getDate() + 1); // daily
+  return next.getTime();
+}
+async function runScheduledTask(t) {
+  // conversa própria da tarefa (criada na 1ª execução; fica na lista como "⏰ nome")
+  if (!t.chatId) {
+    t.chatId = genChatId();
+    try {
+      fs.writeFileSync(
+        chatFile(t.chatId),
+        JSON.stringify({ id: t.chatId, title: '⏰ ' + (t.name || 'Tarefa'), customTitle: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [] })
+      );
+    } catch (e) {
+      /* ok */
+    }
+    saveTasks();
+  }
+  const sess = getSession(t.chatId);
+  if (sess.running) return false; // execução anterior ainda rodando — pula este disparo
+  broadcast('chat:note', { text: '⏰ Rodando a tarefa agendada "' + (t.name || t.id) + '"…' });
+  try {
+    await sessionALS.run(sess, () =>
+      handleChatSend({ sender: { id: -7, send: () => {} } }, { text: '[tarefa agendada "' + (t.name || '') + '" — ' + new Date().toLocaleString() + ']\n' + t.prompt })
+    );
+    const last = [...sess.history].reverse().find((m) => m.role === 'assistant');
+    const summary = compactText(typeof (last && last.content) === 'string' ? last.content : '', 150);
+    broadcast('chat:note', { text: '⏰ "' + (t.name || t.id) + '" concluída' + (summary ? ' — ' + summary : '') + '  (conversa ⏰ na lista)' });
+    broadcast('tool:animation', 'happy');
+  } catch (e) {
+    broadcast('chat:note', { text: '⚠ tarefa "' + (t.name || t.id) + '" falhou: ' + String((e && e.message) || e).slice(0, 140) });
+  }
+  return true;
+}
+// relógio das tarefas: checa a cada 30s; atrasadas (app fechado na hora) rodam 1x ao abrir
+setInterval(() => {
+  const now = Date.now();
+  for (const t of schedTasks) {
+    if (!t.enabled || !t.prompt) continue;
+    if (!t.nextRun) {
+      t.nextRun = taskNextRun(t, now);
+      saveTasks();
+      continue;
+    }
+    if (t.nextRun <= now) {
+      t.lastRun = now;
+      t.nextRun = taskNextRun(t, now + 1000);
+      saveTasks();
+      runScheduledTask(t); // async — não segura o tick
+    }
+  }
+}, 30000);
+loadTasks();
+
+ipcMain.handle('tasks:list', () => schedTasks.map((t) => ({ ...t })));
+ipcMain.handle('tasks:save', (_e, task) => {
+  const t = task || {};
+  if (!t.prompt || !String(t.prompt).trim()) return { error: 'a tarefa precisa de um prompt' };
+  if (!t.id) t.id = 'tk' + ++taskSeq;
+  const i = schedTasks.findIndex((x) => x.id === t.id);
+  const merged = { ...(i >= 0 ? schedTasks[i] : {}), ...t };
+  merged.nextRun = merged.enabled ? taskNextRun(merged, Date.now()) : 0;
+  if (i >= 0) schedTasks[i] = merged;
+  else schedTasks.push(merged);
+  saveTasks();
+  return { ok: true, id: merged.id, nextRun: merged.nextRun };
+});
+ipcMain.handle('tasks:delete', (_e, id) => {
+  schedTasks = schedTasks.filter((t) => t.id !== id);
+  saveTasks();
+  return true;
+});
+ipcMain.handle('tasks:run-now', (_e, id) => {
+  const t = schedTasks.find((x) => x.id === id);
+  if (t) runScheduledTask(t);
+  return !!t;
+});
 
 // vigia do servidor remoto (opt-in): a cada ~5min checa disco e serviços caídos do host
 // montado e a Lumi AVISA (sem virar spam — só quando algo novo fica crítico)

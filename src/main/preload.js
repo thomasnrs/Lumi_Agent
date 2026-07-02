@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('api', {
   wsBind: (folder) => ipcRenderer.invoke('ws:bind', folder), // prende a janela do editor a uma pasta
   openWorkspaceWindow: () => ipcRenderer.invoke('workspace:open-window'), // escolhe pasta e abre em nova janela
   diagCheck: () => ipcRenderer.invoke('diag:check'), // roda o linter/type-checker → problemas do projeto
+  tasksList: () => ipcRenderer.invoke('tasks:list'), // ⏰ tarefas agendadas (cron da Lumi)
+  tasksSave: (t) => ipcRenderer.invoke('tasks:save', t),
+  tasksDelete: (id) => ipcRenderer.invoke('tasks:delete', id),
+  tasksRunNow: (id) => ipcRenderer.invoke('tasks:run-now', id),
   getWorkspaceChildren: (rel) => ipcRenderer.invoke('workspace:children', rel),
   readWorkspaceFile: (rel) => ipcRenderer.invoke('workspace:read', rel),
   readWorkspaceImage: (rel) => ipcRenderer.invoke('workspace:read-image', rel),

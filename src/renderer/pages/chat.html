@@ -897,6 +897,13 @@
         text-overflow: ellipsis;
         color: var(--text);
       }
+      /* bolinha "trabalhando" nas conversas com turno rodando (paralelismo) */
+      .citem .crun {
+        display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+        background: var(--accent); margin-right: 6px; vertical-align: 1px;
+        animation: crunpulse 1.1s ease-in-out infinite;
+      }
+      @keyframes crunpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
       .citem .ctm {
         font-size: 10px;
         color: #778;
@@ -1855,6 +1862,9 @@
         env_info: 'checando o ambiente',
         db_schema: 'lendo o schema do banco',
         db_query: 'consultando o banco',
+        schedule_task: 'agendando uma tarefa ⏰',
+        list_scheduled_tasks: 'vendo as tarefas agendadas',
+        cancel_scheduled_task: 'cancelando uma tarefa',
         append_file: 'editando arquivo',
         make_dir: 'criando pasta',
         delete_file: 'apagando arquivo',
@@ -2170,9 +2180,16 @@
           const tt = document.createElement('div');
           tt.className = 'ctt';
           tt.textContent = c.title || 'Conversa';
+          if (c.running) {
+            // turno rodando nesta conversa (paralelo ou atual) → bolinha pulsando
+            const dot = document.createElement('span');
+            dot.className = 'crun';
+            dot.title = 'A Lumi está trabalhando nesta conversa';
+            tt.prepend(dot);
+          }
           const tm = document.createElement('div');
           tm.className = 'ctm';
-          tm.textContent = (c.count || 0) + ' msgs';
+          tm.textContent = (c.count || 0) + ' msgs' + (c.running ? '  ·  trabalhando…' : '');
           t.appendChild(tt);
           t.appendChild(tm);
           t.addEventListener('click', () => {
