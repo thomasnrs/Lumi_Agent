@@ -552,6 +552,21 @@
       #restRes pre { margin: 0; font: 11.5px/1.5 Consolas, monospace; white-space: pre-wrap; word-break: break-word; color: var(--text); }
       #restRes .rhdr { font-size: 10.5px; color: #889; white-space: pre-wrap; margin-bottom: 8px; border-bottom: 1px dashed var(--border); padding-bottom: 6px; }
       #restRes .restmsg { color: #889; font-size: 12px; padding: 14px; }
+      /* ---- aba PROBLEMAS ---- */
+      #problemsBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
+      #probBar { display: flex; gap: 10px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+      #probCheck { border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-text); flex: 0 0 auto; }
+      #probCheck:disabled { opacity: 0.6; cursor: default; }
+      .probsum { font-size: 12px; color: #9aa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #probList { flex: 1; overflow: auto; padding: 4px 0; }
+      .probempty { padding: 18px; text-align: center; color: #778; font-size: 12.5px; }
+      .probrow { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+      .probrow:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+      .probrow .pdot { flex: 0 0 auto; font-size: 11px; }
+      .probrow .ploc { flex: 0 0 auto; color: var(--accent); font-family: Consolas, monospace; }
+      .probrow .pmsg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+      .probrow.pwarn .pmsg { color: #c9b89a; }
+      .probbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; padding: 0 4px; margin-left: 5px; border-radius: 8px; background: #e0564f; color: #fff; font-size: 9.5px; font-weight: 700; vertical-align: 1px; }
       /* ---- aba BANCO ---- */
       #dbBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
       #dbConnRow { display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
@@ -747,6 +762,7 @@
             <span class="ptab" data-tab="db">BANCO</span>
             <span class="ptab" data-tab="server">SERVIDOR</span>
             <span class="ptab" data-tab="rest">REST</span>
+            <span class="ptab" data-tab="problems">PROBLEMAS<span id="probBadge" class="probbadge" hidden></span></span>
             <span class="pgrow"></span>
             <select id="termSel" title="Terminais abertos"></select>
             <button class="pbtn" id="termNew" title="Novo terminal (PowerShell)">＋</button>
@@ -788,6 +804,13 @@
               </div>
               <div id="restRes"><div class="restmsg">a resposta aparece aqui 👋</div></div>
             </div>
+          </div>
+          <div id="problemsBody" hidden>
+            <div id="probBar">
+              <button id="probCheck">✓ Checar projeto</button>
+              <span id="probSummary" class="probsum">Roda o linter/type-checker do projeto (eslint/tsc, ruff, go vet, cargo).</span>
+            </div>
+            <div id="probList"></div>
           </div>
           <div id="dbBody" hidden>
             <div id="dbConnRow">
@@ -1564,10 +1587,12 @@
         document.getElementById('dbBody').style.display = t === 'db' ? 'flex' : 'none';
         document.getElementById('srvBody').style.display = t === 'server' ? 'flex' : 'none';
         document.getElementById('restBody').style.display = t === 'rest' ? 'flex' : 'none';
+        document.getElementById('problemsBody').style.display = t === 'problems' ? 'flex' : 'none';
         if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
         if (t === 'docker') loadDocker(true);
         if (t === 'db') dbInit();
         if (t === 'server') loadServer();
+        if (t === 'problems') renderProblems(); // mostra o que já tem; usa o botão pra rodar de novo
         if (t === 'term') setTimeout(fitActive, 30);
       }
 
@@ -1595,6 +1620,88 @@
           '<div class="rstatus ' + cls + '">' + r.status + (r.ok ? ' OK' : '') + '  ·  ' + r.ms + 'ms  ·  ' + fmtBytes(r.size) + '</div>' +
           '<div class="rhdr">' + esc(hdr) + '</div><pre>' + esc(r.body) + '</pre>';
       }
+
+      // ============================================================
+      //  Aba PROBLEMAS: roda o linter/type-checker e lista os erros (clique → abre no ponto)
+      // ============================================================
+      let probData = null;
+      async function openAt(p, line, col) {
+        await openFile(p);
+        if (editor && line) {
+          editor.revealLineInCenter(line);
+          editor.setPosition({ lineNumber: line, column: col || 1 });
+          editor.focus();
+        }
+      }
+      function updateProbBadge() {
+        const badge = document.getElementById('probBadge');
+        const errs = probData ? probData.errors || 0 : 0;
+        if (errs > 0) {
+          badge.textContent = errs > 99 ? '99+' : errs;
+          badge.hidden = false;
+        } else badge.hidden = true;
+      }
+      function renderProblems() {
+        const list = document.getElementById('probList');
+        const sum = document.getElementById('probSummary');
+        if (!probData) return;
+        if (probData.error) {
+          sum.textContent = '⚠ ' + probData.error;
+          list.innerHTML = '';
+          return;
+        }
+        if (!probData.tools || !probData.tools.length) {
+          sum.textContent = probData.note || 'nenhum linter/type-checker detectado';
+          list.innerHTML = '<div class="probempty">Sem linter/type-checker no projeto.</div>';
+          updateProbBadge();
+          return;
+        }
+        const probs = probData.problems || [];
+        sum.textContent = probs.length
+          ? probData.errors + ' erro(s), ' + probData.warnings + ' aviso(s) · ' + probData.tools.join(', ')
+          : '✓ nenhum problema · ' + probData.tools.join(', ');
+        list.innerHTML = '';
+        if (!probs.length) {
+          list.innerHTML = '<div class="probempty">Nenhum problema encontrado. 🎉</div>';
+          updateProbBadge();
+          return;
+        }
+        probs.forEach((p) => {
+          const row = document.createElement('div');
+          row.className = 'probrow ' + (p.severity === 'error' ? 'perr' : 'pwarn');
+          row.title = p.file + ':' + p.line + '  (' + p.source + ')';
+          const dot = document.createElement('span');
+          dot.className = 'pdot';
+          dot.textContent = p.severity === 'error' ? '⛔' : '⚠';
+          const loc = document.createElement('span');
+          loc.className = 'ploc';
+          loc.textContent = p.file + ':' + p.line;
+          const msg = document.createElement('span');
+          msg.className = 'pmsg';
+          msg.textContent = p.message;
+          row.appendChild(dot);
+          row.appendChild(loc);
+          row.appendChild(msg);
+          row.onclick = () => openAt(p.file, p.line, p.col);
+          list.appendChild(row);
+        });
+        updateProbBadge();
+      }
+      async function runProblemCheck() {
+        const btn = document.getElementById('probCheck');
+        const sum = document.getElementById('probSummary');
+        btn.disabled = true;
+        sum.textContent = '⏳ checando o projeto…';
+        document.getElementById('probList').innerHTML = '';
+        try {
+          probData = await window.api.diagCheck();
+        } catch (e) {
+          probData = { error: String(e) };
+        }
+        btn.disabled = false;
+        renderProblems();
+      }
+      document.getElementById('probCheck').addEventListener('click', runProblemCheck);
       document.getElementById('restSend').onclick = restSend;
       document.getElementById('restUrl').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {

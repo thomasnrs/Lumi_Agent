@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   getWorkspaceFullTree: () => ipcRenderer.invoke('workspace:fulltree'),
   wsBind: (folder) => ipcRenderer.invoke('ws:bind', folder), // prende a janela do editor a uma pasta
   openWorkspaceWindow: () => ipcRenderer.invoke('workspace:open-window'), // escolhe pasta e abre em nova janela
+  diagCheck: () => ipcRenderer.invoke('diag:check'), // roda o linter/type-checker → problemas do projeto
   getWorkspaceChildren: (rel) => ipcRenderer.invoke('workspace:children', rel),
   readWorkspaceFile: (rel) => ipcRenderer.invoke('workspace:read', rel),
   readWorkspaceImage: (rel) => ipcRenderer.invoke('workspace:read-image', rel),

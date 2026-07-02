@@ -346,7 +346,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de software sênior. Implemente a tarefa de ponta a ponta: leia o código relevante antes, faça a mudança mínima necessária seguindo o padrão do projeto, e VERIFIQUE rodando o comando/teste pertinente. Ao final, resuma o que fez em poucas linhas.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'run_tests', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'run_tests', 'get_problems', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal', 'web_search', 'read_project_memory', 'update_project_memory', 'http_request'],
     },
     {
       name: 'Revisor',
@@ -355,7 +355,7 @@ const DEFAULT_CONFIG = {
         'Você é um revisor crítico e construtivo. Leia o material com atenção e aponte bugs, riscos, problemas de segurança/performance e melhorias CONCRETAS (com o porquê e como corrigir). Priorize o que importa. NÃO altere arquivos — apenas analise e recomende.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'locate_stack', 'read_project_memory'],
+      tools: ['list_dir', 'read_file', 'grep_files', 'git_status', 'git_diff', 'git_log', 'get_problems', 'locate_stack', 'read_project_memory'],
     },
     {
       name: 'Testador',
@@ -364,7 +364,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira de QA. Entenda o que precisa ser testado, escreva testes claros (seguindo o framework de testes do projeto) e RODE-OS com run_command. Relate o que passou e o que falhou, com a causa provável das falhas. Não conserte o código de produção sem ser pedido — foque em cobrir e diagnosticar.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'locate_stack', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory', 'http_request'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'get_problems', 'locate_stack', 'write_file', 'append_file', 'run_command', 'run_in_terminal', 'read_terminal', 'read_project_memory', 'http_request'],
     },
     {
       name: 'Refatorador',
@@ -373,7 +373,7 @@ const DEFAULT_CONFIG = {
         'Você é uma engenheira especialista em refatoração. Melhore legibilidade, organização e qualidade do código SEM alterar o comportamento externo. Faça mudanças pequenas e seguras, mantendo o padrão do projeto, e VERIFIQUE com o comando/teste pertinente para garantir que nada quebrou. Explique cada melhoria brevemente.',
       model: '',
       temperature: 0.3,
-      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
+      tools: ['list_dir', 'read_file', 'edit_file', 'grep_files', 'git_status', 'git_diff', 'run_tests', 'get_problems', 'locate_stack', 'apply_patch', 'write_file', 'append_file', 'run_command', 'read_project_memory', 'update_project_memory'],
     },
     {
       name: 'Designer',
@@ -2087,6 +2087,140 @@ async function formatFileIfEnabled(cfg, abs) {
   } catch (e) {
     /* formatter ausente/erro → silencioso, não atrapalha a edição */
   }
+}
+
+// ---- DIAGNÓSTICOS: roda o linter/type-checker do projeto e devolve problemas estruturados ----
+function _localBin(ws, name) {
+  const b = path.join(ws, 'node_modules', '.bin', name + (process.platform === 'win32' ? '.cmd' : ''));
+  try {
+    return fs.existsSync(b) ? b : null;
+  } catch (e) {
+    return null;
+  }
+}
+function _relTo(ws, f) {
+  try {
+    const abs = path.isAbsolute(f) ? f : path.join(ws, f);
+    return path.relative(ws, abs).replace(/\\/g, '/');
+  } catch (e) {
+    return String(f).replace(/\\/g, '/');
+  }
+}
+function parseTsc(ws, out) {
+  const probs = [];
+  const re = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+TS\d+:\s+(.+)$/gm;
+  let m;
+  while ((m = re.exec(out))) probs.push({ file: _relTo(ws, m[1]), line: +m[2], col: +m[3], severity: m[4], message: m[5].trim(), source: 'tsc' });
+  return probs;
+}
+function parseEslintJson(ws, out) {
+  const probs = [];
+  let arr;
+  try {
+    arr = JSON.parse(out);
+  } catch (e) {
+    return probs;
+  }
+  for (const f of arr || []) for (const mm of f.messages || []) probs.push({ file: _relTo(ws, f.filePath), line: mm.line || 1, col: mm.column || 1, severity: mm.severity === 2 ? 'error' : 'warning', message: (mm.message || '') + (mm.ruleId ? ' (' + mm.ruleId + ')' : ''), source: 'eslint' });
+  return probs;
+}
+function parseRuffJson(ws, out) {
+  const probs = [];
+  let arr;
+  try {
+    arr = JSON.parse(out);
+  } catch (e) {
+    return probs;
+  }
+  for (const d of arr || []) probs.push({ file: _relTo(ws, d.filename), line: (d.location && d.location.row) || 1, col: (d.location && d.location.column) || 1, severity: 'warning', message: (d.code ? d.code + ' ' : '') + (d.message || ''), source: 'ruff' });
+  return probs;
+}
+function parseColonList(ws, out, source) {
+  const probs = [];
+  const re = /^(.+?):(\d+):(\d+):\s+(.+)$/gm;
+  let m;
+  while ((m = re.exec(out))) {
+    const msg = m[4].trim();
+    probs.push({ file: _relTo(ws, m[1]), line: +m[2], col: +m[3], severity: /\bwarn/i.test(msg) ? 'warning' : 'error', message: msg, source });
+  }
+  return probs;
+}
+async function runChecker(bin, args, ws) {
+  try {
+    const { stdout, stderr } = await execFileAsync(bin, args, { cwd: ws, timeout: 90000, windowsHide: true, maxBuffer: 24 * 1024 * 1024 });
+    return { out: stdout || '', err: stderr || '' };
+  } catch (e) {
+    return { out: (e && e.stdout) || '', err: (e && e.stderr) || '', code: e && e.code, missing: e && e.code === 'ENOENT' };
+  }
+}
+async function checkProject(cfg) {
+  const ws = cfg.workspace;
+  if (!ws) return { error: 'nenhum workspace aberto' };
+  const has = (f) => {
+    try {
+      return fs.existsSync(path.join(ws, f));
+    } catch (e) {
+      return false;
+    }
+  };
+  const problems = [];
+  const tools = [];
+  // JS/TS: eslint (local) + tsc (local, se tsconfig)
+  const eslint = _localBin(ws, 'eslint');
+  if (eslint) {
+    const r = await runChecker(eslint, ['.', '--format', 'json', '--ext', '.js,.jsx,.ts,.tsx,.vue,.svelte'], ws);
+    tools.push('eslint');
+    problems.push(...parseEslintJson(ws, r.out || r.err));
+  }
+  const tsc = _localBin(ws, 'tsc');
+  if (tsc && has('tsconfig.json')) {
+    const r = await runChecker(tsc, ['--noEmit', '--pretty', 'false'], ws);
+    tools.push('tsc');
+    problems.push(...parseTsc(ws, (r.out || '') + (r.err || '')));
+  }
+  // Python: ruff (json) ou flake8
+  if (has('pyproject.toml') || has('setup.cfg') || has('requirements.txt') || has('pytest.ini')) {
+    let r = await runChecker(resolveExe('ruff'), ['check', '--output-format', 'json', '.'], ws);
+    if (!r.missing && (r.out || '').trim().startsWith('[')) {
+      tools.push('ruff');
+      problems.push(...parseRuffJson(ws, r.out));
+    } else {
+      r = await runChecker(resolveExe('flake8'), ['.'], ws);
+      if (!r.missing) {
+        tools.push('flake8');
+        problems.push(...parseColonList(ws, r.out || r.err, 'flake8'));
+      }
+    }
+  }
+  // Go / Rust
+  if (has('go.mod')) {
+    const r = await runChecker(resolveExe('go'), ['vet', './...'], ws);
+    if (!r.missing) {
+      tools.push('go vet');
+      problems.push(...parseColonList(ws, r.err || r.out, 'go vet'));
+    }
+  }
+  if (has('Cargo.toml')) {
+    const r = await runChecker(resolveExe('cargo'), ['check', '--message-format', 'short'], ws);
+    if (!r.missing) {
+      tools.push('cargo');
+      problems.push(...parseColonList(ws, r.err || r.out, 'cargo'));
+    }
+  }
+  if (!tools.length) return { problems: [], tools: [], note: 'nenhum linter/type-checker disponível (instale eslint/typescript no projeto, ou ruff/flake8/go/cargo).' };
+  // dedup + ordena (erros primeiro) + cap
+  const seen = new Set();
+  const uniq = [];
+  for (const p of problems) {
+    const k = p.file + ':' + p.line + ':' + p.col + ':' + p.message;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    uniq.push(p);
+    if (uniq.length >= 300) break;
+  }
+  uniq.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
+  const errors = uniq.filter((p) => p.severity === 'error').length;
+  return { problems: uniq, total: uniq.length, errors, warnings: uniq.length - errors, tools };
 }
 function normalizeEolText(s) {
   return String(s == null ? '' : s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -4519,6 +4653,29 @@ const TOOLS = {
           /* ok */
         }
       }
+    },
+  },
+  get_problems: {
+    category: 'read',
+    summary: () => 'checar erros do projeto (lint/tipos)',
+    schema: {
+      name: 'get_problems',
+      description:
+        'Roda o linter/type-checker do projeto (eslint/tsc, ruff/flake8, go vet, cargo) e devolve os problemas REAIS: arquivo, linha, coluna, severidade e mensagem. Use DEPOIS de editar pra confirmar que não introduziu erro, e pra corrigir COM PRECISÃO em vez de adivinhar. Pode levar alguns segundos.',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      const r = await checkProject(loadConfig());
+      if (r.error) return r;
+      if (!r.tools || !r.tools.length) return { problems: [], note: r.note };
+      return {
+        total: r.total,
+        errors: r.errors,
+        warnings: r.warnings,
+        tools: r.tools,
+        problems: r.problems.slice(0, 100),
+        truncated: r.total > 100 ? 'mostrando 100 de ' + r.total + ' — corrija os erros primeiro e rode de novo' : undefined,
+      };
     },
   },
   write_file: {
@@ -7034,6 +7191,8 @@ ipcMain.handle('workspace:open-window', async () => {
   openWorkspaceWindow(r.filePaths[0]);
   return { ok: true, folder: r.filePaths[0] };
 });
+// Painel de Problemas do editor: roda o linter/type-checker da pasta DA JANELA
+ipcMain.handle('diag:check', async (e) => checkProject(wsCfg(e)));
 
 // ============================================================
 //  Menu de contexto (clique direito no boneco)
