@@ -159,6 +159,8 @@ contextBridge.exposeInMainWorld('api', {
   getWindowPos: () => ipcRenderer.invoke('get-window-pos'),
   getWindowBounds: () => ipcRenderer.invoke('get-window-bounds'),
   setWindowPos: (x, y) => ipcRenderer.send('set-window-pos', x, y),
+  windowControl: (action) => ipcRenderer.invoke('window:control', action),
+  onWindowState: (cb) => ipcRenderer.on('window:state', (_e, state) => cb(state)),
 
   // tamanho da avatar (slider nas configs + scroll do mouse) e opacidade das paginas
   setAvatarScale: (scale) => ipcRenderer.send('avatar-scale-set', scale),

@@ -12,6 +12,7 @@
     border: '#2a2a38', // bordas
   };
   let acrylicOn = false; // vidro nativo do Win11 ativo? (vem do main em config._acrylicOn)
+  let reducedEffects = false;
 
   // hex (#rgb/#rrggbb) -> rgba com alpha (pro fundo translúcido do acrílico)
   function hexA(hex, a) {
@@ -25,7 +26,7 @@
     const t = Object.assign({}, DEFAULTS, theme || {});
     const r = document.documentElement.style;
     for (const k in t) r.setProperty('--' + k, t[k]);
-    if (acrylicOn) {
+    if (acrylicOn && !reducedEffects) {
       // fundo translúcido revela o blur do acrílico; superfícies levemente translúcidas também
       r.setProperty('--bg', hexA(t.bg, 0.62));
       r.setProperty('--surface', hexA(t.surface, 0.78));
@@ -46,14 +47,25 @@
       'button{background:var(--accent);color:var(--accent-text);}';
     document.head.appendChild(ov);
   }
+  const perf = document.createElement('style');
+  perf.textContent =
+    'html.lumi-reduced-effects *,html.lumi-reduced-effects *::before,html.lumi-reduced-effects *::after{backdrop-filter:none!important;}' +
+    'html.lumi-reduced-effects body::before{animation:none!important;transform:none!important;}';
+  document.head.appendChild(perf);
+
   const api = window.api;
   let lastTheme = null;
+  function applyConfig(c) {
+    acrylicOn = !!(c && c._acrylicOn);
+    reducedEffects = !!(c && c.gfxReducedEffects);
+    document.documentElement.classList.toggle('lumi-reduced-effects', reducedEffects);
+    lastTheme = c && c.theme;
+    apply(lastTheme);
+  }
   if (api && api.getConfig)
-    api.getConfig().then((c) => {
-      acrylicOn = !!(c && c._acrylicOn); // vale também no iframe (compõe sobre a janela acrílica)
-      lastTheme = c && c.theme;
-      apply(lastTheme);
-    });
+    api.getConfig().then(applyConfig);
+  if (api && api.onConfigChanged)
+    api.onConfigChanged(() => api.getConfig().then(applyConfig));
   if (api && api.onThemeChanged)
     api.onThemeChanged((t) => {
       lastTheme = t;

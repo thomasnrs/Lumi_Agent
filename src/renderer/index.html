@@ -159,7 +159,7 @@
         box-shadow: none;
         animation: none;
         background: transparent;
-        padding-top: 40px; /* espaço da faixa de arrasto + botões nativos da janela */
+        padding-top: 40px; /* espaço da faixa de arrasto + traffic lights */
       }
       #settings {
         position: absolute;
@@ -232,6 +232,83 @@
         resize: vertical;
         min-height: 64px;
         font-family: inherit;
+      }
+      #settings .gfx-card {
+        margin-top: 12px;
+        padding: 14px;
+        border: 1px solid color-mix(in srgb, var(--border) 82%, var(--accent) 18%);
+        border-radius: 13px;
+        background:
+          radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 11%, transparent), transparent 48%),
+          color-mix(in srgb, var(--surface-2) 82%, transparent);
+      }
+      #settings .gfx-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 4px;
+      }
+      #settings .gfx-head strong { font-size: 12.5px; color: var(--text); }
+      #settings .gfx-summary {
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--accent) 16%, transparent);
+        color: var(--accent);
+        font-size: 10.5px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      #settings .gfx-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 14px;
+      }
+      #settings .gfx-control { min-width: 0; }
+      #settings .gfx-control.wide { grid-column: 1 / -1; }
+      #settings .gfx-control label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      #settings .gfx-control output {
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      #settings .gfx-control input[type='range'] {
+        height: 24px;
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+        accent-color: var(--accent);
+        background: transparent;
+        cursor: pointer;
+      }
+      #settings .gfx-toggle {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+        color: color-mix(in srgb, var(--text) 82%, transparent);
+        font-size: 12px;
+        line-height: 1.4;
+        cursor: pointer;
+      }
+      #settings .gfx-toggle input {
+        width: auto;
+        margin: 2px 0 0;
+        accent-color: var(--accent);
+      }
+      #settings .gfx-note { margin: 9px 0 0; font-size: 10.5px; color: #89919f; line-height: 1.45; }
+      @media (max-width: 620px) {
+        #settings .gfx-grid { grid-template-columns: 1fr; }
+        #settings .gfx-control.wide { grid-column: auto; }
       }
       #settings .row {
         display: flex;
@@ -937,11 +1014,39 @@
         <div class="panel" data-panel="video">
           <label>Qualidade gráfica</label>
           <select id="gfxQuality">
-            <option value="performance">Performance — máquinas fracas (leve)</option>
+            <option value="potato">🥔 Batata extrema — mínimo consumo</option>
+            <option value="economy">Economia — PCs antigos e notebooks</option>
+            <option value="performance">Performance — leve e responsivo</option>
             <option value="balanced">Equilibrado — padrão</option>
             <option value="quality">Qualidade — máquinas fortes (nítido)</option>
           </select>
-          <p class="hint">Reduz resolução/FPS e tamanho das texturas para aliviar a GPU.</p>
+          <p class="hint">O FPS sobe automaticamente quando a Lumi fala, reage ou é arrastada; parada, ela economiza.</p>
+
+          <div class="gfx-card">
+            <div class="gfx-head">
+              <strong>Ajuste fino de desempenho</strong>
+              <span class="gfx-summary" id="gfxSummary">Equilibrado</span>
+            </div>
+            <div class="gfx-grid">
+              <div class="gfx-control wide">
+                <label for="gfxRenderScale">Resolução interna <output id="gfxRenderScaleVal">100%</output></label>
+                <input id="gfxRenderScale" type="range" min="25" max="200" step="5" value="100" />
+              </div>
+              <div class="gfx-control">
+                <label for="gfxIdleFps">FPS em repouso <output id="gfxIdleFpsVal">30</output></label>
+                <input id="gfxIdleFps" type="range" min="2" max="30" step="1" value="30" />
+              </div>
+              <div class="gfx-control">
+                <label for="gfxActiveFps">FPS em atividade <output id="gfxActiveFpsVal">60</output></label>
+                <input id="gfxActiveFps" type="range" min="10" max="60" step="1" value="60" />
+              </div>
+            </div>
+            <label class="gfx-toggle">
+              <input id="gfxReducedEffects" type="checkbox" />
+              <span>Reduzir aurora, transparências e blur decorativo nas janelas de chat/workspace.</span>
+            </label>
+            <p class="gfx-note" id="gfxNote">100% usa a resolução normal da janela. Reduzir para 50% desenha apenas ¼ dos pixels.</p>
+          </div>
 
           <label>Tamanho da avatar (<span id="avatarScaleVal">100</span>%)</label>
           <input id="avatarScale" type="range" min="60" max="200" step="5" value="100" />
@@ -1023,6 +1128,7 @@
     <!-- dropdown de modelos (lista completa com scroll — o datalist nativo escondia tudo) -->
     <div id="modelPick" hidden><div id="mpkList"></div></div>
     <script src="./pages/theme.js"></script>
+    <script src="./pages/_chrome.js"></script>
     <script src="./renderer.bundle.js"></script>
   </body>
 </html>

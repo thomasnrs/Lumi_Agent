@@ -4,6 +4,13 @@
 // - Injeta um controle flutuante discreto (ícone que expande no hover) — exceto onde
 //   a página já tem o seu próprio controle (ex.: o chat, que tem #chatHeader).
 (function () {
+  const chromeScriptUrl = document.currentScript && document.currentScript.src;
+  const outfitUrl = chromeScriptUrl ? new URL('fonts/outfit.woff2', chromeScriptUrl).href : 'fonts/outfit.woff2';
+  // index.html também carrega este helper para a janela de configurações, mas a
+  // janela transparente do avatar continua sem barra/botões.
+  const pageParams = new URLSearchParams(location.search);
+  if (/\/index\.html$/i.test(location.pathname) && !pageParams.has('settings')) return;
+
   // ---- toasts (avisos flutuantes padronizados) — disponíveis em TODAS as páginas ----
   window.__lumiToast = function (msg, ok) {
     let box = document.getElementById('lumi-toasts');
@@ -36,7 +43,7 @@
   (function designSystem() {
     const css = document.createElement('style');
     css.textContent =
-      "@font-face{font-family:'Outfit';src:url('fonts/outfit.woff2') format('woff2');font-weight:300 900;font-display:swap;}" +
+      "@font-face{font-family:'Outfit';src:url('" + outfitUrl + "') format('woff2');font-weight:300 900;font-display:swap;}" +
       'h1,h2,#chatTitle,#planTitle,#rootname{font-family:Outfit,"Segoe UI",sans-serif;letter-spacing:.2px;}' +
       'input:focus,select:focus,textarea:focus{border-color:var(--accent,#7aa2ff)!important;' +
       'box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#7aa2ff) 16%,transparent)!important;outline:none!important;}' +
@@ -47,25 +54,73 @@
     document.head.appendChild(css);
   })();
 
-  // ---- barra de título customizada (as janelas usam titleBarOverlay nativo) ----
+  // ---- barra de título + traffic lights (Windows e Linux) ----
   (function titlebar() {
     if (window.top !== window.self) return; // iframe não arrasta a janela hospedeira
-    if (!window.api || window.api.platform !== 'win32') return; // Linux/mac usam a barra nativa
+    if (!window.api || !['win32', 'linux'].includes(window.api.platform)) return; // macOS usa a barra nativa
     const css = document.createElement('style');
     css.textContent =
-      '.lumi-dragbar{-webkit-app-region:drag;padding-right:142px !important;}' +
+      '.lumi-dragbar{-webkit-app-region:drag;padding-left:78px !important;}' +
       '#menubar.lumi-dragbar{min-height:34px;}' +
       '.lumi-dragbar button,.lumi-dragbar input,.lumi-dragbar select,.lumi-dragbar .mlabel,.lumi-dragbar .hbtn{-webkit-app-region:no-drag;}' +
       '#lumi-titlebar{position:fixed;top:0;left:0;right:0;height:34px;display:flex;align-items:center;gap:8px;' +
-      'padding:0 146px 0 12px;-webkit-app-region:drag;z-index:9998;' +
+      'padding:0 12px 0 82px;-webkit-app-region:drag;z-index:9998;' +
       'background:color-mix(in srgb,var(--surface-2,#0f0f16) 72%,transparent);backdrop-filter:blur(10px);' +
       'border-bottom:1px solid color-mix(in srgb,var(--border,#2a2a38) 70%,transparent);' +
-      "font:600 12px Outfit,'Segoe UI',sans-serif;color:#9aab;user-select:none;letter-spacing:.4px;}";
+      "font:600 12px Outfit,'Segoe UI',sans-serif;color:#9aab;user-select:none;letter-spacing:.4px;}" +
+      '#lumi-window-controls{position:fixed;top:0;left:0;height:34px;padding:0 12px;display:flex;align-items:center;gap:8px;' +
+      '-webkit-app-region:no-drag;z-index:100001;user-select:none;}' +
+      '.lumi-traffic{position:relative;width:12px;height:12px;min-width:12px;padding:0;border:0;border-radius:50%;' +
+      'box-shadow:inset 0 0 0 1px rgba(0,0,0,.13),0 1px 2px rgba(0,0,0,.18);cursor:pointer;' +
+      'transition:filter .15s ease,transform .1s ease;}' +
+      '.lumi-traffic:hover{filter:brightness(1.08);}.lumi-traffic:active{transform:scale(.88);}' +
+      '.lumi-traffic.is-close{background:#ff5f57}.lumi-traffic.is-min{background:#febc2e}.lumi-traffic.is-maximize{background:#28c840}' +
+      '.lumi-traffic::after{position:absolute;inset:0;display:grid;place-items:center;color:rgba(32,20,20,.72);' +
+      'font:700 9px/12px Arial,sans-serif;opacity:0;transition:opacity .12s;}' +
+      '#lumi-window-controls:hover .lumi-traffic::after{opacity:1}' +
+      '.lumi-traffic.is-close::after{content:"×";font-size:10px}.lumi-traffic.is-min::after{content:"−";}' +
+      '.lumi-traffic.is-maximize::after{content:"+";font-size:10px;line-height:11px}' +
+      '.lumi-traffic.is-maximize.is-max::after{content:"◇";font-size:8px}' +
+      '.lumi-traffic:disabled{cursor:default;filter:saturate(.25);opacity:.48}.lumi-traffic:disabled:active{transform:none}';
     document.head.appendChild(css);
+
+    const controls = document.createElement('div');
+    controls.id = 'lumi-window-controls';
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', 'Controles da janela');
+    controls.innerHTML =
+      '<button class="lumi-traffic is-close" type="button" title="Fechar" aria-label="Fechar"></button>' +
+      '<button class="lumi-traffic is-min" type="button" title="Minimizar" aria-label="Minimizar"></button>' +
+      '<button class="lumi-traffic is-maximize" type="button" title="Maximizar" aria-label="Maximizar"></button>';
+    document.body.appendChild(controls);
+    const closeBtn = controls.querySelector('.is-close');
+    const minBtn = controls.querySelector('.is-min');
+    const maxBtn = controls.querySelector('.is-maximize');
+    const applyState = (s) => {
+      if (!s) return;
+      minBtn.disabled = s.minimizable === false;
+      maxBtn.disabled = s.maximizable === false;
+      maxBtn.classList.toggle('is-max', !!s.maximized);
+      maxBtn.title = s.maximized ? 'Restaurar' : 'Maximizar';
+      maxBtn.setAttribute('aria-label', maxBtn.title);
+    };
+    const control = (action) => {
+      if (!window.api.windowControl) return Promise.resolve(null);
+      return window.api.windowControl(action).then(applyState).catch(() => null);
+    };
+    closeBtn.addEventListener('click', () => control('close'));
+    minBtn.addEventListener('click', () => control('minimize'));
+    maxBtn.addEventListener('click', () => control('toggle-maximize'));
+    control('state');
+    if (window.api.onWindowState) window.api.onWindowState(applyState);
+
     // página com header próprio (chat/menubar do editor) → o header vira a área de arrastar
     const header = document.getElementById('chatHeader') || document.getElementById('menubar');
     if (header) {
       header.classList.add('lumi-dragbar');
+      header.addEventListener('dblclick', (e) => {
+        if (!e.target.closest('button,input,select,.mlabel,.hbtn')) control('toggle-maximize');
+      });
       return;
     }
     // demais páginas: mini barra "✦ Lumi — título" injetada
@@ -76,6 +131,7 @@
     star.textContent = '✦';
     tb.appendChild(star);
     tb.appendChild(document.createTextNode(document.title || 'Lumi'));
+    tb.addEventListener('dblclick', () => control('toggle-maximize'));
     document.body.prepend(tb);
     document.body.style.boxSizing = 'border-box';
     document.body.style.paddingTop = (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + 34 + 'px';

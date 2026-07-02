@@ -7,27 +7,53 @@ const canvas = document.getElementById('c');
 
 // MODO "SÓ CONFIGURAÇÕES": esta mesma página vira a janela dedicada de settings
 // (?settings=1) — sem carregar o avatar 3D. Zero duplicação de formulário/lógica.
-const SETTINGS_ONLY = new URLSearchParams(location.search).has('settings');
+const PAGE_PARAMS = new URLSearchParams(location.search);
+const SETTINGS_ONLY = PAGE_PARAMS.has('settings');
+const BOOT_GFX = PAGE_PARAMS.get('gfx') || 'balanced';
 if (SETTINGS_ONLY) document.body.classList.add('settings-only');
 
 // ---------- renderer / cena ----------
-const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+// Antialias é uma opção imutável do contexto WebGL: os dois perfis mais leves já
+// nascem sem ele. Escala/FPS continuam ajustáveis ao vivo.
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  alpha: true,
+  antialias: !['potato', 'economy'].includes(BOOT_GFX),
+  powerPreference: ['potato', 'economy'].includes(BOOT_GFX) ? 'low-power' : 'default',
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // ---------- qualidade grafica (presets) ----------
 const QUALITY = {
-  performance: { pr: 0.7, fps: 30, tex: 256 }, // leve
-  balanced: { pr: 1.0, fps: 60, tex: 512 }, // padrao
-  quality: { pr: Math.min(window.devicePixelRatio || 1, 2), fps: 60, tex: 1024 }, // bonito
+  potato: { pr: 0.35, idleFps: 5, activeFps: 20, tex: 128 },
+  economy: { pr: 0.5, idleFps: 10, activeFps: 24, tex: 256 },
+  performance: { pr: 0.7, idleFps: 15, activeFps: 30, tex: 256 },
+  balanced: { pr: 1.0, idleFps: 30, activeFps: 60, tex: 512 },
+  quality: { pr: Math.min(window.devicePixelRatio || 1, 2), idleFps: 30, activeFps: 60, tex: 1024 },
 };
 let maxFps = 60;
-function applyGraphics(q) {
-  const p = QUALITY[q] || QUALITY.balanced;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.pr));
+let idleFps = 30;
+let currentGraphics = QUALITY.balanced;
+const clampGfx = (v, min, max) => Math.min(max, Math.max(min, Number(v) || min));
+function graphicsSettings(input) {
+  const cfg = typeof input === 'string' ? { gfxQuality: input } : input || {};
+  const preset = QUALITY[cfg.gfxQuality] || QUALITY.balanced;
+  return {
+    pr: cfg.gfxRenderScale ? clampGfx(cfg.gfxRenderScale, 25, 200) / 100 : preset.pr,
+    idleFps: cfg.gfxIdleFps ? clampGfx(cfg.gfxIdleFps, 2, 30) : preset.idleFps,
+    activeFps: cfg.gfxActiveFps ? clampGfx(cfg.gfxActiveFps, 10, 60) : preset.activeFps,
+    tex: preset.tex,
+  };
+}
+function applyGraphics(input) {
+  const p = graphicsSettings(input);
+  renderer.setPixelRatio(Math.min(2, p.pr));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  maxFps = p.fps;
+  idleFps = Math.min(p.idleFps, p.activeFps);
+  maxFps = p.activeFps;
+  currentGraphics = p;
 }
 applyGraphics('balanced'); // padrao ate carregar a config
 
@@ -254,7 +280,7 @@ async function loadVrm() {
 
   // limite de textura conforme o preset de qualidade
   const cfg = await window.api.getConfig();
-  const texCap = (QUALITY[cfg.gfxQuality] || QUALITY.balanced).tex;
+  const texCap = graphicsSettings(cfg).tex;
 
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -268,6 +294,11 @@ async function loadVrm() {
         VRMUtils.combineSkeletons(gltf.scene);
       } catch (e) {
         /* ignora se a versao nao tiver esse util */
+      }
+      try {
+        VRMUtils.combineMorphs(vrm); // reduz morph targets atualizados por expressão (boca/olhos/emoções)
+      } catch (e) {
+        /* alguns VRMs antigos podem não aceitar a combinação */
       }
       // VRM normalmente vem de costas para a camera; gira para nos encarar
       vrm.scene.rotation.y = Math.PI;
@@ -949,11 +980,17 @@ const clock = new THREE.Clock();
 function animate(now) {
   requestAnimationFrame(animate);
   now = now || 0;
+  if (document.hidden) {
+    lastFrameTime = now;
+    clock.getDelta(); // evita um delta gigante quando a janela reaparecer
+    return;
+  }
 
-  // limite de FPS dinamico: 60 (preset) durante gesto/fala/arrasto; 30 no idle.
-  // No idle render mais leve = cursor do Windows menos travado sobre a janela.
-  const busy = activeGesture || speaking || isSitting || currentPreview;
-  const targetFps = busy ? maxFps : Math.min(maxFps, 30);
+  // FPS adaptativo: sobe durante interação/fala e volta ao teto de repouso depois.
+  // "Sentada" é um estado contínuo, não atividade: antes ela podia ficar a 60 FPS
+  // para sempre na taskbar, justamente o caso comum em PCs modestos.
+  const busy = activeGesture || speaking || talking || dragging || currentPreview || reactionT > 0 || emotionT > 0;
+  const targetFps = busy ? maxFps : idleFps;
   if (targetFps && now - lastFrameTime < 1000 / targetFps - 1) return;
   lastFrameTime = now;
 
@@ -982,7 +1019,7 @@ function animate(now) {
     }
   }
 
-  const dt = clock.getDelta();
+  const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
 
   if (currentVrm) {
@@ -1028,7 +1065,7 @@ function animate(now) {
 
   renderer.render(scene, camera);
 }
-animate();
+if (!SETTINGS_ONLY) animate(); // configurações não precisam manter um loop WebGL acordado
 
 // ============================================================
 //  Interface: chat + configuracoes
@@ -1060,6 +1097,15 @@ const profileMsgEl = document.getElementById('profileMsg');
 const skipVoiceBtn = document.getElementById('skipVoice');
 const micBtn = document.getElementById('mic');
 const gfxQualityEl = document.getElementById('gfxQuality');
+const gfxRenderScaleEl = document.getElementById('gfxRenderScale');
+const gfxRenderScaleValEl = document.getElementById('gfxRenderScaleVal');
+const gfxIdleFpsEl = document.getElementById('gfxIdleFps');
+const gfxIdleFpsValEl = document.getElementById('gfxIdleFpsVal');
+const gfxActiveFpsEl = document.getElementById('gfxActiveFps');
+const gfxActiveFpsValEl = document.getElementById('gfxActiveFpsVal');
+const gfxReducedEffectsEl = document.getElementById('gfxReducedEffects');
+const gfxSummaryEl = document.getElementById('gfxSummary');
+const gfxNoteEl = document.getElementById('gfxNote');
 const avatarScaleEl = document.getElementById('avatarScale');
 const avatarScaleValEl = document.getElementById('avatarScaleVal');
 const toolsEnabledEl = document.getElementById('toolsEnabled');
@@ -1416,6 +1462,67 @@ input.addEventListener('keydown', (e) => {
 });
 
 // ---- configuracoes ----
+const GFX_NAMES = {
+  potato: 'Batata extrema',
+  economy: 'Economia',
+  performance: 'Performance',
+  balanced: 'Equilibrado',
+  quality: 'Qualidade',
+};
+function gfxPresetValues(name) {
+  const p = QUALITY[name] || QUALITY.balanced;
+  return {
+    scale: Math.round((p.pr * 100) / 5) * 5,
+    idle: p.idleFps,
+    active: p.activeFps,
+  };
+}
+function updateGraphicsControls() {
+  const scale = Number(gfxRenderScaleEl.value) || 100;
+  const idle = Number(gfxIdleFpsEl.value) || 30;
+  const active = Number(gfxActiveFpsEl.value) || 60;
+  const preset = gfxPresetValues(gfxQualityEl.value);
+  const adjusted = scale !== preset.scale || idle !== preset.idle || active !== preset.active;
+  gfxRenderScaleValEl.textContent = scale + '%';
+  gfxIdleFpsValEl.textContent = String(idle);
+  gfxActiveFpsValEl.textContent = String(active);
+  gfxSummaryEl.textContent = (GFX_NAMES[gfxQualityEl.value] || 'Personalizado') + (adjusted ? ' · ajustado' : '');
+  const pixelPct = Math.max(1, Math.round((scale / 100) ** 2 * 100));
+  const aaOff = ['potato', 'economy'].includes(gfxQualityEl.value);
+  gfxNoteEl.textContent =
+    `${scale}% desenha aproximadamente ${pixelPct}% dos pixels da resolução normal. ` +
+    `Parada: ${idle} FPS · reagindo/falando: ${active} FPS.` +
+    (aaOff ? ' Anti-aliasing e texturas mais leves entram por completo ao reabrir o app.' : '');
+}
+function fillGraphicsControls(c) {
+  const name = QUALITY[c.gfxQuality] ? c.gfxQuality : 'balanced';
+  const preset = gfxPresetValues(name);
+  gfxQualityEl.value = name;
+  gfxRenderScaleEl.value = c.gfxRenderScale || preset.scale;
+  gfxIdleFpsEl.value = c.gfxIdleFps || preset.idle;
+  gfxActiveFpsEl.value = c.gfxActiveFps || preset.active;
+  gfxReducedEffectsEl.checked =
+    c.gfxReducedEffects == null ? ['potato', 'economy'].includes(name) : !!c.gfxReducedEffects;
+  updateGraphicsControls();
+}
+gfxQualityEl.addEventListener('change', () => {
+  const p = gfxPresetValues(gfxQualityEl.value);
+  gfxRenderScaleEl.value = p.scale;
+  gfxIdleFpsEl.value = p.idle;
+  gfxActiveFpsEl.value = p.active;
+  gfxReducedEffectsEl.checked = ['potato', 'economy'].includes(gfxQualityEl.value);
+  updateGraphicsControls();
+});
+gfxRenderScaleEl.addEventListener('input', updateGraphicsControls);
+gfxIdleFpsEl.addEventListener('input', () => {
+  if (Number(gfxIdleFpsEl.value) > Number(gfxActiveFpsEl.value)) gfxActiveFpsEl.value = gfxIdleFpsEl.value;
+  updateGraphicsControls();
+});
+gfxActiveFpsEl.addEventListener('input', () => {
+  if (Number(gfxActiveFpsEl.value) < Number(gfxIdleFpsEl.value)) gfxIdleFpsEl.value = gfxActiveFpsEl.value;
+  updateGraphicsControls();
+});
+
 async function openSettings() {
   const c = await window.api.getConfig();
   providerSel.value = c.provider;
@@ -1430,7 +1537,7 @@ async function openSettings() {
   ttsVoiceEl.value = c.ttsVoice || '';
   ttsModelEl.value = c.ttsModel || '';
   ttsBaseUrlEl.value = c.ttsBaseUrl || '';
-  gfxQualityEl.value = c.gfxQuality || 'balanced';
+  fillGraphicsControls(c);
   const scalePct = Math.round((c.avatarScale || 1) * 100);
   avatarScaleEl.value = scalePct;
   avatarScaleValEl.textContent = scalePct;
@@ -1657,6 +1764,10 @@ function readForm() {
     ttsModel: ttsModelEl.value.trim(),
     ttsBaseUrl: ttsBaseUrlEl.value.trim(),
     gfxQuality: gfxQualityEl.value,
+    gfxRenderScale: parseInt(gfxRenderScaleEl.value, 10) || 100,
+    gfxIdleFps: parseInt(gfxIdleFpsEl.value, 10) || 30,
+    gfxActiveFps: parseInt(gfxActiveFpsEl.value, 10) || 60,
+    gfxReducedEffects: gfxReducedEffectsEl.checked,
     toolsEnabled: toolsEnabledEl.checked,
     memoryEnabled: memoryEnabledEl.checked,
     searchProvider: searchProviderEl.value,
@@ -1709,7 +1820,7 @@ function readForm() {
 saveBtn.addEventListener('click', async () => {
   const form = readForm();
   await window.api.setConfig(form);
-  applyGraphics(form.gfxQuality); // aplica a qualidade na hora
+  applyGraphics(form); // aplica escala e FPS personalizados na hora
   ttsProvider = form.ttsProvider; // atualiza o modo de fala (edge x chave)
   audioOutputId = form.audioOutput; // aplica o alto-falante escolhido
   applySink();
@@ -1941,7 +2052,7 @@ profileLoadBtn.addEventListener('click', async () => {
   const cfg = await window.api.loadPreset(name);
   if (!cfg) return;
   await window.api.setConfig(cfg);
-  applyGraphics(cfg.gfxQuality || 'balanced');
+  applyGraphics(cfg);
   ttsProvider = cfg.ttsProvider || 'off';
   audioOutputId = cfg.audioOutput || '';
   applySink();
@@ -2156,17 +2267,10 @@ window.api.onToolAnimation((name) => triggerEmotion(name));
 // ---- primeira execucao: aplica qualidade salva + avisa para configurar ----
 window.api.getConfig().then((c) => {
   if (SETTINGS_ONLY) {
-    maxFps = 5; // sem avatar, o loop praticamente dorme
-    // faixa de arrasto no topo (só no Windows — Linux/mac mantêm a barra nativa)
-    if (window.api.platform === 'win32') {
-      const drag = document.createElement('div');
-      drag.style.cssText = 'position:fixed;top:0;left:0;right:142px;height:34px;-webkit-app-region:drag;z-index:50;';
-      document.body.appendChild(drag);
-    }
     openSettings(); // abre o formulário direto (a janela É as configurações)
     return;
   }
-  applyGraphics(c.gfxQuality || 'balanced');
+  applyGraphics(c);
   ttsProvider = c.ttsProvider || 'off';
   audioOutputId = c.audioOutput || '';
   // so mostra em instalacao nova (provedor padrao e sem chave); proxy local nao dispara
@@ -2179,7 +2283,7 @@ window.api.getConfig().then((c) => {
 if (!SETTINGS_ONLY && window.api.onConfigChanged)
   window.api.onConfigChanged(async () => {
     const c = await window.api.getConfig();
-    applyGraphics(c.gfxQuality || 'balanced');
+    applyGraphics(c);
     ttsProvider = c.ttsProvider || 'off';
     audioOutputId = c.audioOutput || '';
     applySink();

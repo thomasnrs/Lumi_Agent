@@ -35,6 +35,21 @@ function logd(...parts) {
 }
 process.on('uncaughtException', (e) => logd('UNCAUGHT', String((e && e.stack) || e)));
 process.on('unhandledRejection', (e) => logd('UNHANDLED-REJECTION', String((e && e.stack) || e)));
+app.on('browser-window-created', (_e, w) => {
+  const sendState = () => {
+    if (w.isDestroyed() || w.webContents.isDestroyed()) return;
+    try {
+      w.webContents.send('window:state', {
+        maximized: w.isMaximized(),
+        minimizable: w.isMinimizable(),
+        maximizable: w.isMaximizable(),
+      });
+    } catch (_) {}
+  };
+  w.on('maximize', sendState);
+  w.on('unmaximize', sendState);
+  w.on('restore', sendState);
+});
 
 // Windows: o PTY (conpty/winpty) precisa do CAMINHO RESOLVIDO do executável —
 // "ssh"/"docker" sem .exe dão "file not found". Resolve via `where` (com cache).
@@ -65,6 +80,7 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('ozone-platform', 'x11'); // força XWayland (Wayland nativo quebra cursor global + posicionamento)
 }
 const IS_LINUX = process.platform === 'linux';
+const CUSTOM_WINDOW_CHROME = process.platform === 'win32' || IS_LINUX;
 
 // hook global de mouse (opcional) - para o anti-lag. Se falhar, segue sem ele.
 let uIOhook = null;
@@ -78,6 +94,7 @@ const hookOk = !!uIOhook;
 let win;
 let tray;
 let cursorTimer;
+let restartCursorPolling = () => {};
 let lockPassthrough = false; // trava manual: atravessa cliques sempre (Ctrl+Shift+C / menu)
 // Click-through inteligente: ignora cliques fora do corpo dela.
 // LINUX: começa CAPTURADO (clicável) — se o polling global do cursor funcionar, o hover
@@ -352,7 +369,11 @@ const DEFAULT_CONFIG = {
   ttsVoice: '',
   ttsModel: '',
   ttsBaseUrl: '', // URL do servidor de voz (XTTS no Colab/cloudflared, ou OpenAI-compativel)
-  gfxQuality: 'balanced', // 'performance' | 'balanced' | 'quality'
+  gfxQuality: 'balanced', // 'potato' | 'economy' | 'performance' | 'balanced' | 'quality'
+  gfxRenderScale: 0, // 25..200 (%); 0 = valor do preset
+  gfxIdleFps: 0, // 2..30; 0 = valor do preset
+  gfxActiveFps: 0, // 10..60; 0 = valor do preset
+  gfxReducedEffects: false, // reduz animações/blur decorativos nas janelas
   avatarScale: 1, // tamanho da janela/avatar (1 = padrao; scroll do mouse ou config ajusta)
   pageOpacity: {}, // opacidade por pagina (ex.: { chat: 0.9 }) - controle em cada janela
   winBounds: {}, // memória de tamanho/posição por janela (reabre como estava)
@@ -7799,7 +7820,9 @@ function createWindow() {
   });
 
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), {
+    query: { gfx: String(loadConfig().gfxQuality || 'balanced') },
+  });
 
   // o Windows REBAIXA o z-order em ciclos de foco e a taskbar passa na frente dela —
   // re-afirma o nível ao perder foco/reaparecer e num batimento defensivo
@@ -8095,7 +8118,7 @@ function openSettingsWindow() {
     icon: ICON_PATH,
     autoHideMenuBar: true,
     backgroundColor: '#16161e',
-    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
+    ...(CUSTOM_WINDOW_CHROME ? { frame: false } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -8130,8 +8153,8 @@ function openPage(id, file, title, w, h) {
     maximizable: true,
     backgroundColor: '#16161e',
     autoHideMenuBar: true,
-    // titleBarOverlay é SÓ Windows/macOS — no Linux mantém a decoração nativa (senão fica sem botão de fechar)
-    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
+    // Windows/Linux usam os traffic lights da Lumi; macOS mantém a decoração nativa.
+    ...(CUSTOM_WINDOW_CHROME ? { frame: false } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -8164,7 +8187,7 @@ function openChatWindow(chatId, title) {
     maximizable: false,
     backgroundColor: '#16161e',
     autoHideMenuBar: true,
-    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
+    ...(CUSTOM_WINDOW_CHROME ? { frame: false } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -8209,7 +8232,7 @@ function openWorkspaceWindow(folder) {
     maximizable: true,
     backgroundColor: '#16161e',
     autoHideMenuBar: true,
-    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#16161e', symbolColor: '#9aa9b8', height: 34 } } : {}),
+    ...(CUSTOM_WINDOW_CHROME ? { frame: false } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -8597,18 +8620,24 @@ app.whenReady().then(() => {
   let lastCx = null;
   let lastCy = null;
   let cursorPollMoves = 0; // diagnóstico (Linux): o polling global do cursor está vivo?
+  let cursorWinBounds = win.getBounds();
+  const syncCursorBounds = () => {
+    if (win && !win.isDestroyed()) cursorWinBounds = win.getBounds();
+  };
+  win.on('move', syncCursorBounds);
+  win.on('resize', syncCursorBounds);
   startLinuxCursorHook(); // Linux: liga a fonte global de cursor (no-op nas outras plataformas)
-  cursorTimer = setInterval(() => {
+  const cursorTick = () => {
     if (!win || win.isDestroyed() || !win.isVisible()) return;
     // Linux: usa o hook se ele entregou movimento nos últimos 2s; senão tenta o polling normal
     const p = linuxHookCursor && Date.now() - linuxCursorAt < 2000 ? linuxCursor : screen.getCursorScreenPoint();
     if (dragging) {
-      win.setPosition(
-        Math.round(dragStartWin.x + (p.x - dragStartCursor.x)),
-        Math.round(dragStartWin.y + (p.y - dragStartCursor.y))
-      );
+      const x = Math.round(dragStartWin.x + (p.x - dragStartCursor.x));
+      const y = Math.round(dragStartWin.y + (p.y - dragStartCursor.y));
+      win.setPosition(x, y);
+      cursorWinBounds = { ...cursorWinBounds, x, y };
     }
-    const b = win.getBounds();
+    const b = cursorWinBounds;
     const rx = p.x - b.x;
     const ry = p.y - b.y;
     if (rx !== lastCx || ry !== lastCy) {
@@ -8618,7 +8647,16 @@ app.whenReady().then(() => {
       lastUserActivity = Date.now(); // proatividade: usuário está ativo
       win.webContents.send('cursor', { x: rx, y: ry });
     }
-  }, 33);
+  };
+  restartCursorPolling = () => {
+    if (cursorTimer) clearInterval(cursorTimer);
+    const c = loadConfig();
+    const presetHz = { potato: 10, economy: 15, performance: 20, balanced: 30, quality: 30 };
+    const customHz = parseInt(c.gfxIdleFps, 10);
+    const hz = Math.min(30, Math.max(10, customHz || presetHz[c.gfxQuality] || 30));
+    cursorTimer = setInterval(cursorTick, Math.round(1000 / hz));
+  };
+  restartCursorPolling();
 
   // LINUX: relatório de saúde do input no terminal (ajuda a diagnosticar X11/Wayland)
   if (IS_LINUX) {
@@ -10113,6 +10151,25 @@ ipcMain.handle('get-window-bounds', () => {
 });
 ipcMain.handle('get-window-pos', () => win.getPosition());
 ipcMain.on('set-window-pos', (_e, x, y) => win.setPosition(Math.round(x), Math.round(y)));
+ipcMain.handle('window:control', (e, action) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w || w.isDestroyed()) return null;
+  const state = () => ({
+    maximized: w.isMaximized(),
+    minimizable: w.isMinimizable(),
+    maximizable: w.isMaximizable(),
+  });
+  if (action === 'state') return state();
+  if (action === 'minimize' && w.isMinimizable()) w.minimize();
+  else if (action === 'toggle-maximize' && w.isMaximizable()) {
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+  } else if (action === 'close') {
+    w.close();
+    return null;
+  }
+  return state();
+});
 
 // ---- IPC: configuracao ----
 ipcMain.handle('config:get', () => {
@@ -10123,6 +10180,7 @@ ipcMain.handle('config:get', () => {
 ipcMain.handle('config:set', (_e, cfg) => {
   const before = loadConfig().workspace;
   saveConfig({ ...loadConfig(), ...cfg }); // merge: nao apaga campos de outras telas
+  if (cfg && ['gfxQuality', 'gfxIdleFps'].some((k) => k in cfg)) restartCursorPolling();
   if (cfg && 'workspace' in cfg) {
     startWorkspaceWatcher(); // re-observa a nova pasta
     const ws = cfg.workspace;
