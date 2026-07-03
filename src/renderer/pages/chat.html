@@ -2369,6 +2369,7 @@
       let mpCat = null; // catálogo { current, groups, favorites }
       let mpCurModel = '';
       let usingClaudeCode = false;
+      let usingGlmCode = false;
       let usingCodex = false;
       let usingExternalCodeEngine = false;
       // estado de aberto/fechado dos grupos (persiste)
@@ -2511,7 +2512,7 @@
       }
       async function openModelPop() {
         if (usingExternalCodeEngine) {
-          toast(`✦ Modelo controlado pelo Modo ${usingCodex ? 'Codex' : 'Claude Code'} nas Configurações`);
+          toast(`✦ Modelo controlado pelo Modo ${usingCodex ? 'Codex' : usingGlmCode ? 'GLM Code' : 'Claude Code'} nas Configurações`);
           return;
         }
         mpCat = await window.api.modelsCatalog();
@@ -2560,13 +2561,16 @@
       });
       function syncEngineLabel(c) {
         usingClaudeCode = c.architectMode === true && c.codeEngine === 'claude-code';
+        usingGlmCode = c.architectMode === true && c.codeEngine === 'glm-code';
         usingCodex = c.architectMode === true && c.codeEngine === 'codex';
-        usingExternalCodeEngine = usingClaudeCode || usingCodex;
+        usingExternalCodeEngine = usingClaudeCode || usingGlmCode || usingCodex;
         const label = usingClaudeCode
           ? `Claude Code · ${c.claudeCodeModel || 'sonnet'}`
-          : usingCodex
-            ? `Codex · ${c.codexModel || 'recomendado'}`
-            : c.model;
+          : usingGlmCode
+            ? `GLM Code · ${c.glmCodeModel || 'glm-5.2[1m]'}`
+            : usingCodex
+              ? `Codex · ${c.codexModel || 'recomendado'}`
+              : c.model;
         if (label) mpSetLabel(label);
       }
       window.api.getConfig().then(syncEngineLabel);
@@ -2731,14 +2735,14 @@
         const aprox = s.exact ? '' : '~';
         const capacity = s.window ? `/${fmtK(s.window)}${s.pct != null ? ` (${s.pct}%)` : ''}` : '';
         const phase = s.live && s.phase ? s.phase : '';
-        const externalEngine = s.engine === 'claude-code' || s.engine === 'codex';
+        const externalEngine = s.engine === 'claude-code' || s.engine === 'glm-code' || s.engine === 'codex';
         const usage = externalEngine && s.usagePct != null ? `uso: ${fmtPct(s.usagePct)}` : '';
         statsTxt = [phase.trim(), usage, `⚡ ${s.tps} tok/s`, `🧠 ${aprox}${fmtK(s.ctx)}${capacity}`, `saída ${aprox}${fmtK(s.out)} tok`]
           .filter(Boolean)
           .join('  ·  ');
         const usageTitle =
           usage
-            ? `${s.engine === 'codex' ? 'Codex/ChatGPT' : 'Claude Code'} usage: ${fmtPct(s.usagePct)}${s.usageLabel ? ' · janela ' + s.usageLabel : ''}${s.usageResetsAt ? ' · reseta em ' + fmtWhen(s.usageResetsAt) : ''}\n`
+            ? `${s.engine === 'codex' ? 'Codex/ChatGPT' : s.engine === 'glm-code' ? 'GLM/Z.ai' : 'Claude Code'} usage: ${fmtPct(s.usagePct)}${s.usageLabel ? ' · janela ' + s.usageLabel : ''}${s.usageResetsAt ? ' · reseta em ' + fmtWhen(s.usageResetsAt) : ''}\n`
             : '';
         statsTitle =
           `${s.live ? 'Atualizando ao vivo' : 'Última medição'} · ${s.phase || 'resposta'}\n` +
@@ -2762,8 +2766,8 @@
         const d = document.createElement('div');
         d.className = 'msg tool';
         d.textContent =
-          info && (info.engine === 'claude-code' || info.engine === 'codex')
-            ? `🗜️ ${info.engine === 'codex' ? 'Codex' : 'Claude Code'} compactou a sessão${info.beforeTokens ? ' (' + fmtK(info.beforeTokens) + ' tokens antes)' : ''}`
+          info && (info.engine === 'claude-code' || info.engine === 'glm-code' || info.engine === 'codex')
+            ? `🗜️ ${info.engine === 'codex' ? 'Codex' : info.engine === 'glm-code' ? 'GLM Code' : 'Claude Code'} compactou a sessão${info.beforeTokens ? ' (' + fmtK(info.beforeTokens) + ' tokens antes)' : ''}`
             : `🗜️ contexto compactado (resumi o histórico antigo, mantendo ${info.kept} mensagens)`;
         msgs.appendChild(d);
         scrollBottom();
@@ -3489,17 +3493,17 @@
       let claudeAgents = [];
       let claudeSkills = [];
       function allCommands() {
-        return usingClaudeCode ? COMMANDS.concat(claudeCommands) : COMMANDS;
+        return usingClaudeCode || usingGlmCode ? COMMANDS.concat(claudeCommands) : COMMANDS;
       }
       function showClaudeResources() {
-        if (!usingClaudeCode) {
-          note('O Modo Claude Code não está ativo neste chat.');
+        if (!usingClaudeCode && !usingGlmCode) {
+          note('Nenhum motor baseado no Claude Code está ativo neste chat.');
           return;
         }
         const commands = claudeCommands.length ? claudeCommands.map((c) => '/' + c.cmd).join('  ·  ') : '(a sessão ainda não publicou comandos)';
         const agents = claudeAgents.length ? claudeAgents.map((a) => a.name).join(', ') : '(nenhum agente descoberto)';
         const skills = claudeSkills.length ? claudeSkills.join(', ') : '(nenhuma skill descoberta)';
-        note('✦ Comandos Claude Code: ' + commands + '\nAgentes: ' + agents + '\nSkills: ' + skills);
+        note(`✦ Comandos ${usingGlmCode ? 'GLM Code' : 'Claude Code'}: ` + commands + '\nAgentes: ' + agents + '\nSkills: ' + skills);
       }
       function showHelp() {
         note('Comandos: ' + allCommands().map((c) => '/' + c.cmd).join('  ·  '));

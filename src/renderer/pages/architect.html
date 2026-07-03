@@ -130,6 +130,7 @@
       <select id="codeEngine">
         <option value="native">Lumi nativa (provedor das Configurações)</option>
         <option value="claude-code">Claude Code (assinatura Pro/Max)</option>
+        <option value="glm-code">GLM Code (Coding Plan da Z.ai)</option>
         <option value="codex">Codex (conta ChatGPT local)</option>
       </select>
       <div id="engineStatus" class="hint"></div>
@@ -176,6 +177,15 @@
             : 'Codex ainda não autenticado — entre com ChatGPT pela janela de Configurações.';
           return;
         }
+        if (codeEngineEl.value === 'glm-code') {
+          const s = await window.api.glmCodeStatus();
+          engineStatusEl.textContent = s && s.ready
+            ? `✦ GLM Code conectado à Z.ai · ${s.model || 'GLM-5.2'}.`
+            : s && s.error
+              ? `GLM Code: ${s.error}`
+              : 'GLM Code ainda não configurado — informe a chave Z.ai pela janela de Configurações.';
+          return;
+        }
         const s = await window.api.claudeCodeStatus();
         engineStatusEl.textContent = s && s.ready
           ? `✦ Claude Code conectado à conta ${s.subscriptionType || 'Claude.ai'}${s.email ? ' · ' + s.email : ''}.`
@@ -211,6 +221,8 @@
         msgEl.textContent =
           codeEngineEl.value === 'claude-code'
             ? 'Claude Code assumirá os próximos turnos de código. ✦'
+            : codeEngineEl.value === 'glm-code'
+              ? 'GLM Code assumirá os próximos turnos usando seu Coding Plan da Z.ai. ✦'
             : codeEngineEl.value === 'codex'
               ? 'Codex assumirá os próximos turnos usando sua conta ChatGPT. ✦'
               : 'Motor nativo da Lumi selecionado.';

@@ -1135,6 +1135,16 @@ const claudeCodeEffortEl = document.getElementById('claudeCodeEffort');
 const claudeCodePromptEl = document.getElementById('claudeCodePrompt');
 const claudeCodeLoginBtn = document.getElementById('claudeCodeLogin');
 const claudeCodeLogoutBtn = document.getElementById('claudeCodeLogout');
+const glmCodeFieldsEl = document.getElementById('glmCodeFields');
+const glmCodeApiKeyEl = document.getElementById('glmCodeApiKey');
+const glmCodeModelEl = document.getElementById('glmCodeModel');
+const glmCodePermissionModeEl = document.getElementById('glmCodePermissionMode');
+const glmCodeEffortEl = document.getElementById('glmCodeEffort');
+const glmCodePromptEl = document.getElementById('glmCodePrompt');
+const glmCodeRevealBtn = document.getElementById('glmCodeReveal');
+const glmCodeVerifyBtn = document.getElementById('glmCodeVerify');
+const glmCodeGetKeyBtn = document.getElementById('glmCodeGetKey');
+const glmCodeClearBtn = document.getElementById('glmCodeClear');
 const codexFieldsEl = document.getElementById('codexFields');
 const codexModelEl = document.getElementById('codexModel');
 const codexPermissionModeEl = document.getElementById('codexPermissionMode');
@@ -1571,6 +1581,11 @@ async function openSettings() {
   claudeCodePermissionModeEl.value = c.claudeCodePermissionMode || 'default';
   claudeCodeEffortEl.value = c.claudeCodeEffort || 'high';
   claudeCodePromptEl.value = c.claudeCodePrompt || '';
+  glmCodeApiKeyEl.value = c.glmCodeApiKey || '';
+  glmCodeModelEl.value = c.glmCodeModel || 'glm-5.2[1m]';
+  glmCodePermissionModeEl.value = c.glmCodePermissionMode || 'default';
+  glmCodeEffortEl.value = c.glmCodeEffort || 'max';
+  glmCodePromptEl.value = c.glmCodePrompt || '';
   codexPermissionModeEl.value = c.codexPermissionMode || 'default';
   codexEffortEl.value = c.codexEffort || 'high';
   codexPromptEl.value = c.codexPrompt || '';
@@ -1667,6 +1682,39 @@ async function refreshClaudeCodeStatus() {
   }
 }
 
+async function refreshGlmCodeStatus(draft) {
+  codeEngineStatusEl.textContent = 'verificando Z.ai…';
+  codeEngineStatusEl.dataset.state = 'loading';
+  try {
+    const s = await window.api.glmCodeStatus(
+      draft || {
+        glmCodeApiKey: glmCodeApiKeyEl.value.trim(),
+        glmCodeModel: glmCodeModelEl.value,
+      }
+    );
+    if (!s.installed) {
+      codeEngineStatusEl.textContent = 'harness Claude Code não instalado';
+      codeEngineStatusEl.dataset.state = 'error';
+      return;
+    }
+    if (s.ready) {
+      codeEngineStatusEl.textContent = s.verified
+        ? `conectado · Z.AI · ${s.model || glmCodeModelEl.value}`
+        : `configurado · ${s.model || glmCodeModelEl.value} · verificação offline`;
+      codeEngineStatusEl.dataset.state = s.verified ? 'ready' : 'warning';
+      glmCodeVerifyBtn.textContent = s.verified ? 'Conexão Z.ai pronta ✓' : 'Verificar novamente';
+      return;
+    }
+    codeEngineStatusEl.textContent = s.error || 'informe a chave do Coding Plan';
+    codeEngineStatusEl.dataset.state = s.configured ? 'error' : 'warning';
+    glmCodeVerifyBtn.textContent = 'Verificar conexão Z.ai';
+  } catch (e) {
+    codeEngineStatusEl.textContent = 'erro ao verificar a Z.ai';
+    codeEngineStatusEl.dataset.state = 'error';
+    glmCodeVerifyBtn.textContent = 'Tentar novamente';
+  }
+}
+
 async function loadCodexModels(selected) {
   try {
     const result = await window.api.codexModels();
@@ -1733,12 +1781,19 @@ async function refreshCodexStatus() {
 
 function updateCodeEngineUI(workspace) {
   const engine = codeEngineEl.value;
-  const external = engine === 'claude-code' || engine === 'codex';
+  const external = engine === 'claude-code' || engine === 'glm-code' || engine === 'codex';
   claudeCodeCardEl.classList.toggle('is-active', external);
   claudeCodeFieldsEl.hidden = engine !== 'claude-code';
+  glmCodeFieldsEl.hidden = engine !== 'glm-code';
   codexFieldsEl.hidden = engine !== 'codex';
   codeEngineTitleEl.textContent =
-    engine === 'claude-code' ? 'Claude Code dentro da Lumi' : engine === 'codex' ? 'Codex dentro da Lumi' : 'Motor nativo da Lumi';
+    engine === 'claude-code'
+      ? 'Claude Code dentro da Lumi'
+      : engine === 'glm-code'
+        ? 'GLM Code dentro da Lumi'
+        : engine === 'codex'
+          ? 'Codex dentro da Lumi'
+          : 'Motor nativo da Lumi';
   codeEngineScopeEl.textContent = workspace
     ? `Projeto inteiro disponível via cwd: ${workspace}. O arquivo aberto no editor é sinalizado automaticamente no próximo prompt.`
     : external
@@ -1748,6 +1803,7 @@ function updateCodeEngineUI(workspace) {
 
 function refreshCodeEngineStatus() {
   if (codeEngineEl.value === 'claude-code') return refreshClaudeCodeStatus();
+  if (codeEngineEl.value === 'glm-code') return refreshGlmCodeStatus();
   if (codeEngineEl.value === 'codex') return refreshCodexStatus();
   codeEngineStatusEl.textContent = 'pronto · provedor configurado';
   codeEngineStatusEl.dataset.state = 'ready';
@@ -1794,6 +1850,23 @@ codexLoginBtn.addEventListener('click', async () => {
 codexLogoutBtn.addEventListener('click', async () => {
   await window.api.codexLogout();
   refreshCodexStatus();
+});
+glmCodeRevealBtn.addEventListener('click', () => {
+  const reveal = glmCodeApiKeyEl.type === 'password';
+  glmCodeApiKeyEl.type = reveal ? 'text' : 'password';
+  glmCodeRevealBtn.textContent = reveal ? 'Ocultar' : 'Mostrar';
+});
+glmCodeVerifyBtn.addEventListener('click', () =>
+  refreshGlmCodeStatus({
+    glmCodeApiKey: glmCodeApiKeyEl.value.trim(),
+    glmCodeModel: glmCodeModelEl.value,
+  })
+);
+glmCodeGetKeyBtn.addEventListener('click', () => window.api.openExternal('https://z.ai/manage-apikey/apikey-list'));
+glmCodeClearBtn.addEventListener('click', async () => {
+  glmCodeApiKeyEl.value = '';
+  await window.api.setConfig({ glmCodeApiKey: '' });
+  refreshGlmCodeStatus({ glmCodeApiKey: '', glmCodeModel: glmCodeModelEl.value });
 });
 tempEl.addEventListener('input', () => (tempValEl.textContent = tempEl.value));
 
@@ -1915,6 +1988,11 @@ function readForm() {
     claudeCodePermissionMode: claudeCodePermissionModeEl.value,
     claudeCodeEffort: claudeCodeEffortEl.value,
     claudeCodePrompt: claudeCodePromptEl.value.trim(),
+    glmCodeApiKey: glmCodeApiKeyEl.value.trim(),
+    glmCodeModel: glmCodeModelEl.value,
+    glmCodePermissionMode: glmCodePermissionModeEl.value,
+    glmCodeEffort: glmCodeEffortEl.value,
+    glmCodePrompt: glmCodePromptEl.value.trim(),
     codexModel: codexModelEl.value,
     codexPermissionMode: codexPermissionModeEl.value,
     codexEffort: codexEffortEl.value,

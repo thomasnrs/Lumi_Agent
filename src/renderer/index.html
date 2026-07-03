@@ -553,9 +553,55 @@
         box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
       }
       #settings .claude-scope code { color: color-mix(in srgb, var(--text) 88%, var(--accent)); word-break: break-all; }
-      #settings .claude-actions { display: flex; gap: 8px; margin-top: 12px; }
+      #settings .engine-provider {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        margin-top: 12px;
+        padding: 11px 12px;
+        border: 1px solid color-mix(in srgb, #6ee7b7 26%, var(--border));
+        border-radius: 12px;
+        background:
+          linear-gradient(115deg, color-mix(in srgb, #34d399 9%, var(--surface-2)), color-mix(in srgb, var(--surface-2) 82%, transparent));
+      }
+      #settings .engine-provider-badge {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        min-width: 42px;
+        height: 30px;
+        padding: 0 8px;
+        border: 1px solid color-mix(in srgb, #6ee7b7 38%, transparent);
+        border-radius: 9px;
+        background: color-mix(in srgb, #34d399 12%, var(--surface));
+        color: #83e6bd;
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: .11em;
+      }
+      #settings .engine-provider-copy { min-width: 0; }
+      #settings .engine-provider-title { color: var(--text); font-size: 12px; font-weight: 650; }
+      #settings .engine-provider-sub { margin-top: 2px; color: #84909f; font-size: 10px; line-height: 1.4; }
+      #settings .engine-secret-row { display: flex; gap: 7px; }
+      #settings .engine-secret-row input { flex: 1; min-width: 0; }
+      #settings .engine-secret-row button {
+        flex: 0 0 auto;
+        min-width: 72px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--surface) 88%, transparent);
+        color: #aab3c2;
+        cursor: pointer;
+        transition: border-color .16s ease, color .16s ease, background .16s ease;
+      }
+      #settings .engine-secret-row button:hover {
+        border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+        color: var(--text);
+        background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+      }
+      #settings .claude-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
       #settings .claude-actions button {
-        min-height: 38px;
+        min-height: 40px;
         padding: 8px 13px;
         border: 1px solid var(--border);
         border-radius: 10px;
@@ -565,7 +611,7 @@
         transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
       }
       #settings .claude-actions button:first-child {
-        flex: 1;
+        flex: 1 1 180px;
         border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
         background: color-mix(in srgb, var(--accent) 12%, var(--surface));
       }
@@ -786,6 +832,7 @@
               <select id="codeEngine">
                 <option value="native">Lumi nativa — usa o provedor configurado acima</option>
                 <option value="claude-code">Claude Code — usa minha assinatura Pro/Max</option>
+                <option value="glm-code">GLM Code — usa meu Coding Plan da Z.ai</option>
                 <option value="codex">Codex — usa minha conta ChatGPT</option>
               </select>
             </div>
@@ -828,6 +875,62 @@
                 <textarea id="claudeCodePrompt" rows="3" placeholder="Opcional: convenções pessoais, estilo de resposta, regras extras para projetos…"></textarea>
               </div>
               <p class="claude-footnote">O Claude Code lê <code>CLAUDE.md</code>, comandos, agentes, skills, plugins e MCPs disponíveis no projeto.</p>
+            </div>
+            <div id="glmCodeFields" class="engine-panel" hidden>
+              <div class="engine-provider">
+                <span class="engine-provider-badge">GLM</span>
+                <div class="engine-provider-copy">
+                  <div class="engine-provider-title">Z.ai por dentro do Claude Code</div>
+                  <div class="engine-provider-sub">O harness cuida das ferramentas e sessões; o GLM Coding Plan fornece o modelo e a cota.</div>
+                </div>
+              </div>
+              <div class="claude-grid">
+                <div class="claude-field wide">
+                  <label>Chave do GLM Coding Plan</label>
+                  <div class="engine-secret-row">
+                    <input id="glmCodeApiKey" type="password" placeholder="Cole sua chave da Z.ai" autocomplete="off" />
+                    <button id="glmCodeReveal" type="button" aria-label="Mostrar ou ocultar chave">Mostrar</button>
+                  </div>
+                </div>
+                <div class="claude-field">
+                  <label>Modelo</label>
+                  <select id="glmCodeModel">
+                    <option value="glm-5.2[1m]">GLM-5.2 · contexto de 1M</option>
+                    <option value="glm-5.2">GLM-5.2 · contexto padrão</option>
+                    <option value="glm-4.7">GLM-4.7 · compatibilidade</option>
+                    <option value="glm-4.5-air">GLM-4.5 Air · rápido</option>
+                  </select>
+                </div>
+                <div class="claude-field">
+                  <label>Permissões</label>
+                  <select id="glmCodePermissionMode">
+                    <option value="default">Normal — perguntar quando necessário</option>
+                    <option value="auto">Auto — agente decide aprovações simples</option>
+                    <option value="acceptEdits">Aceitar edições automaticamente</option>
+                    <option value="plan">Planejar — somente leitura</option>
+                  </select>
+                </div>
+                <div class="claude-field wide">
+                  <label>Esforço de raciocínio</label>
+                  <select id="glmCodeEffort">
+                    <option value="low">Baixo</option>
+                    <option value="medium">Médio</option>
+                    <option value="high">Alto</option>
+                    <option value="xhigh">Muito alto</option>
+                    <option value="max">Máximo — recomendado para código complexo</option>
+                  </select>
+                </div>
+              </div>
+              <div class="claude-actions">
+                <button id="glmCodeVerify" type="button">Verificar conexão Z.ai</button>
+                <button id="glmCodeGetKey" type="button">Obter chave</button>
+                <button id="glmCodeClear" type="button">Limpar</button>
+              </div>
+              <div class="claude-field wide">
+                <label>Instruções extras</label>
+                <textarea id="glmCodePrompt" rows="3" placeholder="Opcional: preferências, convenções e regras extras para o GLM…"></textarea>
+              </div>
+              <p class="claude-footnote">A chave é usada somente no processo isolado deste motor. O login Claude Max não é necessário e sua configuração global do Claude Code não é alterada.</p>
             </div>
             <div id="codexFields" class="engine-panel" hidden>
               <div class="claude-grid">

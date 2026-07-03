@@ -208,6 +208,7 @@ contextBridge.exposeInMainWorld('api', {
   claudeCodeLogin: () => ipcRenderer.invoke('claude-code:login'),
   claudeCodeLogout: () => ipcRenderer.invoke('claude-code:logout'),
   claudeCodeCapabilities: () => ipcRenderer.invoke('claude-code:capabilities'),
+  glmCodeStatus: (draft) => ipcRenderer.invoke('glm-code:status', draft),
   codexStatus: () => ipcRenderer.invoke('codex:status'),
   codexLogin: () => ipcRenderer.invoke('codex:login'),
   codexLogout: () => ipcRenderer.invoke('codex:logout'),

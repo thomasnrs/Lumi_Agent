@@ -172,6 +172,8 @@ function makeSession(id) {
     claudeSessionId: '',
     claudeSessionWorkspace: '',
     claudeQuery: null, // Query do Agent SDK em andamento NESTA sessão (Stop interrompe só ela)
+    glmSessionId: '',
+    glmSessionWorkspace: '',
     codexThreadId: '',
     codexThreadWorkspace: '',
     codexControl: null, // interrupt/steer do turno Codex ativo nesta conversa
@@ -389,11 +391,16 @@ const DEFAULT_CONFIG = {
   toolsEnabled: true, // ferramentas/agente (requer modelo compativel)
   memoryEnabled: true, // memoria persistente (fatos no contexto + historico em disco)
   architectMode: false, // modo arquiteto (codigo) com memoria por workspace
-  codeEngine: 'native', // 'native' | 'claude-code' | 'codex' — motor usado no Modo Arquiteto
+  codeEngine: 'native', // 'native' | 'claude-code' | 'glm-code' | 'codex' — motor usado no Modo Arquiteto
   claudeCodeModel: 'sonnet', // alias do Claude Code: sonnet | opus | haiku (ou id completo)
   claudeCodePermissionMode: 'default', // default | auto | acceptEdits | plan
   claudeCodeEffort: 'high', // low | medium | high | xhigh | max
   claudeCodePrompt: '', // instruções extras do usuário anexadas ao prompt Lumi + Claude Code
+  glmCodeApiKey: '', // chave do GLM Coding Plan (Z.ai); usada só no processo isolado do Claude Code
+  glmCodeModel: 'glm-5.2[1m]', // modelo GLM mapeado para os aliases internos do Claude Code
+  glmCodePermissionMode: 'default', // default | auto | acceptEdits | plan
+  glmCodeEffort: 'max', // low | medium | high | xhigh | max
+  glmCodePrompt: '', // instruções extras anexadas ao prompt Lumi + GLM Code
   codexModel: '', // vazio = modelo recomendado da conta/CLI
   codexPermissionMode: 'default', // default | auto | readOnly | fullAccess
   codexEffort: 'high', // none | minimal | low | medium | high | xhigh
@@ -7383,6 +7390,8 @@ function saveCurrentChat() {
       lastTurnContext: S().lastTurnContext,
       claudeSessionId: S().claudeSessionId,
       claudeSessionWorkspace: S().claudeSessionWorkspace,
+      glmSessionId: S().glmSessionId,
+      glmSessionWorkspace: S().glmSessionWorkspace,
       codexThreadId: S().codexThreadId,
       codexThreadWorkspace: S().codexThreadWorkspace,
     };
@@ -7432,6 +7441,8 @@ function loadChatInto(id) {
     S().lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
     S().claudeSessionId = j.claudeSessionId || '';
     S().claudeSessionWorkspace = j.claudeSessionWorkspace || '';
+    S().glmSessionId = j.glmSessionId || '';
+    S().glmSessionWorkspace = j.glmSessionWorkspace || '';
     S().codexThreadId = j.codexThreadId || '';
     S().codexThreadWorkspace = j.codexThreadWorkspace || '';
     S().codexControl = null;
@@ -7464,6 +7475,8 @@ function newChat(seedSummary, seedWorklog) {
   S().lastTurnContext = null;
   S().claudeSessionId = '';
   S().claudeSessionWorkspace = '';
+  S().glmSessionId = '';
+  S().glmSessionWorkspace = '';
   S().codexThreadId = '';
   S().codexThreadWorkspace = '';
   S().codexControl = null;
@@ -7589,6 +7602,8 @@ function initChats() {
     currentChatId = '';
     S().claudeSessionId = '';
     S().claudeSessionWorkspace = '';
+    S().glmSessionId = '';
+    S().glmSessionWorkspace = '';
     S().codexThreadId = '';
     S().codexThreadWorkspace = '';
     S().codexControl = null;
@@ -10461,6 +10476,23 @@ function claudeCodeEnv() {
   delete env.CLAUDE_CODE_USE_FOUNDRY;
   return env;
 }
+const GLM_CODE_ANTHROPIC_URL = 'https://api.z.ai/api/anthropic';
+const GLM_CODE_OPENAI_URL = 'https://api.z.ai/api/coding/paas/v4';
+function glmCodeEnv(cfg) {
+  const env = claudeCodeEnv();
+  const model = String(cfg.glmCodeModel || 'glm-5.2[1m]').trim();
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  env.ANTHROPIC_AUTH_TOKEN = String(cfg.glmCodeApiKey || '').trim();
+  env.ANTHROPIC_BASE_URL = GLM_CODE_ANTHROPIC_URL;
+  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+  env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+  env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+  env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = /\[1m\]$/i.test(model) ? '1000000' : '200000';
+  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  env.API_TIMEOUT_MS = '3000000';
+  env.CLAUDE_AGENT_SDK_CLIENT_APP = 'lumi-desktop-glm/1.0';
+  return env;
+}
 function claudeSharedCredentialState() {
   const fp = path.join(require('os').homedir(), '.claude', '.credentials.json');
   try {
@@ -10512,7 +10544,71 @@ async function claudeCodeStatus() {
     }
   }
 }
+async function glmCodeStatus(overrides, verify) {
+  const cfg = { ...loadConfig(), ...(overrides && typeof overrides === 'object' ? overrides : {}) };
+  const exe = claudeCodeExecutable();
+  if (!fs.existsSync(exe)) return { installed: false, ready: false, executable: exe };
+  const apiKey = String(cfg.glmCodeApiKey || '').trim();
+  if (!apiKey) {
+    return {
+      installed: true,
+      ready: false,
+      configured: false,
+      executable: exe,
+      error: 'Informe a chave do GLM Coding Plan.',
+    };
+  }
+  if (verify === false) {
+    return {
+      installed: true,
+      ready: true,
+      configured: true,
+      executable: exe,
+      model: cfg.glmCodeModel || 'glm-5.2[1m]',
+    };
+  }
+  try {
+    const res = await fetch(GLM_CODE_OPENAI_URL + '/models', {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) {
+      const detail = truncate(await res.text(), 220);
+      return {
+        installed: true,
+        ready: false,
+        configured: true,
+        executable: exe,
+        status: res.status,
+        error: res.status === 401 || res.status === 403 ? 'Chave Z.ai inválida ou sem acesso ao Coding Plan.' : `Z.ai HTTP ${res.status}: ${detail}`,
+      };
+    }
+    const data = await res.json();
+    const models = (data.data || data.models || []).map((m) => m && (m.id || m.name)).filter(Boolean);
+    return {
+      installed: true,
+      ready: true,
+      configured: true,
+      verified: true,
+      executable: exe,
+      model: cfg.glmCodeModel || 'glm-5.2[1m]',
+      models,
+    };
+  } catch (e) {
+    // Sem rede não bloqueia o motor: a chamada real ainda poderá funcionar quando a conexão voltar.
+    return {
+      installed: true,
+      ready: true,
+      configured: true,
+      verified: false,
+      executable: exe,
+      model: cfg.glmCodeModel || 'glm-5.2[1m]',
+      warning: 'Chave configurada; não foi possível consultar a Z.ai agora.',
+    };
+  }
+}
 ipcMain.handle('claude-code:status', () => claudeCodeStatus());
+ipcMain.handle('glm-code:status', (_e, draft) => glmCodeStatus(draft, true));
 ipcMain.handle('claude-code:login', () => {
   const exe = claudeCodeExecutable();
   if (!fs.existsSync(exe)) return { error: 'binário do Claude Code não encontrado — reinstale as dependências da Lumi' };
@@ -10605,8 +10701,9 @@ function coerceElicitationValue(value, field) {
   if (field && field.type === 'array') return s.split(',').map((x) => x.trim()).filter(Boolean);
   return s;
 }
-async function askClaudeElicitation(req) {
-  const title = req.title || req.displayName || `Claude Code${req.serverName ? ' · ' + req.serverName : ''}`;
+async function askClaudeElicitation(req, engineLabel) {
+  const label = engineLabel || 'Claude Code';
+  const title = req.title || req.displayName || `${label}${req.serverName ? ' · ' + req.serverName : ''}`;
   const desc = [req.description, req.message].filter(Boolean).join('\n');
   if (req.mode === 'url' && req.url) {
     const first = await askUserInChat(`${title}\n\n${desc}\n\nURL: ${req.url}`, ['Abrir URL', 'Já concluí', 'Cancelar'], {
@@ -10666,9 +10763,9 @@ async function askClaudeElicitation(req) {
   }
   return { action: 'cancel' };
 }
-async function askClaudeUserDialog(req) {
+async function askClaudeUserDialog(req, engineLabel) {
   const payload = req && req.payload && typeof req.payload === 'object' ? req.payload : {};
-  const title = payload.title || payload.heading || payload.displayName || `Claude Code: ${req.dialogKind}`;
+  const title = payload.title || payload.heading || payload.displayName || `${engineLabel || 'Claude Code'}: ${req.dialogKind}`;
   const message = payload.message || payload.prompt || payload.question || payload.description || payload.body || JSON.stringify(payload, null, 2);
   const rawOptions = Array.isArray(payload.options) ? payload.options : Array.isArray(payload.choices) ? payload.choices : [];
   const options = rawOptions
@@ -10699,9 +10796,9 @@ function claudeAskOptions(question) {
     .filter(Boolean)
     .slice(0, 8);
 }
-function claudeAskText(question, idx, total) {
+function claudeAskText(question, idx, total, engineLabel) {
   const q = question || {};
-  const header = q.header ? String(q.header) : total > 1 ? `Pergunta ${idx + 1}/${total}` : 'Claude Code precisa de uma resposta';
+  const header = q.header ? String(q.header) : total > 1 ? `Pergunta ${idx + 1}/${total}` : `${engineLabel || 'Claude Code'} precisa de uma resposta`;
   const body = String(q.question || q.prompt || q.message || 'Como deseja continuar?');
   const opts = claudeAskOptions(q);
   const optText = opts.length
@@ -10718,7 +10815,7 @@ function claudeAskText(question, idx, total) {
   const multi = q.multiSelect ? '\n\nPode responder com múltiplas opções separadas por vírgula.' : '';
   return `${header}\n\n${body}${multi}${optText}`;
 }
-async function answerClaudeAskUserQuestion(input) {
+async function answerClaudeAskUserQuestion(input, engineLabel) {
   const src = input && typeof input === 'object' ? input : {};
   const questions = Array.isArray(src.questions) ? src.questions.slice(0, 8) : [];
   const answers = src.answers && typeof src.answers === 'object' && !Array.isArray(src.answers) ? { ...src.answers } : {};
@@ -10732,13 +10829,13 @@ async function answerClaudeAskUserQuestion(input) {
     const choices = opts.length
       ? (q.multiSelect ? opts.concat('Responder livremente', 'Cancelar') : opts.concat('Responder livremente', 'Cancelar'))
       : ['Responder livremente', 'Cancelar'];
-    let answer = await askUserInChat(claudeAskText(q, i, questions.length), choices, {
+    let answer = await askUserInChat(claudeAskText(q, i, questions.length, engineLabel), choices, {
       fallback: 'Cancelar',
       timeoutMs: 20 * 60000,
     });
     if (/^cancelar$/i.test(answer) || /^cancel$/i.test(answer)) return { cancelled: true, input: src };
     if (/^responder livremente$/i.test(answer)) {
-      answer = await askUserInChat(`Resposta livre para o Claude Code:\n\n${questionText}`, ['Cancelar'], {
+      answer = await askUserInChat(`Resposta livre para o ${engineLabel || 'Claude Code'}:\n\n${questionText}`, ['Cancelar'], {
         fallback: 'Cancelar',
         timeoutMs: 20 * 60000,
       });
@@ -10764,9 +10861,14 @@ function claudeUserPrompt() {
   return prompt;
 }
 function buildClaudeCodePrompt(cfg) {
+  const glmMode = cfg.codeEngine === 'glm-code';
+  const engineLabel = glmMode ? 'GLM Code' : 'Claude Code';
+  const engineDescription = glmMode
+    ? 'usa o Claude Code como harness de engenharia e o GLM da Z.ai como modelo'
+    : 'usa o Claude Code como seu motor de engenharia';
   const parts = [
     '# Identidade',
-    'Você é a Lumi, uma companheira virtual que vive na área de trabalho do usuário. No Modo Código, você usa o Claude Code como seu motor de engenharia, mas continua sendo a Lumi.',
+    `Você é a Lumi, uma companheira virtual que vive na área de trabalho do usuário. No Modo Código, você ${engineDescription}, mas continua sendo a Lumi.`,
     'Seja calorosa, curiosa, levemente brincalhona e genuinamente prestativa. Fale sempre no idioma do usuário.',
     'Em trabalho técnico, seja objetiva e aja como uma engenheira sênior: investigue, implemente, verifique e entregue o resultado. Não transforme cada passo em um discurso.',
     '',
@@ -10780,15 +10882,16 @@ function buildClaudeCodePrompt(cfg) {
     '',
     '# Continuidade',
     '- Sua sessão é persistida por chat e workspace. Continue tarefas anteriores sem exigir que o usuário repita contexto já presente na sessão.',
-    '- CLAUDE.md, regras do repositório, skills, comandos, agentes, plugins e MCPs descobertos pelo Claude Code continuam tendo validade e devem ser usados quando relevantes.',
+    `- CLAUDE.md, regras do repositório, skills, comandos, agentes, plugins e MCPs descobertos pelo ${engineLabel} continuam tendo validade e devem ser usados quando relevantes.`,
     `- ${OS_NOTE}`,
     `- ${timeNote()}`,
   ];
   if (cfg.systemPrompt && cfg.systemPrompt !== DEFAULT_CONFIG.systemPrompt) {
     parts.push('', '# Personalização escrita pelo usuário', String(cfg.systemPrompt).slice(0, 12000));
   }
-  if (cfg.claudeCodePrompt && String(cfg.claudeCodePrompt).trim()) {
-    parts.push('', '# Instruções extras para o Modo Claude Code', String(cfg.claudeCodePrompt).trim().slice(0, 12000));
+  const extraPrompt = glmMode ? cfg.glmCodePrompt : cfg.claudeCodePrompt;
+  if (extraPrompt && String(extraPrompt).trim()) {
+    parts.push('', `# Instruções extras para o Modo ${engineLabel}`, String(extraPrompt).trim().slice(0, 12000));
   }
   if (cfg.memoryEnabled !== false) {
     const facts = loadFacts().map((x) => x.fact).slice(-30);
@@ -10831,7 +10934,7 @@ function claudePct(v) {
   const pct = n <= 1 ? n * 100 : n; // rate_limit_event costuma vir 0..1; /usage vem 0..100
   return Math.max(0, Math.min(999, Math.round(pct * 10) / 10));
 }
-function claudeLimitLabel(type) {
+function claudeLimitLabel(type, fallback) {
   const map = {
     five_hour: '5h',
     seven_day: '7d',
@@ -10841,9 +10944,9 @@ function claudeLimitLabel(type) {
     overage: 'extra',
     extra_usage: 'extra',
   };
-  return map[type] || type || 'Claude Max';
+  return map[type] || type || fallback || 'Claude Max';
 }
-function claudeLimitFromRateEvent(info) {
+function claudeLimitFromRateEvent(info, fallback) {
   if (!info) return null;
   const pct = claudePct(info.utilization);
   if (pct == null) return null;
@@ -10853,12 +10956,12 @@ function claudeLimitFromRateEvent(info) {
       : info.resetsAt || null;
   return {
     usagePct: pct,
-    usageLabel: claudeLimitLabel(info.rateLimitType),
+    usageLabel: claudeLimitLabel(info.rateLimitType, fallback),
     usageStatus: info.status || '',
     usageResetsAt: resetsAt,
   };
 }
-function claudeLimitFromUsageResponse(data) {
+function claudeLimitFromUsageResponse(data, fallback) {
   const limits = data && data.rate_limits;
   if (!limits || data.rate_limits_available === false) return null;
   let best = null;
@@ -10869,7 +10972,7 @@ function claudeLimitFromUsageResponse(data) {
     if (pct == null) continue;
     const candidate = {
       usagePct: pct,
-      usageLabel: claudeLimitLabel(key),
+      usageLabel: claudeLimitLabel(key, fallback),
       usageStatus: data.subscription_type || '',
       usageResetsAt: item.resets_at || null,
     };
@@ -10877,7 +10980,7 @@ function claudeLimitFromUsageResponse(data) {
   }
   return best;
 }
-function claudeUsageStats(usage, started, phase, live, generatedChars, limitInfo) {
+function claudeUsageStats(usage, started, phase, live, generatedChars, limitInfo, engine) {
   const mapped = claudeUsageToChatUsage(usage);
   const input = (mapped && mapped.prompt_tokens) || 0;
   const output = (mapped && mapped.completion_tokens) || Math.ceil((generatedChars || 0) / 3.6);
@@ -10892,7 +10995,7 @@ function claudeUsageStats(usage, started, phase, live, generatedChars, limitInfo
     phase: phase || 'Claude Code',
     window: 0,
     pct: 0,
-    engine: 'claude-code',
+    engine: engine || 'claude-code',
     usagePct: limitInfo && limitInfo.usagePct,
     usageLabel: limitInfo && limitInfo.usageLabel,
     usageStatus: limitInfo && limitInfo.usageStatus,
@@ -10905,10 +11008,17 @@ function blockText(content) {
   return content.map((x) => (x && x.type === 'text' ? x.text : '')).filter(Boolean).join('\n');
 }
 async function runClaudeCodeAgent(cfg, promptOverride) {
-  if (!cfg.workspace) throw new Error('Defina um workspace antes de usar o Modo Claude Code.');
-  const status = await claudeCodeStatus();
-  if (!status.installed) throw new Error('Claude Code não está incluído nesta instalação da Lumi.');
+  const glmMode = cfg.codeEngine === 'glm-code';
+  const engine = glmMode ? 'glm-code' : 'claude-code';
+  const engineLabel = glmMode ? 'GLM Code' : 'Claude Code';
+  const providerLabel = glmMode ? 'GLM Coding Plan' : 'Claude Max';
+  if (!cfg.workspace) throw new Error(`Defina um workspace antes de usar o Modo ${engineLabel}.`);
+  const status = glmMode ? await glmCodeStatus(null, false) : await claudeCodeStatus();
+  if (!status.installed) throw new Error('O harness Claude Code não está incluído nesta instalação da Lumi.');
   if (!status.ready) {
+    if (glmMode) {
+      throw new Error('GLM Code ainda não está configurado. Abra Configurações → Motor do Modo Código e informe a chave do GLM Coding Plan.');
+    }
     throw new Error(
       status.needsLogin
         ? 'A conta Claude Max foi detectada, mas a credencial compartilhada expirou. O VS Code usa o cofre privado dele; clique em “Renovar sessão Max” nas Configurações para disponibilizar uma sessão ao Claude Code externo.'
@@ -10919,14 +11029,18 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   const { query } = await claudeSdk();
   const started = Date.now();
   const prompt = promptOverride || claudeUserPrompt();
-  const sameWorkspace = S().claudeSessionId && path.resolve(S().claudeSessionWorkspace || '') === path.resolve(cfg.workspace);
-  const mode = ['default', 'auto', 'acceptEdits', 'plan'].includes(cfg.claudeCodePermissionMode) ? cfg.claudeCodePermissionMode : 'default';
-  const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(cfg.claudeCodeEffort) ? cfg.claudeCodeEffort : 'high';
+  const sessionId = glmMode ? S().glmSessionId : S().claudeSessionId;
+  const sessionWorkspace = glmMode ? S().glmSessionWorkspace : S().claudeSessionWorkspace;
+  const sameWorkspace = sessionId && path.resolve(sessionWorkspace || '') === path.resolve(cfg.workspace);
+  const configuredMode = glmMode ? cfg.glmCodePermissionMode : cfg.claudeCodePermissionMode;
+  const configuredEffort = glmMode ? cfg.glmCodeEffort : cfg.claudeCodeEffort;
+  const mode = ['default', 'auto', 'acceptEdits', 'plan'].includes(configuredMode) ? configuredMode : 'default';
+  const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(configuredEffort) ? configuredEffort : glmMode ? 'max' : 'high';
   const options = {
     cwd: cfg.workspace,
     pathToClaudeCodeExecutable: claudeCodeExecutable(),
-    env: claudeCodeEnv(),
-    model: cfg.claudeCodeModel || 'sonnet',
+    env: glmMode ? glmCodeEnv(cfg) : claudeCodeEnv(),
+    model: glmMode ? 'sonnet' : cfg.claudeCodeModel || 'sonnet',
     permissionMode: mode,
     effort,
     maxTurns: Math.min(200, Math.max(4, parseInt(cfg.maxSteps, 10) || 48)),
@@ -10942,14 +11056,14 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       preset: 'claude_code',
       append: buildClaudeCodePrompt(cfg),
     },
-    onElicitation: async (request) => askClaudeElicitation(request),
-    onUserDialog: async (request) => askClaudeUserDialog(request),
+    onElicitation: async (request) => askClaudeElicitation(request, engineLabel),
+    onUserDialog: async (request) => askClaudeUserDialog(request, engineLabel),
     supportedDialogKinds: ['refusal_fallback_prompt', 'ask_user_question', 'confirmation', 'question'],
     canUseTool: async (toolName, input, info) => {
       if (/^AskUserQuestion$/i.test(String(toolName || ''))) {
-        const answered = await answerClaudeAskUserQuestion(input || {});
+        const answered = await answerClaudeAskUserQuestion(input || {}, engineLabel);
         return answered.cancelled
-          ? { behavior: 'deny', message: 'O usuário cancelou a pergunta do Claude Code.' }
+          ? { behavior: 'deny', message: `O usuário cancelou a pergunta do ${engineLabel}.` }
           : { behavior: 'allow', updatedInput: answered.input };
       }
       const category = claudeToolCategory(toolName);
@@ -10959,9 +11073,9 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
         ? { behavior: 'allow', updatedInput: input }
         : { behavior: 'deny', message: `O usuário negou a permissão para ${toolName}.` };
     },
-    stderr: (data) => logd('claude-code:stderr', truncate(String(data), 1000)),
+    stderr: (data) => logd(`${engine}:stderr`, truncate(String(data), 1000)),
   };
-  if (sameWorkspace) options.resume = S().claudeSessionId;
+  if (sameWorkspace) options.resume = sessionId;
 
   const q = query({ prompt, options });
   S().claudeQuery = q;
@@ -10975,6 +11089,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   const toolInputs = new Map();
   const toolAgentLabels = new Map();
   const refreshClaudeUsageHud = async () => {
+    if (glmMode) return null; // endpoint experimental é específico das assinaturas Claude.ai
     if (!q || typeof q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET !== 'function') return null;
     try {
       const data = await Promise.race([
@@ -10982,7 +11097,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
         new Promise((resolve) => setTimeout(() => resolve(null), 3500)),
       ]);
       if (!data) return null;
-      const limit = claudeLimitFromUsageResponse(data);
+      const limit = claudeLimitFromUsageResponse(data, providerLabel);
       if (limit) claudeLimitHud = limit;
       return data;
     } catch (e) {
@@ -10995,7 +11110,8 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
     refreshClaudeUsageHud(),
   ]).then(([commands, agents]) => {
     publishClaudeCapabilities({
-      sessionId: S().claudeSessionId,
+      sessionId: glmMode ? S().glmSessionId : S().claudeSessionId,
+      engine,
       commands: (commands || []).map((c) => ({
         name: c.name,
         description: c.description || '',
@@ -11005,12 +11121,17 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       agents: (agents || []).map((a) => ({ name: a.name, description: a.description || '', model: a.model || '' })),
     });
   });
-  claudeUsageStats(null, started, sameWorkspace ? 'retomando sessão Claude Code' : 'iniciando Claude Code', true, 0, claudeLimitHud);
+  claudeUsageStats(null, started, sameWorkspace ? `retomando sessão ${engineLabel}` : `iniciando ${engineLabel}`, true, 0, claudeLimitHud, engine);
   try {
     for await (const msg of q) {
       if (msg && msg.session_id) {
-        S().claudeSessionId = msg.session_id;
-        S().claudeSessionWorkspace = cfg.workspace;
+        if (glmMode) {
+          S().glmSessionId = msg.session_id;
+          S().glmSessionWorkspace = cfg.workspace;
+        } else {
+          S().claudeSessionId = msg.session_id;
+          S().claudeSessionWorkspace = cfg.workspace;
+        }
       }
       if (msg.type === 'stream_event' && msg.event) {
         const ev = msg.event;
@@ -11018,7 +11139,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           if (ev.delta.type === 'text_delta' && ev.delta.text) {
             if (msg.parent_tool_use_id) {
               streamedAgents.add(msg.parent_tool_use_id);
-              const label = toolAgentLabels.get(msg.parent_tool_use_id) || 'Subagente Claude';
+              const label = toolAgentLabels.get(msg.parent_tool_use_id) || `Subagente ${glmMode ? 'GLM' : 'Claude'}`;
               broadcast('chat:agent-token', { agent: label, t: ev.delta.text });
             } else {
               streamedMain = true;
@@ -11027,7 +11148,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
               broadcast('chat:token', ev.delta.text);
               if (Date.now() - lastStatsAt > 250) {
                 lastStatsAt = Date.now();
-                claudeUsageStats(null, started, 'Claude Code respondendo', true, generatedChars, claudeLimitHud);
+                claudeUsageStats(null, started, `${engineLabel} respondendo`, true, generatedChars, claudeLimitHud, engine);
               }
             }
           } else if ((ev.delta.type === 'thinking_delta' || ev.delta.type === 'signature_delta') && ev.delta.thinking) {
@@ -11041,7 +11162,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           if (block.type === 'text' && block.text) {
             if (msg.parent_tool_use_id) {
               if (!streamedAgents.has(msg.parent_tool_use_id)) {
-                const label = toolAgentLabels.get(msg.parent_tool_use_id) || msg.subagent_type || 'Subagente Claude';
+                const label = toolAgentLabels.get(msg.parent_tool_use_id) || msg.subagent_type || `Subagente ${glmMode ? 'GLM' : 'Claude'}`;
                 broadcast('chat:agent-token', { agent: label, t: block.text });
               }
             } else if (!streamedMain) {
@@ -11051,7 +11172,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           } else if (block.type === 'tool_use') {
             toolInputs.set(block.id, { name: block.name, input: block.input || {} });
             if (/^(Agent|Task)$/i.test(block.name)) {
-              const agentName = (block.input && (block.input.subagent_type || block.input.agent || block.input.name)) || 'Agente Claude';
+              const agentName = (block.input && (block.input.subagent_type || block.input.agent || block.input.name)) || `Agente ${glmMode ? 'GLM' : 'Claude'}`;
               const label = `${agentName} · ${String(block.id).slice(-4)}`;
               toolAgentLabels.set(block.id, label);
               broadcast('chat:agent', {
@@ -11063,7 +11184,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
             broadcast('chat:tool', {
               name: block.name,
               args: slimVal(block.input || {}, 0),
-              agent: msg.parent_tool_use_id ? msg.subagent_type || 'Subagente Claude' : 'Claude Code',
+              agent: msg.parent_tool_use_id ? msg.subagent_type || `Subagente ${glmMode ? 'GLM' : 'Claude'}` : engineLabel,
             });
           }
         }
@@ -11083,15 +11204,16 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
             name: meta.name,
             args: slimVal(meta.input, 0),
             result: slimVal(result, 0),
-            agent: msg.parent_tool_use_id ? msg.subagent_type || 'Subagente Claude' : 'Claude Code',
+            agent: msg.parent_tool_use_id ? msg.subagent_type || `Subagente ${glmMode ? 'GLM' : 'Claude'}` : engineLabel,
           });
         }
         continue;
       }
       if (msg.type === 'system' && msg.subtype === 'init') {
-        broadcast('chat:note', { text: `✦ Claude Code ${msg.claude_code_version} · ${msg.model} · ${msg.permissionMode}` });
+        broadcast('chat:note', { text: `✦ ${engineLabel} ${msg.claude_code_version} · ${glmMode ? cfg.glmCodeModel || msg.model : msg.model} · ${msg.permissionMode}` });
         publishClaudeCapabilities({
           sessionId: msg.session_id,
+          engine,
           skills: msg.skills || [],
           agents: (msg.agents || []).map((name) => ({ name, description: '', model: '' })),
           model: msg.model,
@@ -11111,10 +11233,10 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
         broadcast('chat:compacted', {
           beforeTokens: msg.compact_metadata && msg.compact_metadata.pre_tokens,
           kept: null,
-          engine: 'claude-code',
+          engine,
         });
       } else if (msg.type === 'system' && msg.subtype === 'task_progress') {
-        const label = (msg.tool_use_id && toolAgentLabels.get(msg.tool_use_id)) || msg.subagent_type || 'Claude Code';
+        const label = (msg.tool_use_id && toolAgentLabels.get(msg.tool_use_id)) || msg.subagent_type || engineLabel;
         broadcast('chat:agent-token', { agent: label, t: msg.description || '' });
       } else if (msg.type === 'system' && msg.subtype === 'task_notification' && msg.tool_use_id) {
         const label = toolAgentLabels.get(msg.tool_use_id);
@@ -11125,11 +11247,11 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       } else if (msg.type === 'tool_use_summary' && msg.summary) {
         broadcast('chat:note', { text: '✦ ' + msg.summary });
       } else if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
-        claudeLimitHud = claudeLimitFromRateEvent(msg.rate_limit_info) || claudeLimitHud;
+        claudeLimitHud = claudeLimitFromRateEvent(msg.rate_limit_info, providerLabel) || claudeLimitHud;
         if (claudeLimitHud) {
-          claudeUsageStats(finalUsage, started, 'Claude Code respondendo', true, generatedChars, claudeLimitHud);
+          claudeUsageStats(finalUsage, started, `${engineLabel} respondendo`, true, generatedChars, claudeLimitHud, engine);
           if (msg.rate_limit_info.status !== 'allowed') {
-            broadcast('chat:note', { text: `⚠ limite do Claude Max em ${claudeLimitHud.usagePct}% (${claudeLimitHud.usageLabel || 'janela atual'})` });
+            broadcast('chat:note', { text: `⚠ limite do ${providerLabel} em ${claudeLimitHud.usagePct}% (${claudeLimitHud.usageLabel || 'janela atual'})` });
           }
         }
       } else if (msg.type === 'result') {
@@ -11139,10 +11261,15 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           broadcast('chat:token', msg.result);
         }
         if (msg.is_error) {
-          const detail = (msg.errors || []).join('\n') || msg.result || msg.stop_reason || 'Claude Code encerrou com erro';
+          const detail = (msg.errors || []).join('\n') || msg.result || msg.stop_reason || `${engineLabel} encerrou com erro`;
           if (/auth|401|credential/i.test(detail)) {
-            S().claudeSessionId = '';
-            throw new Error('A sessão do Claude Max expirou ou ficou inválida. Clique em “Entrar com Claude Max” nas Configurações para renovar o login.');
+            if (glmMode) S().glmSessionId = '';
+            else S().claudeSessionId = '';
+            throw new Error(
+              glmMode
+                ? 'A chave do GLM Coding Plan foi recusada. Confira a chave Z.ai nas Configurações.'
+                : 'A sessão do Claude Max expirou ou ficou inválida. Clique em “Entrar com Claude Max” nas Configurações para renovar o login.'
+            );
           }
           throw new Error(detail);
         }
@@ -11158,9 +11285,14 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
       /* já encerrado */
     }
   }
-  claudeUsageStats(finalUsage, started, 'concluído', false, generatedChars, claudeLimitHud);
+  claudeUsageStats(finalUsage, started, 'concluído', false, generatedChars, claudeLimitHud, engine);
   const mappedUsage = claudeUsageToChatUsage(finalUsage);
-  if (mappedUsage) recordUsage({ ...cfg, usageHost: 'claude-code', model: 'claude-code' }, mappedUsage);
+  if (mappedUsage) {
+    recordUsage(
+      { ...cfg, usageHost: glmMode ? 'glm-code-zai' : 'claude-code', model: glmMode ? cfg.glmCodeModel || 'glm-5.2[1m]' : 'claude-code' },
+      mappedUsage
+    );
+  }
   if (!(S().abort && S().abort.signal.aborted) && S().steerQueue.length) {
     const followup = S().steerQueue.splice(0).map((s) => claudePromptFromContent(s.content)).filter(Boolean).join('\n\n');
     if (followup) {
@@ -11490,8 +11622,9 @@ async function handleChatSend(_e, payload) {
   S().workspace = winWorkspace.get(_e.sender.id) || null;
   const cfg = loadConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
+  const useGlmCode = cfg.architectMode === true && cfg.codeEngine === 'glm-code';
   const useCodex = cfg.architectMode === true && cfg.codeEngine === 'codex';
-  const useExternalCodeEngine = useClaudeCode || useCodex;
+  const useExternalCodeEngine = useClaudeCode || useGlmCode || useCodex;
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
   let raw2 = raw;
   if (cfg.includeActiveTab !== false && activeEditorFile && !raw.includes('@' + activeEditorFile)) {
@@ -11535,7 +11668,7 @@ async function runChatTurn(cfg, popUserOnError) {
   let full = '';
   let turnLogStatus = 'completed';
   try {
-    const externalCodeEngine = cfg.architectMode === true && ['claude-code', 'codex'].includes(cfg.codeEngine);
+    const externalCodeEngine = cfg.architectMode === true && ['claude-code', 'glm-code', 'codex'].includes(cfg.codeEngine);
     if (externalCodeEngine) {
       broadcast('chat:stats', {
         tps: 0,
@@ -11544,7 +11677,12 @@ async function runChatTurn(cfg, popUserOnError) {
         total: 0,
         exact: false,
         live: true,
-        phase: cfg.codeEngine === 'codex' ? 'conectando ao Codex' : 'conectando ao Claude Code',
+        phase:
+          cfg.codeEngine === 'codex'
+            ? 'conectando ao Codex'
+            : cfg.codeEngine === 'glm-code'
+              ? 'conectando ao GLM Code'
+              : 'conectando ao Claude Code',
         window: 0,
         pct: 0,
         engine: cfg.codeEngine,
@@ -11566,6 +11704,9 @@ async function runChatTurn(cfg, popUserOnError) {
       });
     }
     if (cfg.architectMode === true && cfg.codeEngine === 'claude-code') {
+      full = await runClaudeCodeAgent(cfg);
+      broadcast('workspace:changed');
+    } else if (cfg.architectMode === true && cfg.codeEngine === 'glm-code') {
       full = await runClaudeCodeAgent(cfg);
       broadcast('workspace:changed');
     } else if (cfg.architectMode === true && cfg.codeEngine === 'codex') {
@@ -11594,7 +11735,7 @@ async function runChatTurn(cfg, popUserOnError) {
     if (full && full.trim()) S().history.push({ role: 'assistant', content: full });
     if (S().pendingTurnTranscript) S().pendingTurnTranscript.historyTailCount += full && full.trim() ? 1 : 0;
     finalizeLastTurnContext(full);
-    if (!(cfg.architectMode === true && ['claude-code', 'codex'].includes(cfg.codeEngine))) {
+    if (!(cfg.architectMode === true && ['claude-code', 'glm-code', 'codex'].includes(cfg.codeEngine))) {
       await maybeSummarize(cfg); // motores externos preservam e compactam a própria sessão
     }
     saveHistory(); // memoria persistente
@@ -11647,6 +11788,9 @@ async function handleChatRegen() {
   if (loadConfig().architectMode === true && loadConfig().codeEngine === 'claude-code') {
     S().claudeSessionId = '';
     S().claudeSessionWorkspace = '';
+  } else if (loadConfig().architectMode === true && loadConfig().codeEngine === 'glm-code') {
+    S().glmSessionId = '';
+    S().glmSessionWorkspace = '';
   } else if (loadConfig().architectMode === true && loadConfig().codeEngine === 'codex') {
     S().codexThreadId = '';
     S().codexThreadWorkspace = '';
