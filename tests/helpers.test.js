@@ -223,6 +223,37 @@ test('promptTokenEstimate cacheia e invalida quando o conteúdo muda de tamanho'
   assert.ok(t2 > t1, 'estimativa deveria crescer após o conteúdo dobrar');
 });
 
+// ---------- persistência assíncrona/coalescida do chat ----------
+test('queueChatWrite serializa por chat e coalesce snapshots intermediários', async () => {
+  const writes = [];
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => (releaseFirst = resolve));
+  const fakeFs = {
+    promises: {
+      writeFile: async (_file, json) => {
+        writes.push(JSON.parse(json));
+        if (writes.length === 1) await firstGate;
+      },
+    },
+  };
+  const persist = load(
+    ['chatWriteStates', 'chatMetaCache', 'rememberChatMeta', 'pendingChatData', 'queueChatWrite'],
+    { fs: fakeFs, chatFile: (id) => id + '.json', logd: () => {} }
+  );
+  const done = persist.queueChatWrite('c1', { id: 'c1', title: 'primeiro', history: [1] });
+  await new Promise((resolve) => setImmediate(resolve)); // deixa a primeira escrita começar
+  persist.queueChatWrite('c1', { id: 'c1', title: 'intermediário', history: [1, 2] });
+  persist.queueChatWrite('c1', { id: 'c1', title: 'final', history: [1, 2, 3] });
+  assert.equal(persist.pendingChatData('c1').title, 'final');
+  releaseFirst();
+  await done;
+  assert.deepEqual(
+    writes.map((x) => x.title),
+    ['primeiro', 'final']
+  );
+  assert.equal(persist.chatWriteStates.size, 0);
+});
+
 // ---------- parsers de diagnóstico ----------
 const parse = load(['_relTo', 'parseTsc', 'parseColonList', 'parseEslintJson']);
 

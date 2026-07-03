@@ -1899,7 +1899,7 @@
         document.getElementById('srvBody').style.display = t === 'server' ? 'flex' : 'none';
         document.getElementById('restBody').style.display = t === 'rest' ? 'flex' : 'none';
         document.getElementById('problemsBody').style.display = t === 'problems' ? 'flex' : 'none';
-        if (t === 'ports') loadPorts(true); // força o desenho (os dados já estavam frescos do poll)
+        if (t === 'ports') loadPorts(true); // consulta na hora; fora desta aba não mantém netstat/tasklist rodando
         if (t === 'docker') loadDocker(true);
         if (t === 'db') dbInit();
         if (t === 'server') loadServer();
@@ -2828,13 +2828,10 @@
           tb.appendChild(tr);
         });
       }
-      // poll de portas: netstat é caro, então só roda com a janela VISÍVEL e o painel aberto;
-      // na aba PORTAS a 3s (responsivo), nas outras a cada ~9s (só atualiza o badge de contagem)
-      let portsTick = 0;
+      // netstat/tasklist são caros em PCs modestos: atualiza ao vivo SOMENTE enquanto
+      // a aba PORTAS está realmente visível. Ao entrar nela, setPanelTab força a leitura.
       setInterval(() => {
-        if (document.hidden || panel.hidden) return;
-        portsTick++;
-        if (panelTab === 'ports' || portsTick % 3 === 0) loadPorts();
+        if (!document.hidden && !panel.hidden && panelTab === 'ports') loadPorts();
       }, 3000);
       // voltou a focar a janela → atualiza na hora o que estiver à vista (sem esperar o tick)
       document.addEventListener('visibilitychange', () => {

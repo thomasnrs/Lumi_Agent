@@ -1104,6 +1104,7 @@ const gfxIdleFpsValEl = document.getElementById('gfxIdleFpsVal');
 const gfxActiveFpsEl = document.getElementById('gfxActiveFps');
 const gfxActiveFpsValEl = document.getElementById('gfxActiveFpsVal');
 const gfxReducedEffectsEl = document.getElementById('gfxReducedEffects');
+const gfxLiveEl = document.getElementById('gfxLive');
 const gfxSummaryEl = document.getElementById('gfxSummary');
 const gfxNoteEl = document.getElementById('gfxNote');
 const avatarScaleEl = document.getElementById('avatarScale');
@@ -1541,6 +1542,22 @@ gfxActiveFpsEl.addEventListener('input', () => {
   if (Number(gfxActiveFpsEl.value) < Number(gfxIdleFpsEl.value)) gfxIdleFpsEl.value = gfxActiveFpsEl.value;
   updateGraphicsControls();
 });
+async function refreshGraphicsPerf() {
+  const videoPanel = document.querySelector('#settings .panel[data-panel="video"]');
+  if (!gfxLiveEl || settings.style.display !== 'flex' || !videoPanel || !videoPanel.classList.contains('active')) return;
+  try {
+    const p = await window.api.performanceSnapshot();
+    const detail = (p.byType || [])
+      .filter((x) => x.cpu >= 0.1 || x.workingMB >= 10)
+      .slice(0, 4)
+      .map((x) => `${x.type} ${x.cpu.toFixed(1)}%`)
+      .join(' · ');
+    gfxLiveEl.textContent = `Agora: CPU ${p.cpu.toFixed(1)}% · memória ${p.workingMB} MB` + (detail ? ` · ${detail}` : '');
+  } catch (e) {
+    gfxLiveEl.textContent = 'Medição ao vivo indisponível.';
+  }
+}
+setInterval(refreshGraphicsPerf, 3000);
 
 async function openSettings() {
   const c = await window.api.getConfig();

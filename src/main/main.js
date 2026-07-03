@@ -1242,7 +1242,26 @@ function cachedProjCtx(cfg) {
   } catch (e) {
     mem = '';
   }
-  const rec = { at: now, rules: readRepoRules(ws), mem };
+  const meta = { scripts: [], envKeys: [], hasVenv: false };
+  try {
+    const pj = JSON.parse(fs.readFileSync(path.join(ws, 'package.json'), 'utf8'));
+    meta.scripts = Object.keys(pj.scripts || {}).slice(0, 20);
+  } catch (e) {
+    /* sem package.json */
+  }
+  try {
+    meta.hasVenv = fs.existsSync(path.join(ws, '.venv'));
+  } catch (e) {
+    /* ok */
+  }
+  try {
+    meta.envKeys = parseEnv(fs.readFileSync(path.join(ws, '.env'), 'utf8'))
+      .map((v) => v.key)
+      .slice(0, 40);
+  } catch (e) {
+    /* sem .env */
+  }
+  const rec = { at: now, rules: readRepoRules(ws), mem, meta };
   _projCtxCache.set(ws, rec);
   if (_projCtxCache.size > 6) _projCtxCache.delete(_projCtxCache.keys().next().value);
   return rec;
@@ -1819,25 +1838,10 @@ function buildSystemPrompt(cfg) {
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
-    try {
-      const pj = JSON.parse(fs.readFileSync(path.join(cfg.workspace, 'package.json'), 'utf8'));
-      const sc = Object.keys(pj.scripts || {});
-      if (sc.length) proj += `\nScripts npm do projeto: ${sc.slice(0, 20).join(', ')}.`;
-    } catch (e) {
-      /* sem package.json */
-    }
-    try {
-      if (fs.existsSync(path.join(cfg.workspace, '.venv'))) proj += '\nO projeto tem um venv Python em .venv (ative antes de rodar coisas Python).';
-    } catch (e) {
-      /* ok */
-    }
-    try {
-      // só os NOMES das variáveis do .env (nunca os valores — são segredos) pra ela orientar config
-      const ev = parseEnv(fs.readFileSync(path.join(cfg.workspace, '.env'), 'utf8')).map((v) => v.key);
-      if (ev.length) proj += '\nO .env define: ' + ev.slice(0, 40).join(', ') + ' (você sabe os NOMES, não os valores).';
-    } catch (e) {
-      /* sem .env */
-    }
+    if (pctx.meta.scripts.length) proj += `\nScripts npm do projeto: ${pctx.meta.scripts.join(', ')}.`;
+    if (pctx.meta.hasVenv) proj += '\nO projeto tem um venv Python em .venv (ative antes de rodar coisas Python).';
+    // só os NOMES das variáveis do .env (nunca os valores — são segredos) pra ela orientar config
+    if (pctx.meta.envKeys.length) proj += '\nO .env define: ' + pctx.meta.envKeys.join(', ') + ' (você sabe os NOMES, não os valores).';
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     const rules = pctx.rules;
     if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (fonte da verdade sobre stack/estrutura/como rodar/convenções; SIGA À RISCA, tem prioridade sobre o guia geral)\n${rules}`;
@@ -2151,28 +2155,64 @@ function blockAround(lines, start1) {
   }
   return { start: s, end };
 }
+// Cache LRU curto dos arquivos usados para enriquecer buscas. Buscas consecutivas costumam
+// acertar os mesmos arquivos; em SSHFS isso evita dezenas de idas à rede. O watcher invalida
+// a pasta assim que algo muda, e o mtime protege o fallback sem watcher.
+const _enrichFileCache = new Map(); // abs -> { at, mtimeMs, size, lines }
+function invalidateEnrichCache(root, filename) {
+  if (!root) return _enrichFileCache.clear();
+  const prefix = path.resolve(root) + path.sep;
+  const exact = filename ? path.resolve(root, String(filename)) : '';
+  for (const key of _enrichFileCache.keys()) {
+    if ((exact && key === exact) || (!exact && key.startsWith(prefix))) _enrichFileCache.delete(key);
+  }
+}
+async function cachedEnrichLines(abs) {
+  const key = path.resolve(abs);
+  const now = Date.now();
+  let hit = _enrichFileCache.get(key);
+  if (hit && now - hit.at < 15000) {
+    _enrichFileCache.delete(key);
+    _enrichFileCache.set(key, hit);
+    return hit.lines;
+  }
+  const st = await fs.promises.stat(key);
+  if (!st.isFile() || st.size > 800000) return null;
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+    hit.at = now;
+    _enrichFileCache.delete(key);
+    _enrichFileCache.set(key, hit);
+    return hit.lines;
+  }
+  const lines = (await readTextFileSmartAsync(key)).text.split('\n');
+  hit = { at: now, mtimeMs: st.mtimeMs, size: st.size, lines };
+  _enrichFileCache.delete(key);
+  _enrichFileCache.set(key, hit);
+  while (_enrichFileCache.size > 120) _enrichFileCache.delete(_enrichFileCache.keys().next().value);
+  return lines;
+}
 // enriquece matches de busca com { symbol, context } — I/O fica no main, NÃO nos tokens da IA
 async function enrichMatches(wsBaseAbs, matches) {
   if (!Array.isArray(matches) || !matches.length || !wsBaseAbs) return matches;
   const cache = new Map();
-  const getLines = async (rel) => {
-    if (cache.has(rel)) return cache.get(rel);
-    let lines = null;
-    if (cache.size < 80) {
+  const files = [...new Set(matches.map((m) => m && m.file).filter(Boolean))].slice(0, 80);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(6, files.length) }, async () => {
+    while (next < files.length) {
+      const rel = files[next++];
+      let lines = null;
       try {
-        const abs = path.join(wsBaseAbs, rel);
-        const st = await fs.promises.stat(abs);
-        if (st.isFile() && st.size <= 800000) lines = (await readTextFileSmartAsync(abs)).text.split('\n');
+        lines = await cachedEnrichLines(path.join(wsBaseAbs, rel));
       } catch (e) {
-        /* ok */
+        /* arquivo sumiu ou ficou inacessível */
       }
+      cache.set(rel, lines);
     }
-    cache.set(rel, lines);
-    return lines;
-  };
+  });
+  await Promise.all(workers);
   for (const m of matches) {
     if (!m || !m.file || !m.line) continue;
-    const lines = await getLines(m.file);
+    const lines = cache.get(m.file);
     if (!lines) continue;
     const sym = enclosingSymbol(lines, m.line - 1);
     if (sym) m.symbol = sym;
@@ -7356,6 +7396,61 @@ function chatsDir() {
 let currentChatId = '';
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
+// Persistência sem bloquear o main thread: uma fila por conversa coalesce saves que chegam
+// enquanto o disco ainda está escrevendo. O snapshot pendente também serve às leituras, então
+// trocar/renomear/listar logo após salvar nunca enxerga uma versão antiga.
+const chatWriteStates = new Map(); // id -> { latest, writing, promise }
+const chatMetaCache = new Map(); // id -> metadados pequenos (não segura históricos na RAM)
+function rememberChatMeta(j, fallbackId) {
+  if (!j && !fallbackId) return;
+  const id = (j && j.id) || fallbackId;
+  if (!id) return;
+  chatMetaCache.set(id, {
+    id,
+    title: (j && j.title) || '',
+    customTitle: !!(j && j.customTitle),
+    createdAt: (j && j.createdAt) || '',
+    updatedAt: (j && (j.updatedAt || j.at)) || '',
+    count: Array.isArray(j && j.history) ? j.history.length : Number((j && j.count) || 0),
+  });
+}
+function pendingChatData(id) {
+  const st = chatWriteStates.get(id);
+  return st && (st.latest || st.writing);
+}
+function queueChatWrite(id, data) {
+  if (!id || !data) return Promise.resolve();
+  rememberChatMeta(data, id);
+  let st = chatWriteStates.get(id);
+  if (st) {
+    st.latest = data; // o loop atual escreverá só a versão mais nova depois da que já começou
+    return st.promise;
+  }
+  st = { latest: data, writing: null, promise: null };
+  chatWriteStates.set(id, st);
+  st.promise = Promise.resolve()
+    .then(async () => {
+      while (st.latest) {
+        st.writing = st.latest;
+        st.latest = null;
+        const json = JSON.stringify(st.writing); // fora da pilha quente do turno/IPC
+        await fs.promises.writeFile(chatFile(id), json, 'utf8');
+        st.writing = null;
+      }
+    })
+    .catch((e) => logd('chat:save', id, String((e && e.message) || e)))
+    .finally(() => {
+      if (chatWriteStates.get(id) === st) chatWriteStates.delete(id);
+    });
+  return st.promise;
+}
+function readChatData(id) {
+  const pending = pendingChatData(id);
+  if (pending) return pending;
+  const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {};
+  rememberChatMeta(j, id);
+  return j;
+}
 function chatFile(id) {
   return path.join(chatsDir(), id + '.json');
 }
@@ -7378,11 +7473,13 @@ function saveCurrentChat() {
   const sid = S().id || currentChatId;
   if (loadConfig().memoryEnabled === false || !sid) return;
   try {
-    let meta = {};
-    try {
-      meta = JSON.parse(fs.readFileSync(chatFile(sid), 'utf8')) || {};
-    } catch (e) {
-      /* chat novo */
+    let meta = chatMetaCache.get(sid) || {};
+    if (!meta.id && fs.existsSync(chatFile(sid))) {
+      try {
+        meta = readChatData(sid);
+      } catch (e) {
+        /* chat novo */
+      }
     }
     const data = {
       id: sid,
@@ -7403,10 +7500,11 @@ function saveCurrentChat() {
       codexThreadId: S().codexThreadId,
       codexThreadWorkspace: S().codexThreadWorkspace,
     };
-    fs.writeFileSync(chatFile(sid), JSON.stringify(data));
+    return queueChatWrite(sid, data);
   } catch (e) {
     /* ok */
   }
+  return Promise.resolve();
 }
 // lista os chats salvos (mais recentes primeiro)
 function listChats() {
@@ -7414,19 +7512,21 @@ function listChats() {
   try {
     files = fs.readdirSync(chatsDir()).filter((n) => n.endsWith('.json'));
   } catch (e) {
-    return [];
+    files = [];
   }
+  const ids = new Set(files.map((n) => n.replace(/\.json$/i, '')));
+  for (const id of chatWriteStates.keys()) ids.add(id); // chats novos ainda a caminho do disco
   const out = [];
-  for (const n of files) {
+  for (const id0 of ids) {
     try {
-      const j = JSON.parse(fs.readFileSync(path.join(chatsDir(), n), 'utf8')) || {};
-      const id = j.id || n.replace(/\.json$/i, '');
+      const j = pendingChatData(id0) || chatMetaCache.get(id0) || readChatData(id0);
+      const id = j.id || id0;
       const hist = j.history || [];
       out.push({
         id,
         title: j.title || titleFromHistory(hist),
         updatedAt: j.updatedAt || j.at || '',
-        count: hist.length,
+        count: Array.isArray(j.history) ? hist.length : Number(j.count || 0),
         current: id === currentChatId,
         // turno rodando nesta conversa (em paralelo ou no primeiro plano) → bolinha na lista
         running: (sessions.has(id) && sessions.get(id).running) || (id === currentChatId && fgSession.running),
@@ -7440,7 +7540,7 @@ function listChats() {
 }
 function loadChatInto(id) {
   try {
-    const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {};
+    const j = readChatData(id);
     S().history = Array.isArray(j.history) ? j.history : [];
     S().convSummary = j.summary || '';
     S().chatEvents = Array.isArray(j.events) ? j.events : [];
@@ -7496,14 +7596,8 @@ function newChat(seedSummary, seedWorklog) {
 // cria uma conversa NOVA e vazia em disco SEM mexer na sessão ativa (pra abrir em janela destacada)
 function createEmptyChat() {
   const id = genChatId();
-  try {
-    fs.writeFileSync(
-      chatFile(id),
-      JSON.stringify({ id, title: 'Nova conversa', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [] })
-    );
-  } catch (e) {
-    /* ok */
-  }
+  const now = new Date().toISOString();
+  queueChatWrite(id, { id, title: 'Nova conversa', createdAt: now, updatedAt: now, history: [], events: [], archive: [], summary: '', worklog: [] });
   return id;
 }
 // sessão VIVA de um chat (cria e carrega do disco na 1ª vez) — é o que permite turnos PARALELOS
@@ -7557,19 +7651,23 @@ function switchChat(id) {
     sessions.delete(prev.id);
   }
 }
-function renameChat(id, title) {
+async function renameChat(id, title) {
   try {
-    const j = JSON.parse(fs.readFileSync(chatFile(id), 'utf8')) || {};
+    const j = { ...readChatData(id) };
     j.title = String(title || '').slice(0, 60) || titleFromHistory(j.history || []);
     j.customTitle = true;
-    fs.writeFileSync(chatFile(id), JSON.stringify(j));
+    j.updatedAt = new Date().toISOString();
+    await queueChatWrite(id, j);
   } catch (e) {
     /* ok */
   }
 }
-function deleteChat(id) {
+async function deleteChat(id) {
+  const pending = chatWriteStates.get(id);
+  if (pending) await pending.promise; // impede uma gravação atrasada de ressuscitar o chat
+  chatMetaCache.delete(id);
   try {
-    fs.unlinkSync(chatFile(id));
+    await fs.promises.unlink(chatFile(id));
   } catch (e) {
     /* ok */
   }
@@ -8793,6 +8891,32 @@ ipcMain.on('mem:data', (_e, d) => {
   } catch (e) {
     console.error('Erro no relatorio de memoria:', e);
   }
+});
+// Amostra leve para a aba Gráficos. Não cria timer no main: só mede quando a tela
+// de configuração visível solicita, e usa as métricas nativas já mantidas pelo Electron.
+ipcMain.handle('performance:snapshot', () => {
+  const grouped = new Map();
+  let cpu = 0;
+  let workingMB = 0;
+  for (const m of app.getAppMetrics()) {
+    const type = m.type || 'Unknown';
+    const c = Number((m.cpu && m.cpu.percentCPUUsage) || 0);
+    const mem = Number((m.memory && m.memory.workingSetSize) || 0) / 1024;
+    cpu += c;
+    workingMB += mem;
+    const rec = grouped.get(type) || { type, cpu: 0, workingMB: 0, processes: 0 };
+    rec.cpu += c;
+    rec.workingMB += mem;
+    rec.processes++;
+    grouped.set(type, rec);
+  }
+  return {
+    cpu: Math.round(cpu * 10) / 10,
+    workingMB: Math.round(workingMB),
+    byType: [...grouped.values()]
+      .map((x) => ({ ...x, cpu: Math.round(x.cpu * 10) / 10, workingMB: Math.round(x.workingMB) }))
+      .sort((a, b) => b.cpu - a.cpu || b.workingMB - a.workingMB),
+  };
 });
 
 // redimensionar a avatar: valor absoluto (slider das configs) ou por passos (scroll)
@@ -10050,6 +10174,9 @@ function watchFolder(root, refKey) {
       if (/(^|[\\/])(node_modules|\.git|dist|build|out|\.next|\.cache)([\\/]|$)/.test(f)) return;
       // ignora internos .lumi-* MAS deixa a memória do projeto atualizar a árvore (aparece ao ser criada)
       if (/\.lumi-/.test(f) && !/\.lumi-memory\.md$/.test(f)) return;
+      invalidateEnrichCache(root, f);
+      if (/(^|[\\/])(package\.json|\.env|CLAUDE\.md|AGENTS\.md|\.cursorrules|copilot-instructions\.md|\.lumi-memory\.md)$/i.test(f))
+        invalidateProjCtx(root);
       fire();
     });
     // FS de rede pode emitir 'error' depois (drive caiu) — sem listener isso DERRUBA o processo
@@ -11558,12 +11685,12 @@ ipcMain.handle('chats:switch', (_e, id) => {
   switchChat(id);
   return { id: currentChatId };
 });
-ipcMain.handle('chats:rename', (_e, { id, title }) => {
-  renameChat(id, title);
+ipcMain.handle('chats:rename', async (_e, { id, title }) => {
+  await renameChat(id, title);
   return true;
 });
-ipcMain.handle('chats:delete', (_e, id) => {
-  deleteChat(id);
+ipcMain.handle('chats:delete', async (_e, id) => {
+  await deleteChat(id);
   return { id: currentChatId };
 });
 
@@ -12324,15 +12451,16 @@ function procRemember(name, data) {
   rec.name = String(name || '').slice(0, 160);
   procSnapshot.delete(k); // reinsert = ordem de uso recente
   procSnapshot.set(k, rec);
-  if (rec.pid) procByPid.set(rec.pid, rec);
-  if (procSnapshot.size > 700) {
-    const oldest = [...procSnapshot.entries()].sort((a, b) => a[1].last - b[1].last).slice(0, 200);
-    for (const [k2] of oldest) procSnapshot.delete(k2);
+  if (rec.pid) {
+    procByPid.delete(rec.pid); // Map vira uma fila LRU sem sort
+    procByPid.set(rec.pid, rec);
   }
-  if (procByPid.size > 1400) {
-    const oldest = [...procByPid.entries()].sort((a, b) => a[1].last - b[1].last).slice(0, 400);
-    for (const [pid] of oldest) procByPid.delete(pid);
-  }
+}
+function pruneProcessSnapshots() {
+  // procRemember já mantém ordem de uso recente (delete + set). Podar pelo início do Map
+  // é O(n) e acontece UMA vez por coleta, em vez de ordenar centenas de itens por inserção.
+  while (procSnapshot.size > 500) procSnapshot.delete(procSnapshot.keys().next().value);
+  while (procByPid.size > 1000) procByPid.delete(procByPid.keys().next().value);
 }
 function procLaunchOf(name) {
   const r = procSnapshot.get(String(name || '').toLowerCase());
@@ -12386,6 +12514,7 @@ function refreshProcessSnapshot() {
           });
         }
       }
+      pruneProcessSnapshots();
     } catch (e) {
       logd('process-snapshot', String((e && e.message) || e));
     }
@@ -12695,6 +12824,14 @@ setInterval(async () => {
 }, 60000);
 
 app.on('window-all-closed', () => app.quit());
+let flushingChatWritesOnQuit = false;
+app.on('before-quit', (e) => {
+  const pending = [...chatWriteStates.values()].map((st) => st.promise).filter(Boolean);
+  if (!pending.length || flushingChatWritesOnQuit) return;
+  e.preventDefault();
+  flushingChatWritesOnQuit = true;
+  Promise.allSettled(pending).finally(() => app.quit());
+});
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   codexEngine.close();

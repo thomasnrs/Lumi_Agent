@@ -22,6 +22,9 @@ memory-report.txt
 # memória de trabalho da Lumi (não vai pro repo)
 .lumi-memory.md
 
+# relatório de performance local
+relatoriodeperformance.md
+
 # artefatos acidentais
 $null
 Output

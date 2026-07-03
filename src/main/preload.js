@@ -158,6 +158,7 @@ contextBridge.exposeInMainWorld('api', {
   // diagnostico de memoria
   onMemReport: (cb) => ipcRenderer.on('mem-report', () => cb()),
   sendMemReport: (d) => ipcRenderer.send('mem:data', d),
+  performanceSnapshot: () => ipcRenderer.invoke('performance:snapshot'),
   getWindowPos: () => ipcRenderer.invoke('get-window-pos'),
   getWindowBounds: () => ipcRenderer.invoke('get-window-bounds'),
   setWindowPos: (x, y) => ipcRenderer.send('set-window-pos', x, y),
