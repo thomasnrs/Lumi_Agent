@@ -18,3 +18,11 @@ animations/*.zip
 # diagnósticos locais
 memory-report.txt
 *.backup
+
+# memória de trabalho da Lumi (não vai pro repo)
+.lumi-memory.md
+
+# artefatos acidentais
+$null
+Output
+print/
