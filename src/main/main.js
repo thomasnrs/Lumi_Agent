@@ -874,6 +874,14 @@ function requestModel(cfg) {
   return cfg.provider === 'opencode' ? model.replace(/^opencode(?:-go)?\//i, '') : model;
 }
 
+function isNvidiaIntegrate(cfg) {
+  try {
+    return new URL(String((cfg && cfg.baseUrl) || '')).hostname.toLowerCase() === 'integrate.api.nvidia.com';
+  } catch (e) {
+    return false;
+  }
+}
+
 function turnAdapter(cfg) {
   if (cfg.provider === 'anthropic') return anthropicTurn;
   if (cfg.provider === 'opencode') {
@@ -6329,6 +6337,11 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`; // chave opcional
   const body = { model: requestModel(cfg), messages, temperature: cfg.temperature, stream: true };
+  if (isNvidiaIntegrate(cfg)) {
+    headers.Accept = 'text/event-stream';
+    // O hosted NIM aceita temperature entre 0 e 1; a UI genérica permite até 2.
+    body.temperature = Math.min(1, Math.max(0, Number(cfg.temperature) || 0));
+  }
   if (tools && tools.length) body.tools = tools;
   const t0 = Date.now();
   const res = await fetch(endpoint, {
@@ -6498,7 +6511,9 @@ function recordUsage(cfg, usage) {
     const p = u.prov[host] || (u.prov[host] = { in: 0, out: 0, usd: 0 });
     p.in += usage.prompt_tokens || 0;
     p.out += usage.completion_tokens || 0;
-    const pr = priceFor(cfg.model);
+    // Hosted NVIDIA NIM é um endpoint gratuito de prototipagem (rate-limited), não
+    // deve herdar por engano o preço nominal do fabricante original do modelo.
+    const pr = isNvidiaIntegrate(cfg) ? [0, 0] : priceFor(cfg.model);
     if (pr) p.usd += ((usage.prompt_tokens || 0) * pr[0] + (usage.completion_tokens || 0) * pr[1]) / 1e6;
     else p.unknown = true;
     fs.writeFileSync(usagePath(), JSON.stringify(u));
@@ -6814,6 +6829,11 @@ async function runAgent(cfg) {
   return full;
 }
 
+function modelIdsFromResponse(j) {
+  const arr = (j && (j.data || j.models)) || [];
+  return [...new Set(arr.map((m) => (typeof m === 'string' ? m : m && (m.id || m.name))).filter(Boolean))].sort();
+}
+
 // Lista os modelos disponiveis no endpoint (GET /models)
 async function listModels(cfg) {
   if (cfg.provider === 'anthropic') {
@@ -6823,7 +6843,7 @@ async function listModels(cfg) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     const j = await res.json();
-    return (j.data || []).map((m) => m.id).filter(Boolean);
+    return modelIdsFromResponse(j);
   }
   const base = cfg.baseUrl.replace(/\/$/, '');
   const res = await fetch(base + '/models', {
@@ -6831,11 +6851,7 @@ async function listModels(cfg) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
   const j = await res.json();
-  const arr = j.data || j.models || [];
-  return arr
-    .map((m) => m.id || m.name)
-    .filter(Boolean)
-    .sort();
+  return modelIdsFromResponse(j);
 }
 
 // ============================================================

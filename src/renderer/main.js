@@ -1081,6 +1081,9 @@ const providerSel = document.getElementById('provider');
 const baseUrlEl = document.getElementById('baseUrl');
 const modelEl = document.getElementById('model');
 const apiKeyEl = document.getElementById('apiKey');
+const providerHelpEl = document.getElementById('providerHelp');
+const providerHelpTextEl = document.getElementById('providerHelpText');
+const providerHelpActionEl = document.getElementById('providerHelpAction');
 const tempEl = document.getElementById('temperature');
 const tempValEl = document.getElementById('tempVal');
 const sysPromptEl = document.getElementById('systemPrompt');
@@ -1215,6 +1218,11 @@ const PRESETS = {
   'Google Gemini 🆓': { provider: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
   'xAI (Grok)': { provider: 'openai', baseUrl: 'https://api.x.ai/v1', model: 'grok-4' },
   'Groq 🆓': { provider: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  'NVIDIA NIM 🆓': {
+    provider: 'openai',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+  },
   DeepSeek: { provider: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   Mistral: { provider: 'openai', baseUrl: 'https://api.mistral.ai/v1', model: 'mistral-small-latest' },
   OpenRouter: { provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
@@ -1247,6 +1255,17 @@ function presetForBaseUrl(url) {
   }
   return 'Personalizado';
 }
+function updateProviderHelp() {
+  const nvidia = /^https:\/\/integrate\.api\.nvidia\.com\/v1\/?$/i.test(baseUrlEl.value.trim());
+  providerHelpEl.hidden = !nvidia;
+  apiKeyEl.placeholder = nvidia ? 'nvapi-...' : 'sk-...';
+  if (nvidia) {
+    providerHelpTextEl.textContent =
+      'NVIDIA NIM oferece endpoints gratuitos para prototipagem. O catálogo pode incluir NIMs especializados que não são modelos de chat.';
+    providerHelpActionEl.textContent = 'Gerar chave NVIDIA';
+  }
+}
+providerHelpActionEl.addEventListener('click', () => window.api.openExternal('https://build.nvidia.com/settings/api-key'));
 
 // Presets de STT (transcricao): preenchem URL + modelo automaticamente
 const STT_PRESETS = {
@@ -1647,6 +1666,7 @@ async function openSettings() {
   sttBaseUrlEl.value = c.sttBaseUrl || '';
   sttModelEl.value = c.sttModel || '';
   presetSel.value = presetForBaseUrl(c.baseUrl); // mostra o provedor em uso (em vez de sempre "Personalizado")
+  updateProviderHelp();
   modelsStatus.textContent = '';
   // sempre abre na primeira aba (I.A.)
   document.querySelectorAll('#settings .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
@@ -1665,8 +1685,10 @@ presetSel.addEventListener('change', () => {
     providerSel.value = p.provider;
     baseUrlEl.value = p.baseUrl;
     modelEl.value = p.model;
+    updateProviderHelp();
   }
 });
+baseUrlEl.addEventListener('input', updateProviderHelp);
 
 async function refreshClaudeCodeStatus() {
   codeEngineStatusEl.textContent = 'verificando…';

@@ -223,6 +223,16 @@ test('promptTokenEstimate cacheia e invalida quando o conteúdo muda de tamanho'
   assert.ok(t2 > t1, 'estimativa deveria crescer após o conteúdo dobrar');
 });
 
+const providers = load(['isNvidiaIntegrate', 'modelIdsFromResponse'], { URL });
+test('NVIDIA NIM é detectada pela origem exata e catálogo de modelos é deduplicado', () => {
+  assert.equal(providers.isNvidiaIntegrate({ baseUrl: 'https://integrate.api.nvidia.com/v1' }), true);
+  assert.equal(providers.isNvidiaIntegrate({ baseUrl: 'https://evil.example/?next=integrate.api.nvidia.com' }), false);
+  assert.deepEqual(
+    providers.modelIdsFromResponse({ data: [{ id: 'nvidia/b' }, { id: 'nvidia/a' }, { id: 'nvidia/b' }] }),
+    ['nvidia/a', 'nvidia/b']
+  );
+});
+
 // ---------- persistência assíncrona/coalescida do chat ----------
 test('queueChatWrite serializa por chat e coalesce snapshots intermediários', async () => {
   const writes = [];
