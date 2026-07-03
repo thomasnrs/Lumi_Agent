@@ -430,7 +430,7 @@ const DEFAULT_CONFIG = {
   proactivity: 'normal', // off | low (saudação+lembretes) | normal (+volta/pausa) | high (+papo espontâneo)
   reactApps: false, // opt-in: ela percebe o app em foco (só nome/título) e comenta — Windows e Linux/X11
   watchServer: false, // opt-in: vigia o servidor remoto montado (disco cheio / serviço caído) e avisa
-  logSentinel: 'off', // 🛡️ sentinela de logs do SISTEMA: 'off' | 'notify' (avisa erros novos a cada 30min) | 'fix' (avisa + CARD de confirmação — só investiga com o SIM do usuário)
+  logSentinel: 'off', // 🛡️ sentinela de logs do SISTEMA: 'off' | 'notify' (avisa alertas novos a cada 30min) | 'fix' (avisa + CARD de confirmação — só investiga com o SIM do usuário)
   maxSteps: 48, // teto de passos (chamadas de ferramenta) por turno — depende do provedor/modelo
   contextWindow: 128000,
   compactAtPct: 80,
@@ -3180,6 +3180,14 @@ function createTerminal(opts) {
     return { error: 'não consegui abrir o terminal (' + path.basename(shell) + '): ' + e.message };
   }
   terminals.set(id, rec);
+  procRemember(path.basename(shell), {
+    cmd: [shell].concat(profArgs || []).concat(o.command ? ['-c', String(o.command)] : []).join(' '),
+    pid: rec.p.pid,
+    parentPid: process.pid,
+    exe: shell,
+    cwd,
+    source: 'Lumi terminal',
+  });
   // a UI cria a aba: terminal de janela vai SÓ pra dona; da Lumi (owner null) vai pra todas
   if (rec.owner != null) sendToWc(rec.owner, 'term:opened', { id, title, pty: rec.pty });
   else broadcast('term:opened', { id, title, pty: rec.pty });
@@ -5270,7 +5278,7 @@ const TOOLS = {
     schema: {
       name: 'system_logs',
       description:
-        'Lê os ERROS recentes do SISTEMA OPERACIONAL (Windows Event Log / journalctl / log show): crash de app, erro de driver/serviço, etc. Cada entrada traz hora, origem e mensagem — e, quando o processo ainda roda, o COMANDO com que foi lançado (launch). Use quando o usuário relatar crash/travamento de um programa/jogo ou pedir "o que aconteceu no sistema".',
+        'Lê ALERTAS e ERROS recentes do SISTEMA OPERACIONAL (Windows Event Log / journalctl / log show): crash de app, erro de driver/serviço, etc. Cada entrada traz hora, origem e mensagem e tenta correlacionar PID, executável, processo-pai, launcher (Steam/Epic/Xbox...) e comando de inicialização. Use quando o usuário relatar crash/travamento de um programa/jogo ou pedir "o que aconteceu no sistema".',
       parameters: {
         type: 'object',
         properties: {
@@ -8307,8 +8315,33 @@ ipcMain.handle('workspace:open-window', async () => {
   openWorkspaceWindow(r.filePaths[0]);
   return { ok: true, folder: r.filePaths[0] };
 });
-// Painel de Problemas do editor: roda o linter/type-checker da pasta DA JANELA
+// Painel de Problemas do editor: projeto + eventos do SO, ambos da pasta/janela certa.
 ipcMain.handle('diag:check', async (e) => checkProject(wsCfg(e)));
+ipcMain.handle('diag:system', async (e, opts) => {
+  const cfg = wsCfg(e);
+  const o = opts && typeof opts === 'object' ? opts : {};
+  try {
+    await refreshProcessSnapshot();
+    const result = await readSystemLogs(o.minutes, o.level === 'warning' ? 'warning' : 'error');
+    const entries = result.entries.map((entry) => ({
+      ...entry,
+      relatedToWorkspace: systemEntryMatchesWorkspace(entry, cfg.workspace),
+    }));
+    const errors = entries.filter((x) => !/warn|aviso/i.test(String(x.level || ''))).length;
+    return {
+      entries,
+      total: entries.length,
+      errors,
+      warnings: entries.length - errors,
+      workspace: cfg.workspace || '',
+      platform: process.platform,
+      sentinelMode: cfg.logSentinel || 'off',
+      collectedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    return { error: String((err && err.message) || err).slice(0, 300), entries: [] };
+  }
+});
 
 // ============================================================
 //  Menu de contexto (clique direito no boneco)
@@ -11890,14 +11923,39 @@ async function checkSpecialDates(lvl) {
 }
 
 // ---- app ativo (OPT-IN, Windows): ela percebe o programa em foco e comenta ----
-// privacidade: só o NOME do processo e o título da janela — nunca o conteúdo.
+// privacidade: observa só nome/PID do processo e título da janela — nunca o conteúdo.
+// Linhas de comando vêm do snapshot separado e são sanitizadas antes de chegar à UI/IA.
 let appWatch = null; // processo powershell de longa duração (1 spawn só)
 let activeApp = { proc: '', title: '', since: 0 };
+let recentActiveApps = []; // histórico curto: ajuda a ligar um crash ao app/jogo que estava em foco
 let lastAppComment = 0;
 let lastAppCommented = '';
 let appLongNoticed = '';
 const APP_IGNORE =
   /^(|explorer|searchhost|applicationframehost|electron|ai-desktop-mate|lumi|textinputhost|shellexperiencehost|startmenuexperiencehost|lockapp|dwm|taskmgr|plasmashell|gnome-shell|cinnamon|xfdesktop|xfce4-panel|mate-panel|lxpanel|polybar|plank|dock)$/;
+
+function rememberActiveApp(proc, pid, title) {
+  const name = String(proc || '').toLowerCase().trim();
+  if (!name) return;
+  const now = Date.now();
+  if (name !== activeApp.proc) activeApp = { proc: name, pid: Number(pid) || 0, title: String(title || ''), since: now };
+  else {
+    activeApp.pid = Number(pid) || activeApp.pid || 0;
+    activeApp.title = String(title || '');
+  }
+  const last = recentActiveApps[recentActiveApps.length - 1];
+  if (!last || last.proc !== name || last.title !== activeApp.title) {
+    recentActiveApps.push({ proc: name, pid: activeApp.pid || 0, title: activeApp.title, at: now });
+    if (recentActiveApps.length > 120) recentActiveApps = recentActiveApps.slice(-80);
+  } else last.at = now;
+}
+function parseActiveAppLine(line) {
+  const first = line.indexOf('|');
+  if (first < 0) return;
+  const second = line.indexOf('|', first + 1);
+  if (second < 0) return rememberActiveApp(line.slice(0, first), 0, line.slice(first + 1));
+  rememberActiveApp(line.slice(0, first), line.slice(first + 1, second), line.slice(second + 1));
+}
 
 function startAppWatcher() {
   if (appWatch) return;
@@ -11919,7 +11977,7 @@ function startAppWatcher() {
     '    $sb = New-Object System.Text.StringBuilder 256\n' +
     '    [void][FG]::GetWindowText($h, $sb, 256)\n' +
     '    $p = (Get-Process -Id $procId -ErrorAction SilentlyContinue).ProcessName\n' +
-    '    Write-Output ("$p|" + $sb.ToString())\n' +
+    '    Write-Output ("$p|$procId|" + $sb.ToString())\n' +
     '  } catch {}\n' +
     '  Start-Sleep -Seconds 20\n' +
     '}';
@@ -11935,12 +11993,7 @@ function startAppWatcher() {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
-        const sep = line.indexOf('|');
-        if (sep < 0) continue;
-        const proc = line.slice(0, sep).toLowerCase().trim();
-        const title = line.slice(sep + 1).trim();
-        if (proc !== activeApp.proc) activeApp = { proc, title, since: Date.now() };
-        else activeApp.title = title;
+        parseActiveAppLine(line);
       }
     });
     appWatch.on('exit', () => {
@@ -11959,7 +12012,8 @@ function startAppWatcherLinux() {
     '    CLASS=$(xprop -id "$ID" WM_CLASS 2>/dev/null | sed \'s/.*"\\(.*\\)".*/\\1/\')\n' +
     '    NAME=$(xprop -id "$ID" _NET_WM_NAME 2>/dev/null | sed -n \'s/.*= "\\(.*\\)"$/\\1/p\')\n' +
     '    [ -z "$NAME" ] && NAME=$(xprop -id "$ID" WM_NAME 2>/dev/null | sed -n \'s/.*= "\\(.*\\)"$/\\1/p\')\n' +
-    '    echo "$CLASS|$NAME"\n' +
+    '    PID=$(xprop -id "$ID" _NET_WM_PID 2>/dev/null | grep -o "[0-9]*" | head -1)\n' +
+    '    echo "$CLASS|$PID|$NAME"\n' +
     '  fi\n' +
     '  sleep 20\n' +
     'done';
@@ -11972,12 +12026,7 @@ function startAppWatcherLinux() {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
-        const sep = line.indexOf('|');
-        if (sep < 0) continue;
-        const proc = line.slice(0, sep).toLowerCase().trim();
-        const title = line.slice(sep + 1).trim();
-        if (proc !== activeApp.proc) activeApp = { proc, title, since: Date.now() };
-        else activeApp.title = title;
+        parseActiveAppLine(line);
       }
     });
     appWatch.on('exit', () => {
@@ -12230,42 +12279,120 @@ setInterval(() => {
 // HISTÓRICO de processos (acumula entre varreduras): nome → { cmd, last }. Assim, um app/jogo
 // que CRASHOU e já morreu continua correlacionável ("de onde veio, com que comando foi aberto").
 let procSnapshot = new Map();
-function procRemember(name, cmd) {
+let procByPid = new Map();
+let processSnapshotPromise = null;
+function sanitizeProcessCommand(cmd) {
+  return String(cmd || '')
+    .replace(/((?:--?|\/)(?:api[-_]?key|token|password|passwd|secret|authorization)(?:=|\s+))([^\s"']+|"[^"]*"|'[^']*')/gi, '$1[oculto]')
+    .replace(/\b([A-Za-z0-9_]*(?:api_?key|token|password|passwd|secret)[A-Za-z0-9_]*=)([^\s"']+|"[^"]*"|'[^']*')/gi, '$1[oculto]')
+    .replace(/(bearer\s+)[A-Za-z0-9._~+\/=-]+/gi, '$1[oculto]')
+    .replace(/(https?:\/\/[^:\s/@]+:)[^@\s/]+@/gi, '$1[oculto]@')
+    .slice(0, 500);
+}
+function processLauncher(info) {
+  const text = [info && info.cmd, info && info.exe, info && info.parent, info && info.parentCmd].filter(Boolean).join(' ').toLowerCase();
+  if (/steam(?:apps|\.exe|:\/\/)/.test(text)) return 'Steam';
+  if (/epicgames|epic games|epicgameslauncher/.test(text)) return 'Epic Games';
+  if (/gog galaxy|galaxyclient|gog\.com/.test(text)) return 'GOG Galaxy';
+  if (/battle\.net|battle\.net launcher/.test(text)) return 'Battle.net';
+  if (/riotclient|riot client/.test(text)) return 'Riot Client';
+  if (/eadesktop|origin\.exe|electronic arts/.test(text)) return 'EA app';
+  if (/ubisoft|upc\.exe/.test(text)) return 'Ubisoft Connect';
+  if (/xbox|gamingservices|microsoft\.gamingapp/.test(text)) return 'Xbox/Microsoft Store';
+  if (/itch\.io|itch\.exe/.test(text)) return 'itch.io';
+  return '';
+}
+function procRemember(name, data) {
   const k = String(name || '').toLowerCase();
-  if (!k || !cmd) return;
-  procSnapshot.set(k, { cmd: String(cmd).slice(0, 300), last: Date.now() });
+  const src = typeof data === 'string' ? { cmd: data } : data || {};
+  if (!k || (!src.cmd && !src.exe)) return;
+  const previous = procSnapshot.get(k) || {};
+  const parentInfo = src.parentPid ? procByPid.get(Number(src.parentPid)) : null;
+  const rec = {
+    ...previous,
+    cmd: sanitizeProcessCommand(src.cmd || previous.cmd),
+    pid: Number(src.pid) || previous.pid || 0,
+    parentPid: Number(src.parentPid) || previous.parentPid || 0,
+    exe: String(src.exe || previous.exe || '').slice(0, 360),
+    cwd: String(src.cwd || (parentInfo && parentInfo.cwd) || previous.cwd || '').slice(0, 360),
+    parent: String(src.parent || (parentInfo && parentInfo.name) || previous.parent || '').slice(0, 120),
+    parentCmd: sanitizeProcessCommand(src.parentCmd || (parentInfo && parentInfo.cmd) || previous.parentCmd),
+    source: src.source || previous.source || 'system',
+    last: Date.now(),
+  };
+  rec.launcher = processLauncher(rec) || previous.launcher || '';
+  rec.name = String(name || '').slice(0, 160);
+  procSnapshot.delete(k); // reinsert = ordem de uso recente
+  procSnapshot.set(k, rec);
+  if (rec.pid) procByPid.set(rec.pid, rec);
   if (procSnapshot.size > 700) {
-    // esquece os mais antigos (mapa preserva ordem de inserção; re-inserir atualiza a posição)
     const oldest = [...procSnapshot.entries()].sort((a, b) => a[1].last - b[1].last).slice(0, 200);
     for (const [k2] of oldest) procSnapshot.delete(k2);
+  }
+  if (procByPid.size > 1400) {
+    const oldest = [...procByPid.entries()].sort((a, b) => a[1].last - b[1].last).slice(0, 400);
+    for (const [pid] of oldest) procByPid.delete(pid);
   }
 }
 function procLaunchOf(name) {
   const r = procSnapshot.get(String(name || '').toLowerCase());
   return r ? r.cmd : null;
 }
-async function refreshProcessSnapshot() {
-  try {
-    if (process.platform === 'win32') {
-      const { stdout } = await execAsync(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object Name,CommandLine | ConvertTo-Json -Compress"',
-        { timeout: 20000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }
-      );
-      const arr = JSON.parse(stdout || '[]');
-      for (const p of Array.isArray(arr) ? arr : [arr]) {
-        if (p && p.Name && p.CommandLine) procRemember(p.Name, p.CommandLine);
+function procInfoOf(name, pid) {
+  if (pid && procByPid.has(Number(pid))) return procByPid.get(Number(pid));
+  return procSnapshot.get(String(name || '').toLowerCase()) || null;
+}
+function refreshProcessSnapshot() {
+  if (processSnapshotPromise) return processSnapshotPromise;
+  processSnapshotPromise = (async () => {
+    try {
+      if (process.platform === 'win32') {
+        const { stdout } = await execAsync(
+          'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine,CreationDate | ConvertTo-Json -Compress"',
+          { timeout: 20000, maxBuffer: 20 * 1024 * 1024, windowsHide: true }
+        );
+        const parsed = JSON.parse(stdout || '[]');
+        const rows = (Array.isArray(parsed) ? parsed : [parsed]).filter(Boolean);
+        const current = new Map(rows.map((p) => [Number(p.ProcessId) || 0, p]));
+        for (const p of rows) {
+          const parent = current.get(Number(p.ParentProcessId)) || procByPid.get(Number(p.ParentProcessId));
+          procRemember(p.Name || path.basename(p.ExecutablePath || ''), {
+            cmd: p.CommandLine,
+            pid: p.ProcessId,
+            parentPid: p.ParentProcessId,
+            exe: p.ExecutablePath,
+            parent: parent && (parent.Name || parent.name),
+            parentCmd: parent && (parent.CommandLine || parent.cmd),
+          });
+        }
+      } else {
+        const { stdout } = await execAsync('ps -eo pid=,ppid=,comm=,args=', {
+          timeout: 15000,
+          maxBuffer: 12 * 1024 * 1024,
+          windowsHide: true,
+        });
+        const rows = [];
+        for (const line of stdout.split('\n')) {
+          const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+          if (m) rows.push({ pid: +m[1], parentPid: +m[2], name: path.basename(m[3]), exe: m[3], cmd: m[4] || m[3] });
+        }
+        const current = new Map(rows.map((p) => [p.pid, p]));
+        for (const p of rows) {
+          const parent = current.get(p.parentPid) || procByPid.get(p.parentPid);
+          procRemember(p.name, {
+            ...p,
+            parent: parent && parent.name,
+            parentCmd: parent && parent.cmd,
+          });
+        }
       }
-    } else {
-      const { stdout } = await execAsync(process.platform === 'darwin' ? 'ps -axo comm=,args=' : 'ps -eo comm:32,args --no-headers', { timeout: 15000, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
-      for (const l of stdout.split('\n')) {
-        const name = l.slice(0, 32).trim();
-        const args = l.slice(32).trim();
-        if (name && args) procRemember(name, args);
-      }
+    } catch (e) {
+      logd('process-snapshot', String((e && e.message) || e));
     }
-  } catch (e) {
-    /* snapshot é best-effort */
-  }
+  })().finally(() => {
+    processSnapshotPromise = null;
+  });
+  return processSnapshotPromise;
 }
 // lê os erros/avisos recentes do SISTEMA (multi-OS) → entradas estruturadas
 async function readSystemLogs(minutes, level) {
@@ -12276,7 +12403,7 @@ async function readSystemLogs(minutes, level) {
     // try/catch DENTRO do PS: sem eventos na janela, Get-WinEvent "falha" (exit 1) — devolve [] em vez de estourar
     const ps =
       'try { Get-WinEvent -FilterHashtable @{LogName=@(\'Application\',\'System\'); Level=' + levels + '; StartTime=(Get-Date).AddMinutes(-' + mins + ')} -MaxEvents 60 -ErrorAction Stop | ' +
-      'Select-Object @{n=\'time\';e={$_.TimeCreated.ToString(\'s\')}},@{n=\'source\';e={$_.ProviderName}},Id,LevelDisplayName,Message | ConvertTo-Json -Compress } catch { \'[]\' }';
+      'Select-Object @{n=\'time\';e={$_.TimeCreated.ToString(\'s\')}},@{n=\'source\';e={$_.ProviderName}},@{n=\'processId\';e={$_.ProcessId}},Id,LevelDisplayName,Message | ConvertTo-Json -Compress } catch { \'[]\' }';
     const { stdout } = await execAsync('powershell -NoProfile -Command "' + ps.replace(/"/g, '\\"') + '"', { timeout: 30000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
     let arr = [];
     try {
@@ -12286,20 +12413,40 @@ async function readSystemLogs(minutes, level) {
     }
     for (const ev of Array.isArray(arr) ? arr : [arr]) {
       if (!ev) continue;
-      entries.push({ time: ev.time, source: ev.source, id: ev.Id, level: ev.LevelDisplayName, message: String(ev.Message || '').replace(/\s+/g, ' ').slice(0, 500) });
+      entries.push({
+        time: ev.time,
+        source: ev.source,
+        id: ev.Id,
+        processId: Number(ev.processId) || 0,
+        level: ev.LevelDisplayName,
+        message: String(ev.Message || '').replace(/\s+/g, ' ').slice(0, 1000),
+      });
     }
   } else if (process.platform === 'linux') {
     const pri = level === 'warning' ? 'warning' : 'err';
-    const { stdout } = await execAsync(`journalctl --no-pager -p ${pri} --since "${mins} min ago" -n 150 -o short-iso 2>/dev/null || true`, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout } = await execAsync(`journalctl --no-pager -p ${pri} --since "${mins} min ago" -n 150 -o json 2>/dev/null || true`, { timeout: 15000, maxBuffer: 12 * 1024 * 1024 });
     for (const l of stdout.split('\n')) {
-      const m = l.match(/^(\S+)\s+\S+\s+([^:\[]+)(?:\[\d+\])?:\s+(.+)$/);
-      if (m) entries.push({ time: m[1], source: m[2].trim(), level: 'error', message: m[3].slice(0, 500) });
+      if (!l.trim()) continue;
+      try {
+        const j = JSON.parse(l);
+        const priority = Number(j.PRIORITY);
+        const micros = Number(j.__REALTIME_TIMESTAMP);
+        entries.push({
+          time: Number.isFinite(micros) ? new Date(Math.floor(micros / 1000)).toISOString() : '',
+          source: j.SYSLOG_IDENTIFIER || j._COMM || j._SYSTEMD_UNIT || 'journal',
+          processId: Number(j._PID) || 0,
+          level: priority <= 3 ? 'error' : 'warning',
+          message: String(j.MESSAGE || '').replace(/\s+/g, ' ').slice(0, 1000),
+        });
+      } catch (e) {
+        /* linha incompleta do journal */
+      }
     }
   } else {
     const { stdout } = await execAsync(`log show --last ${mins}m --predicate 'messageType == error' --style syslog 2>/dev/null | tail -n 150`, { timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
     for (const l of stdout.split('\n')) {
-      const m = l.match(/^(\S+ \S+)\s+\S*\s*(\S+)\s+.*?:\s*(.+)$/);
-      if (m) entries.push({ time: m[1], source: m[2], level: 'error', message: m[3].slice(0, 500) });
+      const m = l.match(/^(\S+ \S+)\s+\S*\s*([^\s\[]+)(?:\[(\d+)\])?\s+.*?:\s*(.+)$/);
+      if (m) entries.push({ time: m[1], source: m[2], processId: Number(m[3]) || 0, level: 'error', message: m[4].slice(0, 1000) });
     }
   }
   // correlação: liga o erro ao programa (exe citado, caminho completo ou a própria origem)
@@ -12310,15 +12457,60 @@ async function readSystemLogs(minutes, level) {
     if (pathM) e.appPath = pathM[1];
     const exeM = msg.match(/([\w .-]+?\.exe)/i);
     const keys = [exeM && exeM[1] ? exeM[1].trim() : null, pathM ? path.basename(pathM[1]) : null, e.source].filter(Boolean);
+    let info = e.processId ? procInfoOf('', e.processId) : null;
+    const recentApp = [...recentActiveApps]
+      .reverse()
+      .find((item) => keys.some((key) => String(key).toLowerCase().replace(/\.exe$/, '') === item.proc.replace(/\.exe$/, '')));
+    if (recentApp) {
+      e.windowTitle = recentApp.title || '';
+      e.activeAt = new Date(recentApp.at).toISOString();
+      info = info || procInfoOf(recentApp.proc, recentApp.pid);
+    }
     for (const k of keys) {
-      const launch = procLaunchOf(k);
-      if (launch) {
-        e.launch = launch;
+      info = info || procInfoOf(k);
+      if (info) {
         break;
       }
     }
+    if (info) {
+      e.process = info.name || keys[0] || '';
+      e.processId = e.processId || info.pid || 0;
+      e.launch = info.cmd || '';
+      e.executable = info.exe || '';
+      e.cwd = info.cwd || '';
+      e.parent = info.parent || '';
+      e.parentLaunch = info.parentCmd || '';
+      e.launcher = info.launcher || processLauncher(info);
+      if (!e.appPath && info.exe) e.appPath = info.exe;
+    }
   }
   return { entries: entries.slice(0, 60) };
+}
+function systemEntryMatchesWorkspace(entry, workspace) {
+  const ws = String(workspace || '').trim();
+  if (!ws) return false;
+  const norm = (value) => String(value || '').toLowerCase().replace(/\\/g, '/');
+  const full = norm(ws).replace(/\/+$/, '');
+  const name = norm(path.basename(ws));
+  const haystack = norm(
+    [
+      entry && entry.message,
+      entry && entry.launch,
+      entry && entry.parentLaunch,
+      entry && entry.appPath,
+      entry && entry.executable,
+      entry && entry.cwd,
+      entry && entry.windowTitle,
+    ]
+      .filter(Boolean)
+      .join(' ')
+  );
+  return !!haystack && (haystack.includes(full) || (!!name && haystack.split(/[\s"'=;:,()[\]{}]+/).some((part) => part === name)));
+}
+function isNoisySystemEvent(entry) {
+  const source = String((entry && entry.source) || '').toLowerCase();
+  const id = Number(entry && entry.id);
+  return source.includes('distributedcom') && id === 10016;
 }
 let sentinelSeen = new Set(); // assinaturas já tratadas (não re-alertar/re-perguntar o mesmo erro)
 let sentinelAsking = false; // no máx. 1 card de confirmação pendente por vez
@@ -12334,23 +12526,27 @@ async function logSentinelSweep() {
   if (cfg.logSentinel !== 'notify' && cfg.logSentinel !== 'fix') return;
   try {
     await refreshProcessSnapshot(); // atualiza o histórico "programa → como foi lançado"
-    const { entries } = await readSystemLogs(35, 'error');
-    const fresh = entries.filter((e) => {
+    const { entries } = await readSystemLogs(35, 'warning');
+    const observed = entries.filter((entry) => !isNoisySystemEvent(entry));
+    const fresh = observed.filter((e) => {
       const k = (e.source || '') + '|' + (e.id || '') + '|' + String(e.message || '').slice(0, 100);
       if (sentinelSeen.has(k)) return false;
       sentinelSeen.add(k);
       return true;
     });
     if (sentinelSeen.size > 600) sentinelSeen = new Set([...sentinelSeen].slice(-300));
+    sendToAll('diag:system-update', {
+      entries: observed,
+      total: observed.length,
+      errors: observed.filter((x) => !/warn|aviso/i.test(String(x.level || ''))).length,
+      warnings: observed.filter((x) => /warn|aviso/i.test(String(x.level || ''))).length,
+      collectedAt: new Date().toISOString(),
+      platform: process.platform,
+      sentinelMode: cfg.logSentinel,
+    });
     if (!fresh.length) return;
     const ws = cfg.workspace || '';
-    const wsName = ws ? path.basename(ws).toLowerCase() : '';
-    const related = wsName
-      ? fresh.filter((e) => {
-          const m = (String(e.message || '') + ' ' + String(e.launch || '') + ' ' + String(e.appPath || '')).toLowerCase();
-          return m.includes(wsName) || (ws && m.includes(ws.toLowerCase().replace(/\\/g, '/')));
-        })
-      : [];
+    const related = ws ? fresh.filter((e) => systemEntryMatchesWorkspace(e, ws)) : [];
     // TRIAGEM por IA (modelo de tarefa, best-effort): o que houve, dá pra evitar, é do projeto?
     let triage = '';
     try {
@@ -12358,7 +12554,7 @@ async function logSentinelSweep() {
         {
           role: 'system',
           content:
-            'Você triageia erros do sistema operacional pro usuário em 1-2 frases diretas (português): o que aconteceu, se é grave/ignorável, e se dá pra PREVENIR algo. Sem tecniquês desnecessário, sem markdown.',
+            'Você triageia alertas e erros do sistema operacional pro usuário em 1-2 frases diretas (português): o que aconteceu, se é grave/ignorável, e se dá pra PREVENIR algo. Sem tecniquês desnecessário, sem markdown.',
         },
         { role: 'user', content: fresh.slice(0, 5).map((e) => (e.source || '?') + ': ' + compactText(e.message, 220) + (e.launch ? ' (lançado: ' + compactText(e.launch, 100) + ')' : '')).join('\n') },
       ]);
@@ -12367,7 +12563,7 @@ async function logSentinelSweep() {
       triage = fresh.slice(0, 3).map((e) => (e.source || '?') + ': ' + compactText(e.message, 110)).join(' · ');
     }
     broadcast('chat:note', {
-      text: '🛡️ Sentinela: ' + fresh.length + ' erro(s) novo(s) no sistema' + (related.length ? ' — ' + related.length + ' parece(m) do SEU projeto' : '') + '. ' + triage,
+      text: '🛡️ Sentinela: ' + fresh.length + ' alerta(s) novo(s) no sistema' + (related.length ? ' — ' + related.length + ' parece(m) do SEU projeto' : '') + '. ' + triage,
     });
     // modo FIX: erro do projeto → CARD com botão. NUNCA age sem o "sim" do usuário.
     if (cfg.logSentinel === 'fix' && related.length && !sentinelAsking) {
@@ -12398,6 +12594,14 @@ async function logSentinelSweep() {
 }
 setInterval(logSentinelSweep, 30 * 60 * 1000); // varre a cada 30 min (no-op quando desligada)
 setTimeout(logSentinelSweep, 4 * 60 * 1000); // primeira varredura ~4 min após abrir (pega o que aconteceu antes)
+// Amostra processos com mais frequência para ainda sabermos como um app/jogo foi aberto
+// quando ele já tiver morrido na próxima varredura de logs. Só roda com o Sentinela ligado.
+setInterval(() => {
+  if (loadConfig().logSentinel !== 'off') refreshProcessSnapshot();
+}, 2 * 60 * 1000);
+setTimeout(() => {
+  if (loadConfig().logSentinel !== 'off') refreshProcessSnapshot();
+}, 20 * 1000);
 // investigação aprovada com agente ocupado → dispara assim que ele liberar
 setInterval(() => {
   if (sentinelQueued && !S().running) {
@@ -12410,14 +12614,15 @@ setInterval(() => {
 // loop do companheirismo (1x/min)
 setInterval(async () => {
   const lvl = proactivityLevel();
+  const cfgNow = loadConfig();
+  const watchForSentinel = cfgNow.logSentinel === 'notify' || cfgNow.logSentinel === 'fix';
+  // O histórico de app em foco também alimenta a correlação de crashes. Portanto ele
+  // continua ativo quando o Sentinela está ligado, mesmo com a proatividade desligada.
+  if ((watchForSentinel || (cfgNow.reactApps && lvl >= 2)) && (process.platform === 'win32' || IS_LINUX)) startAppWatcher();
+  else stopAppWatcher();
   if (lvl <= 0) {
-    stopAppWatcher();
     return;
   }
-  // watcher do app ativo liga/desliga conforme a config (opt-in; Windows e Linux/X11)
-  const cfgNow = loadConfig();
-  if (cfgNow.reactApps && lvl >= 2 && (process.platform === 'win32' || IS_LINUX)) startAppWatcher();
-  else stopAppWatcher();
   const now = Date.now();
   const idleMin = (now - lastUserActivity) / 60000;
   if (idleMin > 30) {

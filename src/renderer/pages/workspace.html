@@ -613,11 +613,26 @@
       #restRes .restmsg { color: #889; font-size: 12px; padding: 14px; }
       /* ---- aba PROBLEMAS ---- */
       #problemsBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
+      #probModeBar { display: flex; align-items: center; gap: 3px; padding: 5px 8px 0; background: color-mix(in srgb, var(--surface-2) 76%, transparent); }
+      .probmode { position: relative; border: none; border-radius: 7px 7px 0 0; padding: 7px 12px 8px; background: transparent; color: #838d9c; font-size: 11px; font-weight: 700; letter-spacing: .035em; cursor: pointer; transition: color .16s ease, background .16s ease; }
+      .probmode:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+      .probmode.active { color: var(--text); background: var(--surface); }
+      .probmode.active::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; border-radius: 2px; background: var(--accent); }
+      .probmode .mini { display: inline-grid; place-items: center; min-width: 15px; height: 15px; margin-left: 5px; padding: 0 4px; border-radius: 99px; background: color-mix(in srgb, #e0564f 82%, transparent); color: #fff; font-size: 9px; }
       #probBar { display: flex; gap: 10px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
       #probCheck { border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-text); flex: 0 0 auto; }
       #probCheck:disabled { opacity: 0.6; cursor: default; }
+      #sysProbBar { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+      #sysProbBar select { min-height: 28px; border: 1px solid var(--border); border-radius: 7px; padding: 4px 7px; background: var(--bg); color: var(--text); font-size: 11px; outline: none; }
+      #sysProbRefresh { min-height: 28px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 7px; padding: 4px 11px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--text); font-size: 11px; font-weight: 650; cursor: pointer; transition: transform .15s ease, border-color .15s ease; }
+      #sysProbRefresh:hover { border-color: var(--accent); transform: translateY(-1px); }
+      #sysProbRefresh:active { transform: none; }
+      #sysProbRefresh:disabled { opacity: .55; cursor: default; transform: none; }
+      #sysSentinelState { min-height: 28px; border: 1px solid var(--border); border-radius: 99px; padding: 4px 9px; background: var(--surface-2); color: #7f8998; font-size: 10px; cursor: pointer; white-space: nowrap; }
+      #sysSentinelState.on { border-color: color-mix(in srgb, #61d095 38%, var(--border)); color: #82d9a5; background: color-mix(in srgb, #61d095 7%, var(--surface-2)); }
       .probsum { font-size: 12px; color: #9aa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #probList { flex: 1; overflow: auto; padding: 4px 0; }
+      #sysProbList { flex: 1; overflow: auto; padding: 6px 8px 10px; }
       .probempty { padding: 18px; text-align: center; color: #778; font-size: 12.5px; }
       .probrow { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px; white-space: nowrap; }
       .probrow:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -625,6 +640,24 @@
       .probrow .ploc { flex: 0 0 auto; color: var(--accent); font-family: Consolas, monospace; }
       .probrow .pmsg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
       .probrow.pwarn .pmsg { color: #c9b89a; }
+      .sysprob { position: relative; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 8px 10px; margin-bottom: 6px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--border) 82%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--surface) 82%, transparent); cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+      .sysprob:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); transform: translateY(-1px); }
+      .sysprob.related { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); box-shadow: inset 3px 0 color-mix(in srgb, var(--accent) 82%, transparent); }
+      .sysprob .smark { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: #ff6b72; box-shadow: 0 0 8px color-mix(in srgb, #ff6b72 40%, transparent); }
+      .sysprob.warning .smark { background: #e2b75e; box-shadow: 0 0 8px color-mix(in srgb, #e2b75e 38%, transparent); }
+      .sysprob .smain { min-width: 0; }
+      .sysprob .stitle { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+      .sysprob .ssource { color: var(--text); font-size: 11.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sysprob .sid { flex: 0 0 auto; color: #758091; font: 10px Consolas, monospace; }
+      .sysprob .smessage { margin-top: 3px; color: #aeb6c3; font-size: 11.5px; line-height: 1.42; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .sysprob.expanded .smessage { display: block; overflow: visible; }
+      .sysprob .stime { color: #717b8b; font-size: 10px; white-space: nowrap; }
+      .sysprob .smeta { grid-column: 2 / -1; display: none; gap: 5px; flex-wrap: wrap; align-items: center; padding-top: 2px; }
+      .sysprob.expanded .smeta { display: flex; }
+      .sysprob .schip { max-width: 100%; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: #8f99a8; font: 10px/1.3 Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sysprob .schip.hot { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); color: color-mix(in srgb, var(--accent) 75%, #fff); }
+      .sysprob .sinvestigate { margin-left: auto; min-height: 28px; border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border)); border-radius: 7px; padding: 4px 9px; background: color-mix(in srgb, var(--accent) 11%, var(--surface)); color: var(--text); font-size: 10.5px; font-weight: 650; cursor: pointer; }
+      .sysprob .sinvestigate:hover { background: color-mix(in srgb, var(--accent) 20%, var(--surface)); }
       .probbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; padding: 0 4px; margin-left: 5px; border-radius: 8px; background: #e0564f; color: #fff; font-size: 9.5px; font-weight: 700; vertical-align: 1px; }
       /* ---- aba BANCO ---- */
       #dbBody { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
@@ -874,11 +907,30 @@
             </div>
           </div>
           <div id="problemsBody" hidden>
+            <div id="probModeBar">
+              <button class="probmode active" data-prob-mode="project">PROJETO<span id="projectProbCount" class="mini" hidden></span></button>
+              <button class="probmode" data-prob-mode="system">SISTEMA<span id="systemProbCount" class="mini" hidden></span></button>
+            </div>
             <div id="probBar">
               <button id="probCheck">✓ Checar projeto</button>
               <span id="probSummary" class="probsum">Roda o linter/type-checker do projeto (eslint/tsc, ruff, go vet, cargo).</span>
             </div>
+            <div id="sysProbBar" hidden>
+              <select id="sysProbLevel" title="Severidade">
+                <option value="error">Somente erros</option>
+                <option value="warning">Erros + avisos</option>
+              </select>
+              <select id="sysProbWindow" title="Janela de tempo">
+                <option value="60">Última hora</option>
+                <option value="360">Últimas 6 horas</option>
+                <option value="1440">Últimas 24 horas</option>
+              </select>
+              <button id="sysProbRefresh">↻ Ler logs do sistema</button>
+              <button id="sysSentinelState" title="Ativar ou configurar a Sentinela">● Sentinela desligada</button>
+              <span id="sysProbSummary" class="probsum">Event Log · journalctl · log show</span>
+            </div>
             <div id="probList"></div>
+            <div id="sysProbList" hidden></div>
           </div>
           <div id="dbBody" hidden>
             <div id="dbConnRow">
@@ -1851,7 +1903,7 @@
         if (t === 'docker') loadDocker(true);
         if (t === 'db') dbInit();
         if (t === 'server') loadServer();
-        if (t === 'problems') renderProblems(); // mostra o que já tem; usa o botão pra rodar de novo
+        if (t === 'problems') setProblemMode(probMode); // mantém Projeto/Sistema e atualiza a visão escolhida
         if (t === 'term') setTimeout(fitActive, 30);
       }
 
@@ -1881,9 +1933,13 @@
       }
 
       // ============================================================
-      //  Aba PROBLEMAS: roda o linter/type-checker e lista os erros (clique → abre no ponto)
+      //  Aba PROBLEMAS: diagnósticos do projeto + alertas do sistema operacional
       // ============================================================
       let probData = null;
+      let systemProbData = null;
+      let probMode = 'project';
+      let systemSentinelMode = 'off';
+      let systemProbSeq = 0;
       async function openAt(p, line, col) {
         await openFile(p);
         if (editor && line) {
@@ -1894,7 +1950,15 @@
       }
       function updateProbBadge() {
         const badge = document.getElementById('probBadge');
-        const errs = probData ? probData.errors || 0 : 0;
+        const projectErrors = probData ? probData.errors || 0 : 0;
+        const systemErrors = systemProbData ? systemProbData.errors || 0 : 0;
+        const errs = projectErrors + systemErrors;
+        const projectCount = document.getElementById('projectProbCount');
+        const systemCount = document.getElementById('systemProbCount');
+        projectCount.textContent = projectErrors > 99 ? '99+' : projectErrors;
+        projectCount.hidden = projectErrors <= 0;
+        systemCount.textContent = systemErrors > 99 ? '99+' : systemErrors;
+        systemCount.hidden = systemErrors <= 0;
         if (errs > 0) {
           badge.textContent = errs > 99 ? '99+' : errs;
           badge.hidden = false;
@@ -1946,6 +2010,149 @@
         });
         updateProbBadge();
       }
+      const systemTime = (value) => {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value || '');
+        return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      };
+      function systemPromptFor(entry) {
+        const details = [
+          `Origem: ${entry.source || '?'}` + (entry.id ? ` · evento ${entry.id}` : ''),
+          `Horário: ${entry.time || '?'}`,
+          `Severidade: ${entry.level || '?'}`,
+          entry.process ? `Processo: ${entry.process}${entry.processId ? ` (PID ${entry.processId})` : ''}` : '',
+          entry.appPath ? `Executável: ${entry.appPath}` : '',
+          entry.launcher ? `Launcher/origem: ${entry.launcher}` : '',
+          entry.launch ? `Comando de inicialização: ${entry.launch}` : '',
+          entry.parent ? `Processo pai: ${entry.parent}` : '',
+          entry.parentLaunch ? `Comando do processo pai: ${entry.parentLaunch}` : '',
+          entry.windowTitle ? `Janela ativa associada: ${entry.windowTitle}` : '',
+          entry.activeAt ? `Vista em foco: ${entry.activeAt}` : '',
+          entry.cwd ? `Diretório de trabalho: ${entry.cwd}` : '',
+          `Mensagem: ${entry.message || ''}`,
+        ].filter(Boolean);
+        return (
+          'Investigue este alerta do sistema operacional e descubra a causa real. ' +
+          'Cruze com o workspace atual, os arquivos e o histórico técnico. Se estiver relacionado ao projeto, corrija e verifique; ' +
+          'se for do Windows/Linux/macOS ou de outro programa, explique o impacto e a ação segura recomendada. Não chute.\n\n' +
+          details.join('\n')
+        );
+      }
+      function addSystemChip(parent, text, hot) {
+        if (!text) return;
+        const chip = document.createElement('span');
+        chip.className = 'schip' + (hot ? ' hot' : '');
+        chip.textContent = text;
+        chip.title = text;
+        parent.appendChild(chip);
+      }
+      function renderSystemProblems() {
+        const list = document.getElementById('sysProbList');
+        const sum = document.getElementById('sysProbSummary');
+        const sentinel = document.getElementById('sysSentinelState');
+        systemSentinelMode = (systemProbData && systemProbData.sentinelMode) || systemSentinelMode;
+        sentinel.classList.toggle('on', systemSentinelMode !== 'off');
+        sentinel.textContent =
+          systemSentinelMode === 'fix'
+            ? '● Sentinela + investigar'
+            : systemSentinelMode === 'notify'
+              ? '● Sentinela ativa'
+              : '● Sentinela desligada';
+        sentinel.title =
+          systemSentinelMode === 'off'
+            ? 'Clique para ativar avisos automáticos a cada 30 minutos'
+            : 'Clique para abrir as configurações da Sentinela';
+        list.replaceChildren();
+        if (!systemProbData) {
+          sum.textContent = 'Event Log · journalctl · log show';
+          list.innerHTML = '<div class="probempty">Selecione Sistema para ler os alertas do computador.</div>';
+          updateProbBadge();
+          return;
+        }
+        if (systemProbData.error) {
+          sum.textContent = '⚠ ' + systemProbData.error;
+          list.innerHTML = '<div class="probempty">Não foi possível ler os logs do sistema.</div>';
+          updateProbBadge();
+          return;
+        }
+        const entries = systemProbData.entries || [];
+        sum.textContent = entries.length
+          ? `${systemProbData.errors || 0} erro(s), ${systemProbData.warnings || 0} aviso(s) · ${systemProbData.platform || 'sistema'}`
+          : '✓ nenhum alerta na janela selecionada';
+        if (!entries.length) {
+          list.innerHTML = '<div class="probempty">Nada suspeito por aqui. ✨</div>';
+          updateProbBadge();
+          return;
+        }
+        for (const entry of entries) {
+          const warning = /warn|aviso/i.test(String(entry.level || ''));
+          const row = document.createElement('article');
+          row.className = 'sysprob' + (warning ? ' warning' : '') + (entry.relatedToWorkspace ? ' related' : '');
+          row.title = 'Clique para ver processo, launcher e comando de inicialização';
+
+          const mark = document.createElement('span');
+          mark.className = 'smark';
+          const main = document.createElement('div');
+          main.className = 'smain';
+          const title = document.createElement('div');
+          title.className = 'stitle';
+          const source = document.createElement('span');
+          source.className = 'ssource';
+          source.textContent = entry.source || 'Sistema';
+          const id = document.createElement('span');
+          id.className = 'sid';
+          id.textContent = entry.id ? '#' + entry.id : String(entry.level || '');
+          const message = document.createElement('div');
+          message.className = 'smessage';
+          message.textContent = entry.message || '(sem mensagem)';
+          title.append(source, id);
+          main.append(title, message);
+
+          const time = document.createElement('time');
+          time.className = 'stime';
+          time.textContent = systemTime(entry.time);
+          time.dateTime = entry.time || '';
+
+          const meta = document.createElement('div');
+          meta.className = 'smeta';
+          addSystemChip(meta, entry.relatedToWorkspace ? '✦ relacionado ao workspace' : '', true);
+          addSystemChip(meta, entry.launcher ? 'launcher: ' + entry.launcher : '');
+          addSystemChip(meta, entry.process ? `processo: ${entry.process}${entry.processId ? ' · PID ' + entry.processId : ''}` : '');
+          addSystemChip(meta, entry.parent ? 'pai: ' + entry.parent : '');
+          addSystemChip(meta, entry.windowTitle ? 'janela: ' + entry.windowTitle : '');
+          addSystemChip(meta, entry.appPath ? 'exe: ' + entry.appPath : '');
+          addSystemChip(meta, entry.cwd ? 'cwd: ' + entry.cwd : '');
+          addSystemChip(meta, entry.launch ? 'launch: ' + entry.launch : '');
+          addSystemChip(meta, entry.parentLaunch ? 'parent launch: ' + entry.parentLaunch : '');
+          const investigate = document.createElement('button');
+          investigate.className = 'sinvestigate';
+          investigate.type = 'button';
+          investigate.textContent = '✦ Investigar com a Lumi';
+          investigate.addEventListener('click', (event) => {
+            event.stopPropagation();
+            window.api.sendChat(systemPromptFor(entry), []);
+            toast('✦ alerta enviado para a Lumi investigar');
+          });
+          meta.appendChild(investigate);
+
+          row.append(mark, main, time, meta);
+          row.addEventListener('click', () => row.classList.toggle('expanded'));
+          list.appendChild(row);
+        }
+        updateProbBadge();
+      }
+      function setProblemMode(mode) {
+        probMode = mode === 'system' ? 'system' : 'project';
+        document.querySelectorAll('.probmode').forEach((button) => button.classList.toggle('active', button.dataset.probMode === probMode));
+        document.getElementById('probBar').hidden = probMode !== 'project';
+        document.getElementById('probList').hidden = probMode !== 'project';
+        document.getElementById('sysProbBar').hidden = probMode !== 'system';
+        document.getElementById('sysProbList').hidden = probMode !== 'system';
+        if (probMode === 'system') {
+          renderSystemProblems();
+          if (!systemProbData || systemProbData._needsRefresh) runSystemCheck();
+        } else renderProblems();
+      }
       async function runProblemCheck() {
         const btn = document.getElementById('probCheck');
         const sum = document.getElementById('probSummary');
@@ -1960,7 +2167,52 @@
         btn.disabled = false;
         renderProblems();
       }
+      async function runSystemCheck() {
+        const seq = ++systemProbSeq;
+        const btn = document.getElementById('sysProbRefresh');
+        const sum = document.getElementById('sysProbSummary');
+        btn.disabled = true;
+        sum.textContent = '⏳ cruzando logs, processos e launchers…';
+        document.getElementById('sysProbList').innerHTML = '<div class="probempty">Lendo os registros do sistema…</div>';
+        try {
+          const result = await window.api.diagSystem({
+            minutes: Number(document.getElementById('sysProbWindow').value) || 60,
+            level: document.getElementById('sysProbLevel').value,
+          });
+          if (seq !== systemProbSeq) return;
+          systemProbData = result;
+        } catch (e) {
+          if (seq !== systemProbSeq) return;
+          systemProbData = { error: String(e), entries: [] };
+        }
+        btn.disabled = false;
+        renderSystemProblems();
+      }
       document.getElementById('probCheck').addEventListener('click', runProblemCheck);
+      document.getElementById('sysProbRefresh').addEventListener('click', runSystemCheck);
+      document.getElementById('sysProbLevel').addEventListener('change', runSystemCheck);
+      document.getElementById('sysProbWindow').addEventListener('change', runSystemCheck);
+      document.getElementById('sysSentinelState').addEventListener('click', async () => {
+        if (systemSentinelMode === 'off') {
+          systemProbSeq++;
+          await window.api.setConfig({ logSentinel: 'notify' });
+          systemSentinelMode = 'notify';
+          if (systemProbData) systemProbData.sentinelMode = 'notify';
+          document.getElementById('sysProbRefresh').disabled = false;
+          renderSystemProblems();
+          toast('✓ Sentinela ativada · alertas automáticos a cada 30 min');
+        } else window.api.openSettingsWindow();
+      });
+      document.querySelectorAll('.probmode').forEach((button) =>
+        button.addEventListener('click', () => setProblemMode(button.dataset.probMode))
+      );
+      if (window.api.onSystemDiagnostics) {
+        window.api.onSystemDiagnostics((data) => {
+          systemProbData = { ...(data || {}), _needsRefresh: true };
+          updateProbBadge();
+          if (panelTab === 'problems' && probMode === 'system') runSystemCheck();
+        });
+      }
       document.getElementById('restSend').onclick = restSend;
       document.getElementById('restUrl').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {

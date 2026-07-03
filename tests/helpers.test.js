@@ -249,3 +249,68 @@ test('parseColonList entende file:line:col: msg', () => {
   assert.equal(p[0].line, 10);
   assert.equal(p[0].source, 'go vet');
 });
+
+// ---------- diagnósticos do sistema ----------
+const sysdiag = load(['sanitizeProcessCommand', 'processLauncher', 'systemEntryMatchesWorkspace', 'isNoisySystemEvent']);
+
+test('sanitizeProcessCommand não deixa segredo de launcher/comando vazar', () => {
+  const clean = sysdiag.sanitizeProcessCommand(
+    'game.exe --token abc123 --password="segredo" API_KEY=chave456 Authorization Bearer xyz.123 https://user:senha@host/api'
+  );
+  assert.ok(!clean.includes('abc123'));
+  assert.ok(!clean.includes('segredo'));
+  assert.ok(!clean.includes('chave456'));
+  assert.ok(!clean.includes(':senha@'));
+  assert.ok(!clean.includes('xyz.123'));
+  assert.ok(clean.includes('[oculto]'));
+});
+
+test('processLauncher reconhece launchers comuns', () => {
+  assert.equal(sysdiag.processLauncher({ cmd: '"C:\\Program Files (x86)\\Steam\\steam.exe" -applaunch 730' }), 'Steam');
+  assert.equal(sysdiag.processLauncher({ parentCmd: 'EpicGamesLauncher.exe com.epicgames.launcher://apps/foo' }), 'Epic Games');
+  assert.equal(sysdiag.processLauncher({ exe: 'C:\\XboxGames\\Game\\game.exe', parent: 'GamingServices' }), 'Xbox/Microsoft Store');
+});
+
+test('systemEntryMatchesWorkspace cruza caminho, cwd e mensagem sem falso positivo parcial', () => {
+  const ws = 'C:\\dev\\minha-api';
+  assert.equal(sysdiag.systemEntryMatchesWorkspace({ launch: 'node C:\\dev\\minha-api\\server.js' }, ws), true);
+  assert.equal(sysdiag.systemEntryMatchesWorkspace({ cwd: 'C:/dev/minha-api' }, ws), true);
+  assert.equal(sysdiag.systemEntryMatchesWorkspace({ message: 'falha em minha-api' }, ws), true);
+  assert.equal(sysdiag.systemEntryMatchesWorkspace({ message: 'falha em minha-api-antiga' }, ws), false);
+});
+
+test('isNoisySystemEvent filtra DCOM 10016, mas preserva crash real', () => {
+  assert.equal(sysdiag.isNoisySystemEvent({ source: 'Microsoft-Windows-DistributedCOM', id: 10016 }), true);
+  assert.equal(sysdiag.isNoisySystemEvent({ source: 'Application Hang', id: 1002 }), false);
+});
+
+test('readSystemLogs correlaciona evento do Windows com processo e launcher lembrados', async () => {
+  const fakeEvent = {
+    time: '2026-07-02T20:47:06',
+    source: 'Application Hang',
+    processId: 321,
+    Id: 1002,
+    LevelDisplayName: 'Erro',
+    Message: 'O programa game.exe deixou de interagir com o Windows.',
+  };
+  const diag = load(
+    ['procSnapshot', 'procByPid', 'sanitizeProcessCommand', 'processLauncher', 'procRemember', 'procInfoOf', 'recentActiveApps', 'readSystemLogs'],
+    {
+      process: { platform: 'win32' },
+      execAsync: async () => ({ stdout: JSON.stringify(fakeEvent) }),
+    }
+  );
+  diag.procRemember('game.exe', {
+    cmd: '"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Game\\game.exe" -windowed',
+    pid: 321,
+    parent: 'steam.exe',
+    parentCmd: '"C:\\Program Files (x86)\\Steam\\steam.exe" -silent',
+    exe: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Game\\game.exe',
+  });
+  const result = await diag.readSystemLogs(60, 'error');
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].launcher, 'Steam');
+  assert.equal(result.entries[0].processId, 321);
+  assert.ok(result.entries[0].launch.includes('game.exe'));
+  assert.equal(result.entries[0].parent, 'steam.exe');
+});

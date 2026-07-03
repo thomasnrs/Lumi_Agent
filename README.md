@@ -97,7 +97,7 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 | `read_terminal` / `list_terminals` / `kill_terminal` | Acompanha a saída, lista e encerra terminais |
 | `run_tests` | Roda os testes **focado** num arquivo/nome (detecta jest/vitest, pytest, go, cargo, maven, gradle) — pass/fail estruturado |
 | `env_info` | **Raio-X do ambiente**: versões instaladas, gerenciador do projeto pelo lockfile, stack — fim do "npm em projeto pnpm" |
-| `system_logs` | Lê os **erros do sistema operacional** (Event Log/journalctl) — crash de app/jogo com o comando que o lançou |
+| `system_logs` | Lê **alertas e erros do sistema operacional** (Event Log/journalctl/log show) — cruza crash de app/jogo com PID, processo-pai, launcher e comando de inicialização |
 | `list_ssh_hosts` / `connect_remote` | Lista os hosts do seu `~/.ssh/config` e **monta uma pasta remota** pra trabalhar nela |
 
 ### 🧠 Git, qualidade & banco
@@ -156,7 +156,7 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 - **Memória em camadas**: `CLAUDE.md` = briefing estável do projeto (ela gera e mantém) · `.lumi-memory.md` = caderno de decisões/gotchas/pendências — sem duplicar.
 - **Modelo por tarefa**: compactação, mensagem de commit, revisão e afins rodam num **modelo barato/grátis** que você escolhe — sem queimar a API paga do chat.
 - **✨ Varinha**: a I.A. reescreve seu prompt (claro, específico, com critérios) antes de enviar — você revisa, e um clique desfaz.
-- **🛡️ Sentinela de logs** (opt-in): varre os erros do sistema a cada 30 min, correlaciona com o programa que crashou (e como foi lançado) e, se for do seu projeto, oferece um **card "Investigar e corrigir"** — ela nunca age sem o seu Sim.
+- **🛡️ Sentinela de logs** (opt-in): varre alertas do sistema a cada 30 min, correlaciona com o programa que crashou, processo-pai, Steam/Epic/Xbox e comando de inicialização. Os eventos aparecem em **PROBLEMAS → SISTEMA** e, se forem do projeto, ganham **"Investigar com a Lumi"** — ela nunca corrige sem o seu Sim.
 - **Checkpoints**: cada turno que altera arquivos vira um ponto de restauração — botão **↩ desfazer** no chat (cobre inclusive patches multi-arquivo).
 - **Turnos de maratona**: teto de passos configurável (4–200) com compactação interna do contexto; se bater o teto, "continua" retoma do ponto exato.
 - **Steering & Stop**: redirecione-a no meio da tarefa digitando, ou pare na hora com ⏹ (mantendo o progresso).

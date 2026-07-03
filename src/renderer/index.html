@@ -1067,13 +1067,13 @@
             </label>
             <p class="hint" style="margin: 8px 0 4px">🛡️ Guardrails (comandos destrutivos bloqueados) estão sempre ligados. Arquivos protegidos (nunca apagar/sobrescrever), separados por vírgula:</p>
             <input id="preciousFiles" type="text" placeholder="icone.png, .env, chave.pem" autocomplete="off" />
-            <label style="margin-top: 10px">🛡️ Sentinela de logs do sistema (varre erros do SO a cada 30 min)</label>
+            <label style="margin-top: 10px">🛡️ Sentinela de logs do sistema (varre alertas do SO a cada 30 min)</label>
             <select id="logSentinel">
               <option value="off">Desligada</option>
-              <option value="notify">Avisar sobre erros novos (crash de apps, drivers…)</option>
+              <option value="notify">Avisar sobre alertas novos (crash de apps, drivers…)</option>
               <option value="fix">Avisar + botão "Investigar e corrigir" quando for do projeto</option>
             </select>
-            <p class="hint">Ela lê o Event Log/journalctl, cruza com os processos (quem lançou, com que comando) e resume no chat. No modo com botão, erro ligado ao workspace vira um <b>card de confirmação</b> — ela <b>NUNCA</b> age sem você clicar "Sim".</p>
+            <p class="hint">Ela lê o Event Log/journalctl, cruza com processo-pai, launcher e comando de inicialização e resume no chat. Os registros também ficam em Workspace → PROBLEMAS → SISTEMA. No modo com botão, alerta ligado ao workspace vira uma confirmação — ela <b>NUNCA</b> age sem você clicar "Sim".</p>
           </details>
 
           <p class="hint">🎨 Geração de imagens fica em "Gerar imagem" (clique direito → Gerar imagem).</p>
