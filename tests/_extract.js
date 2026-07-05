@@ -24,7 +24,7 @@ function extractDecl(name) {
   const isFn = first.startsWith('function') || first.startsWith('async function');
   for (let i = start + 1; i < LINES.length; i++) {
     const l = LINES[i];
-    if (isFn ? l === '}' : l === '];' || l === '};') return LINES.slice(start, i + 1).join('\n');
+    if (isFn ? l === '}' : l === '];' || l === '};' || l === ']);') return LINES.slice(start, i + 1).join('\n');
   }
   throw new Error('extract: não achei o fim de "' + name + '"');
 }

@@ -154,6 +154,7 @@ function makeSession(id) {
     id: id || '', // chatId desta sessão
     workspace: null, // pasta em que a IA trabalha NESTA sessão (janela de workspace própria)
     running: false, // turno em andamento?
+    deleted: false, // impede saves atrasados de ressuscitarem uma aba fechada
     abort: null, // AbortController do turno (botão Stop)
     steerQueue: [], // mensagens enviadas DURANTE o processamento (steering)
     editedSinceTurn: false, // p/ verificação automática
@@ -178,6 +179,7 @@ function makeSession(id) {
     codexThreadId: '',
     codexThreadWorkspace: '',
     codexControl: null, // interrupt/steer do turno Codex ativo nesta conversa
+    chatConfig: null, // override de motor/provedor/modelo desta conversa; null = segue o global
   };
 }
 let fgSession = makeSession(''); // sessão de primeiro plano
@@ -227,6 +229,13 @@ const winChat = new Map();
 function senderChatId(e) {
   const v = winChat.get(e.sender.id);
   return v && v !== '*' ? v : currentChatId;
+}
+function senderChatSession(e) {
+  const id = senderChatId(e);
+  return id && id !== fgSession.id ? getSession(id) : fgSession;
+}
+function inSenderChat(e, fn) {
+  return sessionALS.run(senderChatSession(e), fn);
 }
 
 // multi-janela de WORKSPACE: cada janela = sua própria pasta + seu próprio chat + a IA
@@ -577,6 +586,133 @@ function saveConfig(cfg) {
   } catch (e) {
     cfgCache = null; // na dúvida, o próximo loadConfig relê do disco
   }
+}
+
+// Configuração isolada por conversa. Guardamos apenas o que muda o motor da I.A.;
+// aparência, voz, permissões e demais preferências continuam globais.
+const CHAT_CONFIG_KEYS = new Set([
+  'provider',
+  'baseUrl',
+  'apiKey',
+  'model',
+  'temperature',
+  'requestRps',
+  'fallbackModel',
+  'architectMode',
+  'codeEngine',
+  'claudeCodeModel',
+  'claudeCodePermissionMode',
+  'claudeCodeEffort',
+  'glmCodeApiKey',
+  'glmCodeBaseUrl',
+  'glmCodeModel',
+  'glmCodePermissionMode',
+  'glmCodeEffort',
+  'codexModel',
+  'codexPermissionMode',
+  'codexEffort',
+]);
+function sanitizeChatConfig(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out = {};
+  for (const key of CHAT_CONFIG_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) out[key] = value[key];
+  }
+  if (typeof value._preset === 'string' && value._preset.trim()) out._preset = value._preset.trim().slice(0, 80);
+  return Object.keys(out).length ? out : null;
+}
+function applyChatConfig(globalConfig, override) {
+  const clean = sanitizeChatConfig(override);
+  return clean ? { ...globalConfig, ...clean } : { ...globalConfig };
+}
+function effectiveChatConfig() {
+  return applyChatConfig(loadConfig(), S().chatConfig);
+}
+function chatEngineLabel(cfg) {
+  const c = cfg || {};
+  if (c.architectMode === true && c.codeEngine === 'claude-code') return `Claude Code · ${c.claudeCodeModel || 'sonnet'}`;
+  if (c.architectMode === true && c.codeEngine === 'glm-code') return `GLM Code · ${c.glmCodeModel || 'glm-5.2[1m]'}`;
+  if (c.architectMode === true && c.codeEngine === 'codex') return `Codex · ${c.codexModel || 'recomendado'}`;
+  return c.model || 'Modelo padrão';
+}
+function chatConfigInfo() {
+  const global = loadConfig();
+  const override = sanitizeChatConfig(S().chatConfig);
+  const config = applyChatConfig(global, override);
+  return {
+    inherited: !override,
+    preset: (override && override._preset) || '',
+    engine: config.architectMode === true ? config.codeEngine || 'native' : 'native',
+    label: chatEngineLabel(config),
+    config,
+  };
+}
+function providerSnapshot(cfg) {
+  const out = {};
+  for (const key of ['provider', 'baseUrl', 'apiKey', 'model', 'temperature', 'requestRps', 'fallbackModel']) {
+    if (Object.prototype.hasOwnProperty.call(cfg || {}, key)) out[key] = cfg[key];
+  }
+  return out;
+}
+function setSessionChatConfig(payload) {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const before = effectiveChatConfig();
+  if (p.inherit === true || p.engine === 'inherit') {
+    S().chatConfig = null;
+  } else {
+    const global = loadConfig();
+    let next = sanitizeChatConfig(S().chatConfig) || {};
+    if (p.preset && loadPresets()[p.preset]) {
+      next = { ...next, ...providerSnapshot({ ...global, ...loadPresets()[p.preset] }), _preset: p.preset };
+    }
+    if (p.values && typeof p.values === 'object') next = { ...next, ...sanitizeChatConfig(p.values) };
+    if (p.patch && typeof p.patch === 'object') next = { ...next, ...sanitizeChatConfig(p.patch) };
+    if (Object.prototype.hasOwnProperty.call(p, 'preset') && !p.preset) delete next._preset;
+
+    const engine = p.engine;
+    if (engine === 'native') {
+      // Ao sair de um motor externo, congela também o provedor API atual nesta conversa.
+      next = { ...providerSnapshot(global), ...next, architectMode: global.architectMode === true, codeEngine: 'native' };
+    } else if (['claude-code', 'glm-code', 'codex'].includes(engine)) {
+      next.architectMode = true;
+      next.codeEngine = engine;
+      if (engine === 'claude-code') {
+        next.claudeCodeModel = next.claudeCodeModel || global.claudeCodeModel;
+        next.claudeCodePermissionMode = next.claudeCodePermissionMode || global.claudeCodePermissionMode;
+        next.claudeCodeEffort = next.claudeCodeEffort || global.claudeCodeEffort;
+      } else if (engine === 'glm-code') {
+        next.glmCodeApiKey = next.glmCodeApiKey || global.glmCodeApiKey;
+        next.glmCodeBaseUrl = next.glmCodeBaseUrl || global.glmCodeBaseUrl;
+        next.glmCodeModel = next.glmCodeModel || global.glmCodeModel;
+        next.glmCodePermissionMode = next.glmCodePermissionMode || global.glmCodePermissionMode;
+        next.glmCodeEffort = next.glmCodeEffort || global.glmCodeEffort;
+      } else {
+        next.codexModel = next.codexModel != null ? next.codexModel : global.codexModel;
+        next.codexPermissionMode = next.codexPermissionMode || global.codexPermissionMode;
+        next.codexEffort = next.codexEffort || global.codexEffort;
+      }
+    }
+    S().chatConfig = sanitizeChatConfig(next);
+  }
+
+  const after = effectiveChatConfig();
+  if (before.claudeCodeModel !== after.claudeCodeModel) {
+    S().claudeSessionId = '';
+    S().claudeSessionWorkspace = '';
+  }
+  if (before.glmCodeModel !== after.glmCodeModel) {
+    S().glmSessionId = '';
+    S().glmSessionWorkspace = '';
+  }
+  if (before.codexModel !== after.codexModel) {
+    S().codexThreadId = '';
+    S().codexThreadWorkspace = '';
+  }
+  saveCurrentChat();
+  const info = chatConfigInfo();
+  sendToAllFor(S().id || currentChatId, 'chat:config-changed');
+  sendToAll('chats:changed');
+  return info;
 }
 
 // ============================================================
@@ -1367,25 +1503,15 @@ function cachedProjCtx(cfg) {
   } catch (e) {
     mem = '';
   }
-  const meta = { scripts: [], envKeys: [], hasVenv: false };
-  try {
-    const pj = JSON.parse(fs.readFileSync(path.join(ws, 'package.json'), 'utf8'));
-    meta.scripts = Object.keys(pj.scripts || {}).slice(0, 20);
-  } catch (e) {
-    /* sem package.json */
-  }
-  try {
-    meta.hasVenv = fs.existsSync(path.join(ws, '.venv'));
-  } catch (e) {
-    /* ok */
-  }
-  try {
-    meta.envKeys = parseEnv(fs.readFileSync(path.join(ws, '.env'), 'utf8'))
-      .map((v) => v.key)
-      .slice(0, 40);
-  } catch (e) {
-    /* sem .env */
-  }
+  const det = detectStackCached(ws);
+  const projects = Array.isArray(det.projects) ? det.projects : [];
+  const meta = {
+    projects,
+    scripts: projects.flatMap((p) => (p.scripts || []).map((s) => `${p.path}:${s}`)).slice(0, 60),
+    envFiles: projects.flatMap((p) => p.envFiles || []).slice(0, 40),
+    envKeys: [...new Set(projects.flatMap((p) => (p.envFiles || []).flatMap((f) => f.keys || [])))].slice(0, 80),
+    hasVenv: projects.some((p) => p.hasVenv),
+  };
   const rec = { at: now, rules: readRepoRules(ws), mem, meta };
   _projCtxCache.set(ws, rec);
   if (_projCtxCache.size > 6) _projCtxCache.delete(_projCtxCache.keys().next().value);
@@ -1620,10 +1746,14 @@ function compactTurnMessages(messages, cfg, tools) {
   return true;
 }
 
-// Detecta a stack do projeto (pelos arquivos-chave) + sugere um comando de verificação
-// detectStack faz ~20 existsSync + reads e rodava a CADA turno/subagente — em workspace
-// remoto (SSHFS) cada checagem é uma ida à REDE. Stack não muda a cada segundo: cache 45s.
+// Detecta stacks/subprojetos pelos manifestos e sugere comandos de verificação.
+// A descoberta é limitada por profundidade/tempo/quantidade e fica em cache por 45s:
+// evita revarrer monorepos (ou SSHFS) a cada turno e a cada subagente.
 const _stackCache = new Map(); // ws -> { at, det }
+function invalidateStackCache(ws) {
+  if (ws) _stackCache.delete(ws);
+  else _stackCache.clear();
+}
 function detectStackCached(ws) {
   const now = Date.now();
   const hit = _stackCache.get(ws);
@@ -1633,8 +1763,133 @@ function detectStackCached(ws) {
   if (_stackCache.size > 6) _stackCache.delete(_stackCache.keys().next().value);
   return det;
 }
-function detectStack(ws) {
+
+const PROJECT_SCAN_SKIP = new Set([
+  'node_modules', '.git', '.svn', 'dist', 'build', 'out', '.next', '.nuxt', '.cache', 'coverage',
+  'vendor', 'target', 'bin', 'obj', '.venv', 'venv', '__pycache__', '.tox', '.mypy_cache',
+]);
+const PROJECT_MARKERS = new Set([
+  'package.json', 'pyproject.toml', 'requirements.txt', 'setup.py', 'setup.cfg', 'Pipfile', 'Pipfile.lock',
+  'poetry.lock', 'uv.lock', 'environment.yml', 'environment.yaml',
+  'go.mod', 'Cargo.toml', 'composer.json', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'Gemfile',
+  'pubspec.yaml', 'Package.swift', 'mix.exs', 'build.sbt', 'deno.json', 'deno.jsonc', 'CMakeLists.txt',
+  'Makefile', 'Dockerfile',
+]);
+function isProjectEnvFile(name) {
+  return /^\.env(?:\.[\w.-]+)?$/.test(String(name || ''));
+}
+function isProjectMarker(name) {
+  return PROJECT_MARKERS.has(name) || /\.(?:csproj|fsproj|sln)$/i.test(name);
+}
+function discoverProjectDirs(ws) {
+  const found = [];
+  const queue = [{ abs: ws, rel: '', depth: 0 }];
+  const deadline = Date.now() + 250;
+  let visited = 0;
+  let truncated = false;
+  while (queue.length && visited < 220 && found.length < 24) {
+    if (Date.now() > deadline) {
+      truncated = true;
+      break;
+    }
+    const cur = queue.shift();
+    visited++;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(cur.abs, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+    if (entries.some((e) => e.isFile() && (isProjectMarker(e.name) || isProjectEnvFile(e.name)))) found.push(cur.rel);
+    if (cur.depth >= 4) continue;
+    const dirs = entries
+      .filter((e) => e.isDirectory() && !PROJECT_SCAN_SKIP.has(e.name) && !e.name.startsWith('.'))
+      // pastas típicas de monorepo primeiro: achamos front/back antes do teto em árvores enormes
+      .sort((a, b) => {
+        const rank = (n) => (/^(apps?|packages?|services?|frontend|backend|api|server|client|web|mobile)$/i.test(n) ? 0 : 1);
+        return rank(a.name) - rank(b.name) || a.name.localeCompare(b.name);
+      });
+    for (const entry of dirs) {
+      const rel = cur.rel ? cur.rel + '/' + entry.name : entry.name;
+      queue.push({ abs: path.join(cur.abs, entry.name), rel, depth: cur.depth + 1 });
+    }
+  }
+  if (queue.length || visited >= 220 || found.length >= 24) truncated = true;
+  return { dirs: [...new Set(found)], visited, truncated };
+}
+function scopedProjectCommand(rel, command) {
+  if (!command || !rel || rel === '.') return command || '';
+  const clean = String(rel).replace(/"/g, '');
+  return process.platform === 'win32'
+    ? `cd /d "${clean.replace(/\//g, '\\')}" && ${command}`
+    : `cd "${clean.replace(/\\/g, '/')}" && ${command}`;
+}
+function projectMetadata(ws, rel) {
+  const abs = rel ? path.join(ws, rel) : ws;
+  let names = [];
+  try {
+    names = fs.readdirSync(abs);
+  } catch (e) {
+    return { manifests: [], packageManager: '', scripts: [], envFiles: [], hasVenv: false, _names: [] };
+  }
+  const manifests = names.filter(isProjectMarker).slice(0, 12);
+  const managerFrom = (list) =>
+    list.includes('pnpm-lock.yaml')
+      ? 'pnpm'
+      : list.includes('yarn.lock')
+        ? 'yarn'
+        : list.includes('bun.lockb') || list.includes('bun.lock')
+          ? 'bun'
+          : list.includes('package-lock.json')
+            ? 'npm'
+            : '';
+  let packageManager = managerFrom(names);
+  // Em monorepos o lockfile costuma ficar na raiz; herda o gerenciador do ancestral.
+  let parent = path.dirname(abs);
+  const root = path.resolve(ws);
+  while (!packageManager && parent.startsWith(root) && parent !== path.dirname(parent)) {
+    try {
+      packageManager = managerFrom(fs.readdirSync(parent));
+    } catch (e) {
+      break;
+    }
+    if (parent === root) break;
+    parent = path.dirname(parent);
+  }
+  if (!packageManager && names.includes('package.json')) packageManager = 'npm';
+  const scripts = [];
+  if (names.includes('package.json')) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(abs, 'package.json'), 'utf8'));
+      scripts.push(...Object.keys(pkg.scripts || {}).slice(0, 30));
+    } catch (e) {
+      /* manifesto inválido: o detector de stack ainda reporta Node.js */
+    }
+  }
+  const envFiles = [];
+  for (const name of names.filter(isProjectEnvFile).slice(0, 8)) {
+    try {
+      const keys = parseEnv(fs.readFileSync(path.join(abs, name), 'utf8'))
+        .map((v) => v.key)
+        .slice(0, 40);
+      envFiles.push({ path: (rel ? rel + '/' : '') + name, keys });
+    } catch (e) {
+      envFiles.push({ path: (rel ? rel + '/' : '') + name, keys: [] });
+    }
+  }
+  return {
+    manifests,
+    packageManager,
+    scripts,
+    envFiles,
+    hasVenv: names.includes('.venv') || names.includes('venv'),
+    _names: names,
+  };
+}
+function detectStackAt(ws, knownNames) {
+  let dirNames = null;
   const has = (f) => {
+    if (dirNames && !/[\\/]/.test(f)) return dirNames.has(f);
     try {
       return fs.existsSync(path.join(ws, f));
     } catch (e) {
@@ -1648,12 +1903,15 @@ function detectStack(ws) {
       return '';
     }
   };
-  let dir = [];
-  try {
-    dir = fs.readdirSync(ws);
-  } catch (e) {
-    /* sem acesso */
+  let dir = Array.isArray(knownNames) ? knownNames : [];
+  if (!Array.isArray(knownNames)) {
+    try {
+      dir = fs.readdirSync(ws);
+    } catch (e) {
+      /* sem acesso */
+    }
   }
+  dirNames = new Set(dir);
   const hasExt = (ext) => dir.some((n) => n.toLowerCase().endsWith(ext));
   const hints = [];
   const tips = [];
@@ -1737,8 +1995,26 @@ function detectStack(ws) {
   }
 
   // ---- Python (+ frameworks) ----
-  if (has('requirements.txt') || has('pyproject.toml') || has('setup.py') || has('Pipfile')) {
-    const reqs = (read('requirements.txt') + read('pyproject.toml') + read('Pipfile') + read('setup.py')).toLowerCase();
+  if (
+    has('requirements.txt') ||
+    has('pyproject.toml') ||
+    has('setup.py') ||
+    has('setup.cfg') ||
+    has('Pipfile') ||
+    has('poetry.lock') ||
+    has('uv.lock') ||
+    has('environment.yml') ||
+    has('environment.yaml')
+  ) {
+    const reqs = (
+      read('requirements.txt') +
+      read('pyproject.toml') +
+      read('Pipfile') +
+      read('setup.py') +
+      read('setup.cfg') +
+      read('environment.yml') +
+      read('environment.yaml')
+    ).toLowerCase();
     let py = 'Python';
     if (/django/.test(reqs)) {
       py = 'Python + Django';
@@ -1855,7 +2131,73 @@ function detectStack(ws) {
   // ---- Devops hint ----
   if (has('Dockerfile')) tips.push('- Docker: se mexer no Dockerfile/compose, mantenha imagens enxutas (multi-stage), não embuta segredos, e fixe versões.');
 
-  return { stack: hints.join(', '), verify, guide: tips.join('\n') };
+  return { stack: hints.join(', '), hints, verify, guide: tips.join('\n') };
+}
+function detectStack(ws) {
+  const scan = discoverProjectDirs(ws);
+  const rootMeta = projectMetadata(ws, '');
+  const rootDet = detectStackAt(ws, rootMeta._names);
+  const dirs = scan.dirs.length ? scan.dirs : rootDet.stack ? [''] : [];
+  const projects = dirs.map((rel) => {
+    const meta = rel ? projectMetadata(ws, rel) : rootMeta;
+    const det = rel ? detectStackAt(path.join(ws, rel), meta._names) : rootDet;
+    let localVerify = det.verify || '';
+    if (meta.manifests.includes('package.json') && meta.scripts.length) {
+      const script = ['test', 'typecheck', 'lint', 'build'].find((name) => meta.scripts.includes(name));
+      if (script) {
+        localVerify =
+          meta.packageManager === 'npm'
+            ? script === 'test'
+              ? 'npm test'
+              : 'npm run ' + script
+            : (meta.packageManager || 'npm') + ' ' + script;
+      }
+    }
+    return {
+      path: rel || '.',
+      stack: det.stack,
+      hints: det.hints,
+      guide: det.guide,
+      verify: scopedProjectCommand(rel, localVerify),
+      localVerify,
+      manifests: meta.manifests,
+      packageManager: meta.packageManager,
+      scripts: meta.scripts,
+      envFiles: meta.envFiles,
+      hasVenv: meta.hasVenv,
+    };
+  });
+  const hints = [...new Set(projects.flatMap((p) => p.hints || []).concat(rootDet.hints || []))];
+  const guide = [...new Set(projects.flatMap((p) => String(p.guide || '').split('\n')).filter(Boolean))].join('\n');
+  const rootProject = projects.find((p) => p.path === '.');
+  const verify = (rootProject && rootProject.verify) || (projects.find((p) => p.verify) || {}).verify || rootDet.verify || '';
+  return {
+    stack: hints.join(', '),
+    hints,
+    verify,
+    guide: guide || rootDet.guide,
+    projects,
+    scan: { visited: scan.visited, truncated: scan.truncated },
+  };
+}
+function projectMapText(det) {
+  const projects = (det && Array.isArray(det.projects) ? det.projects : []).slice(0, 24);
+  if (!projects.length) return '';
+  const lines = projects.map((p) => {
+    const details = [];
+    if (p.stack) details.push(p.stack);
+    if (p.manifests && p.manifests.length) details.push('manifestos: ' + p.manifests.join(', '));
+    if (p.packageManager) details.push('gerenciador: ' + p.packageManager);
+    if (p.scripts && p.scripts.length) details.push('scripts: ' + p.scripts.slice(0, 12).join(', '));
+    if (p.hasVenv) details.push('venv: ' + (p.path === '.' ? '.venv/venv' : p.path + '/.venv ou venv'));
+    for (const env of (p.envFiles || []).slice(0, 4)) {
+      details.push(`${env.path}: ${(env.keys || []).slice(0, 20).join(', ') || '(sem chaves legíveis)'}`);
+    }
+    if (p.verify) details.push('verificar: ' + p.verify);
+    return `- ${p.path}: ${details.join(' · ') || 'configuração/ambiente detectado'}`;
+  });
+  if (det.scan && det.scan.truncated) lines.push('- …varredura limitada por segurança; use project_overview/list_dir para aprofundar.');
+  return lines.join('\n');
 }
 
 // Comportamento base (vale para qualquer persona; injetado no system prompt principal)
@@ -1970,10 +2312,13 @@ function buildSystemPrompt(cfg) {
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
-    if (pctx.meta.scripts.length) proj += `\nScripts npm do projeto: ${pctx.meta.scripts.join(', ')}.`;
-    if (pctx.meta.hasVenv) proj += '\nO projeto tem um venv Python em .venv (ative antes de rodar coisas Python).';
-    // só os NOMES das variáveis do .env (nunca os valores — são segredos) pra ela orientar config
-    if (pctx.meta.envKeys.length) proj += '\nO .env define: ' + pctx.meta.envKeys.join(', ') + ' (você sabe os NOMES, não os valores).';
+    const projectMap = projectMapText(det);
+    if (projectMap) {
+      proj +=
+        '\n\n## Subprojetos, pacotes e ambientes detectados\n' +
+        'Cada caminho tem seu próprio cwd, dependências, scripts e .env. Use o comando/venv do subprojeto correto; os .env abaixo mostram SOMENTE nomes de variáveis, nunca valores.\n' +
+        projectMap;
+    }
     if (det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     const rules = pctx.rules;
     if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (fonte da verdade sobre stack/estrutura/como rodar/convenções; SIGA À RISCA, tem prioridade sobre o guia geral)\n${rules}`;
@@ -3506,22 +3851,30 @@ ipcMain.handle('project-tasks:list', () => {
   const cfg = loadConfig();
   if (!cfg.workspace) return [];
   const out = [];
-  try {
-    const pj = JSON.parse(fs.readFileSync(path.join(cfg.workspace, 'package.json'), 'utf8'));
-    for (const name of Object.keys(pj.scripts || {})) out.push({ label: 'npm run ' + name, command: 'npm run ' + name });
-  } catch (e) {
-    /* sem package.json */
+  const projects = detectStackCached(cfg.workspace).projects || [];
+  for (const project of projects) {
+    const prefix = project.path === '.' ? '' : `[${project.path}] `;
+    const pm = project.packageManager || 'npm';
+    for (const name of project.scripts || []) {
+      const local = (pm === 'bun' ? 'bun run ' : pm + ' run ') + name;
+      out.push({ label: prefix + local, command: scopedProjectCommand(project.path === '.' ? '' : project.path, local) });
+    }
+    if ((project.manifests || []).includes('Makefile')) {
+      try {
+        const mk = fs.readFileSync(path.join(cfg.workspace, project.path === '.' ? '' : project.path, 'Makefile'), 'utf8');
+        mk.split('\n').forEach((line) => {
+          const match = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line);
+          if (match && !match[1].startsWith('.')) {
+            const local = 'make ' + match[1];
+            out.push({ label: prefix + local, command: scopedProjectCommand(project.path === '.' ? '' : project.path, local) });
+          }
+        });
+      } catch (e) {
+        /* Makefile ilegível */
+      }
+    }
   }
-  try {
-    const mk = fs.readFileSync(path.join(cfg.workspace, 'Makefile'), 'utf8');
-    mk.split('\n').forEach((l) => {
-      const m = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(l);
-      if (m && !m[1].startsWith('.')) out.push({ label: 'make ' + m[1], command: 'make ' + m[1] });
-    });
-  } catch (e) {
-    /* sem Makefile */
-  }
-  return out.slice(0, 40);
+  return out.slice(0, 80);
 });
 
 // ---- túnel público (cloudflared/ngrok) pra expor um localhost ----
@@ -4433,7 +4786,7 @@ const TOOLS = {
     schema: {
       name: 'project_overview',
       description:
-        'Mapa do projeto atual pra você entender a arquitetura SEM ler arquivo por arquivo: stack detectada, árvore de pastas/arquivos (resumida), e o conteúdo dos arquivos-chave (package.json, README, configs, pontos de entrada). Use quando o usuário pedir "explique o projeto" ou quando precisar de visão geral antes de mexer.',
+        'Mapa do projeto atual pra você entender a arquitetura SEM ler arquivo por arquivo: detecta monorepos/subprojetos (front, back, apps/*), stacks, gerenciadores, scripts, venvs e nomes das variáveis em .env por pasta; inclui árvore resumida e arquivos-chave. Use quando o usuário pedir "explique o projeto" ou antes de mexer.',
       parameters: { type: 'object', properties: {} },
     },
     run: async () => {
@@ -4445,11 +4798,16 @@ const TOOLS = {
       // arquivos-chave que dão o panorama (lê os que existirem, com teto de tamanho)
       const keyNames = ['package.json', 'README.md', 'readme.md', 'pyproject.toml', 'requirements.txt', 'go.mod', 'Cargo.toml', 'composer.json', 'pom.xml', 'docker-compose.yml', 'Makefile', 'tsconfig.json', '.lumi-memory.md'];
       const key = {};
+      const projectDirs = new Set((det.projects || []).map((p) => p.path));
+      projectDirs.add('.'); // README/compose/memória da raiz continuam úteis em monorepos sem manifesto raiz
+      let keyChars = 0;
       for (const rel of tree) {
         const base = rel.split('/').pop();
-        if (keyNames.includes(base) && !rel.includes('/')) {
+        const dir = path.posix.dirname(rel);
+        if (keyNames.includes(base) && projectDirs.has(dir) && Object.keys(key).length < 24 && keyChars < 48000) {
           try {
-            key[rel] = truncate(fs.readFileSync(path.join(cfg.workspace, rel), 'utf8'), 4000);
+            key[rel] = truncate(fs.readFileSync(path.join(cfg.workspace, rel), 'utf8'), 3000);
+            keyChars += key[rel].length;
           } catch (e) {
             /* ok */
           }
@@ -4459,6 +4817,8 @@ const TOOLS = {
         workspace: cfg.workspace,
         stack: det.stack || 'desconhecida',
         verifyCommand: det.verify || null,
+        projects: (det.projects || []).map(({ guide, hints, localVerify, ...project }) => project),
+        scan: det.scan,
         fileCount: tree.length,
         tree: tree.slice(0, 400),
         keyFiles: key,
@@ -5410,10 +5770,12 @@ const TOOLS = {
           return '';
         }
       };
+      const projectMap = projectMapText(stack);
       const facts = [
         'Pasta: ' + cfg.workspace,
         'Stack detectada: ' + ((stack.hints || []).join(', ') || '(indefinida)'),
         'Comando de verificação sugerido: ' + (stack.verify || '(nenhum)'),
+        projectMap ? 'Subprojetos/pacotes/ambientes:\n' + projectMap : '',
         readSafe('package.json') ? 'package.json:\n' + readSafe('package.json').slice(0, 2500) : '',
         'Estrutura (amostra):\n' + tree.slice(0, 200).join('\n'),
         (readSafe('README.md') || readSafe('readme.md')).slice(0, 2000) ? 'README (início):\n' + (readSafe('README.md') || readSafe('readme.md')).slice(0, 2000) : '',
@@ -5595,6 +5957,14 @@ const TOOLS = {
         packageManager: pm,
         stack: det.stack || null,
         verifyCommand: det.verify || null,
+        projects: (det.projects || []).map((p) => ({
+          path: p.path,
+          stack: p.stack,
+          packageManager: p.packageManager || null,
+          manifests: p.manifests,
+          hasVenv: p.hasVenv,
+          envFiles: (p.envFiles || []).map((f) => ({ path: f.path, keys: f.keys })),
+        })),
         caps: envCaps,
         note: pm ? 'use ' + pm + ' neste projeto (lockfile detectado)' : undefined,
       };
@@ -6664,6 +7034,8 @@ function subAgentSystemPrompt(cfg, agent) {
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL)`;
     if (det.stack) proj += `\nStack: ${det.stack}`;
     if (isCoder && det.verify) proj += `\nVerifique suas mudanças rodando \`${det.verify}\` (run_command) e leia a saída.`;
+    const projectMap = projectMapText(det);
+    if (projectMap) proj += `\n\n## Subprojetos (respeite o cwd/dependências de cada um)\n${projectMap}`;
     if (isCoder && det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     if (isCoder && pctx.rules) {
       proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (SIGA À RISCA)\n${pctx.rules}`;
@@ -7590,6 +7962,7 @@ function rememberChatMeta(j, fallbackId) {
     createdAt: (j && j.createdAt) || '',
     updatedAt: (j && (j.updatedAt || j.at)) || '',
     count: Array.isArray(j && j.history) ? j.history.length : Number((j && j.count) || 0),
+    chatConfig: sanitizeChatConfig(j && j.chatConfig),
   });
 }
 function pendingChatData(id) {
@@ -7649,7 +8022,7 @@ function titleFromHistory(h) {
 function saveCurrentChat() {
   // salva a SESSÃO atual (fg fora de turno; a própria sessão dentro de um turno paralelo)
   const sid = S().id || currentChatId;
-  if (loadConfig().memoryEnabled === false || !sid) return;
+  if (loadConfig().memoryEnabled === false || !sid || S().deleted) return;
   try {
     let meta = chatMetaCache.get(sid) || {};
     if (!meta.id && fs.existsSync(chatFile(sid))) {
@@ -7677,6 +8050,7 @@ function saveCurrentChat() {
       glmSessionWorkspace: S().glmSessionWorkspace,
       codexThreadId: S().codexThreadId,
       codexThreadWorkspace: S().codexThreadWorkspace,
+      chatConfig: sanitizeChatConfig(S().chatConfig),
     };
     return queueChatWrite(sid, data);
   } catch (e) {
@@ -7705,6 +8079,8 @@ function listChats() {
         title: j.title || titleFromHistory(hist),
         updatedAt: j.updatedAt || j.at || '',
         count: Array.isArray(j.history) ? hist.length : Number(j.count || 0),
+        customEngine: !!sanitizeChatConfig(j.chatConfig),
+        engineLabel: chatEngineLabel(applyChatConfig(loadConfig(), j.chatConfig)),
         current: id === currentChatId,
         // turno rodando nesta conversa (em paralelo ou no primeiro plano) → bolinha na lista
         running: (sessions.has(id) && sessions.get(id).running) || (id === currentChatId && fgSession.running),
@@ -7731,6 +8107,7 @@ function loadChatInto(id) {
     S().glmSessionWorkspace = j.glmSessionWorkspace || '';
     S().codexThreadId = j.codexThreadId || '';
     S().codexThreadWorkspace = j.codexThreadWorkspace || '';
+    S().chatConfig = sanitizeChatConfig(j.chatConfig);
     S().codexControl = null;
     S().pendingTurnTranscript = null;
     S().id = j.id || id; // identidade da SESSÃO (roteia eventos e o arquivo de save)
@@ -7765,17 +8142,41 @@ function newChat(seedSummary, seedWorklog) {
   S().glmSessionWorkspace = '';
   S().codexThreadId = '';
   S().codexThreadWorkspace = '';
+  S().chatConfig = null; // chats novos sempre começam seguindo o padrão global
   S().codexControl = null;
   S().pendingTurnTranscript = null;
   setCurrentChatId(genChatId());
   saveCurrentChat();
   return currentChatId;
 }
+function activateFreshChat(seedSummary, seedWorklog) {
+  const previous = fgSession;
+  if (previous.id) sessions.set(previous.id, previous); // turno em andamento continua em segundo plano
+  if (sessions.size > 8) {
+    for (const [id, sess] of sessions) {
+      if (!sess.running) sessions.delete(id);
+      if (sessions.size <= 8) break;
+    }
+  }
+  fgSession = makeSession('');
+  return newChat(seedSummary, seedWorklog);
+}
 // cria uma conversa NOVA e vazia em disco SEM mexer na sessão ativa (pra abrir em janela destacada)
 function createEmptyChat() {
   const id = genChatId();
   const now = new Date().toISOString();
-  queueChatWrite(id, { id, title: 'Nova conversa', createdAt: now, updatedAt: now, history: [], events: [], archive: [], summary: '', worklog: [] });
+  queueChatWrite(id, {
+    id,
+    title: 'Nova conversa',
+    createdAt: now,
+    updatedAt: now,
+    history: [],
+    events: [],
+    archive: [],
+    summary: '',
+    worklog: [],
+    chatConfig: null,
+  });
   return id;
 }
 // sessão VIVA de um chat (cria e carrega do disco na 1ª vez) — é o que permite turnos PARALELOS
@@ -7801,7 +8202,7 @@ function getSession(chatId) {
 // salva o atual e abre um chat novo (Nova conversa)
 function startNewChat() {
   saveCurrentChat();
-  newChat('');
+  activateFreshChat('');
   broadcast('chat:reload');
 }
 function switchChat(id) {
@@ -7841,17 +8242,11 @@ async function renameChat(id, title) {
   }
 }
 async function deleteChat(id) {
-  const pending = chatWriteStates.get(id);
-  if (pending) await pending.promise; // impede uma gravação atrasada de ressuscitar o chat
-  chatMetaCache.delete(id);
-  try {
-    await fs.promises.unlink(chatFile(id));
-  } catch (e) {
-    /* ok */
-  }
-  // se havia sessão viva desse chat (talvez rodando em paralelo), aborta e descarta
-  const live = sessions.get(id);
+  // Marca/aborta ANTES de esperar I/O: o finally de um turno paralelo não pode
+  // salvar o chat novamente depois que o usuário fechou a aba.
+  const live = id === currentChatId ? fgSession : sessions.get(id);
   if (live) {
+    live.deleted = true;
     try {
       if (live.codexControl) Promise.resolve(live.codexControl.interrupt()).catch(() => {});
     } catch (e) {
@@ -7864,12 +8259,29 @@ async function deleteChat(id) {
     }
     sessions.delete(id);
   }
+  const pending = chatWriteStates.get(id);
+  if (pending) await pending.promise; // impede uma gravação atrasada de ressuscitar o chat
+  chatMetaCache.delete(id);
+  try {
+    await fs.promises.unlink(chatFile(id));
+  } catch (e) {
+    /* ok */
+  }
   if (id === currentChatId) {
     const rest = listChats();
     if (rest.length) {
-      loadChatInto(rest[0].id);
-      setCurrentChatId(rest[0].id);
+      const nextId = rest[0].id;
+      const nextLive = sessions.get(nextId);
+      if (nextLive) {
+        sessions.delete(nextId);
+        fgSession = nextLive;
+      } else {
+        fgSession = makeSession(nextId);
+        loadChatInto(nextId);
+      }
+      setCurrentChatId(nextId);
     } else {
+      fgSession = makeSession('');
       newChat('');
     }
     broadcast('chat:reload');
@@ -7890,6 +8302,7 @@ function initChats() {
     S().glmSessionWorkspace = '';
     S().codexThreadId = '';
     S().codexThreadWorkspace = '';
+    S().chatConfig = null;
     S().codexControl = null;
     return;
   }
@@ -7941,7 +8354,7 @@ async function summarizeAll(cfg) {
 
 // Forka: salva o chat atual e abre um chat NOVO levando o resumo (contexto leve)
 async function forkConversation() {
-  const cfg = loadConfig();
+  const cfg = effectiveChatConfig();
   let seed = S().convSummary;
   try {
     seed = (await summarizeAll(cfg)) || S().convSummary || '';
@@ -7950,7 +8363,7 @@ async function forkConversation() {
   }
   const technicalSeed = S().worklog.slice(-12);
   saveCurrentChat(); // o chat original continua salvo (na sua própria conversa)
-  newChat(seed, technicalSeed); // novo chat, leve, com resumo + diário técnico recente
+  activateFreshChat(seed, technicalSeed); // novo chat, leve, com resumo + diário técnico recente
   broadcast('chat:reload');
   broadcast('chat:forked', { hasSummary: !!S().convSummary, archived: true });
   return { ok: true, hasSummary: !!S().convSummary };
@@ -9788,15 +10201,20 @@ ipcMain.on('open-external-url', (_e, u) => {
 function envFiles() {
   const cfg = loadConfig();
   if (!cfg.workspace) return [];
-  const out = [];
-  try {
-    for (const f of fs.readdirSync(cfg.workspace)) {
-      if (f === '.env' || f.startsWith('.env.')) out.push(f);
-    }
-  } catch (e) {
-    /* ok */
-  }
-  return out.sort();
+  return [
+    ...new Set(
+      (detectStackCached(cfg.workspace).projects || []).flatMap((project) =>
+        (project.envFiles || []).map((env) => env.path)
+      )
+    ),
+  ].sort();
+}
+function resolveEnvPath(cfg, file) {
+  const rel = String(file || '').replace(/\\/g, '/');
+  if (!isProjectEnvFile(path.posix.basename(rel)) || path.posix.isAbsolute(rel)) return null;
+  const root = path.resolve(cfg.workspace);
+  const fp = path.resolve(root, rel);
+  return fp === root || fp.startsWith(root + path.sep) ? fp : null;
 }
 function parseEnv(text) {
   const vars = [];
@@ -9814,9 +10232,10 @@ function parseEnv(text) {
 ipcMain.handle('env:list', () => envFiles());
 ipcMain.handle('env:read', (_e, file) => {
   const cfg = loadConfig();
-  if (!cfg.workspace || !/^\.env(\.[\w.-]+)?$/.test(String(file || ''))) return { error: 'arquivo inválido' };
+  const fp = cfg.workspace && resolveEnvPath(cfg, file);
+  if (!fp) return { error: 'arquivo inválido' };
   try {
-    const vars = parseEnv(fs.readFileSync(path.join(cfg.workspace, file), 'utf8'));
+    const vars = parseEnv(fs.readFileSync(fp, 'utf8'));
     return { vars };
   } catch (e) {
     return { error: String((e && e.message) || e) };
@@ -9824,9 +10243,9 @@ ipcMain.handle('env:read', (_e, file) => {
 });
 ipcMain.handle('env:save', (_e, { file, vars }) => {
   const cfg = loadConfig();
-  if (!cfg.workspace || !/^\.env(\.[\w.-]+)?$/.test(String(file || ''))) return { error: 'arquivo inválido' };
+  const fp = cfg.workspace && resolveEnvPath(cfg, file);
+  if (!fp) return { error: 'arquivo inválido' };
   try {
-    const fp = path.join(cfg.workspace, file);
     // preserva comentários/linhas e ordem; atualiza só os valores das chaves conhecidas
     let lines = [];
     try {
@@ -9847,6 +10266,8 @@ ipcMain.handle('env:save', (_e, { file, vars }) => {
     });
     for (const [k, v] of want) if (!seen.has(k)) outLines.push(k + '=' + quote(v)); // chaves novas no fim
     fs.writeFileSync(fp, outLines.join('\n'));
+    invalidateProjCtx(cfg.workspace);
+    invalidateStackCache(cfg.workspace);
     broadcast('workspace:changed');
     return { ok: true };
   } catch (e) {
@@ -10353,8 +10774,12 @@ function watchFolder(root, refKey) {
       // ignora internos .lumi-* MAS deixa a memória do projeto atualizar a árvore (aparece ao ser criada)
       if (/\.lumi-/.test(f) && !/\.lumi-memory\.md$/.test(f)) return;
       invalidateEnrichCache(root, f);
-      if (/(^|[\\/])(package\.json|\.env|CLAUDE\.md|AGENTS\.md|\.cursorrules|copilot-instructions\.md|\.lumi-memory\.md)$/i.test(f))
+      if (
+        /(^|[\\/])(?:package\.json|(?:pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|package-lock\.json)|pyproject\.toml|requirements\.txt|setup\.(?:py|cfg)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|environment\.ya?ml|go\.mod|Cargo\.toml|composer\.json|pom\.xml|build\.gradle(?:\.kts)?|Gemfile|pubspec\.yaml|Package\.swift|mix\.exs|build\.sbt|deno\.jsonc?|CMakeLists\.txt|Makefile|Dockerfile|[^\\/]+\.(?:csproj|fsproj|sln)|\.env(?:\.[^\\/]+)?|CLAUDE\.md|AGENTS\.md|\.cursorrules|copilot-instructions\.md|\.lumi-memory\.md)$/i.test(f)
+      ) {
         invalidateProjCtx(root);
+        invalidateStackCache(root);
+      }
       fire();
     });
     // FS de rede pode emitir 'error' depois (drive caiu) — sem listener isso DERRUBA o processo
@@ -10638,8 +11063,8 @@ ipcMain.handle('presets:delete', (_e, name) => {
 ipcMain.handle('models:list', (_e, partial) => listModels({ ...loadConfig(), ...partial }));
 
 // lista de modelos COM cache por provedor (so busca de novo se forcar)
-ipcMain.handle('models:get', async (_e, opts) => {
-  const cfg = loadConfig();
+ipcMain.handle('models:get', async (e, opts) => inSenderChat(e, async () => {
+  const cfg = effectiveChatConfig();
   const key = (cfg.baseUrl || '') + '|' + (cfg.provider || '');
   const cache = cfg.modelsCache || {};
   if (!(opts && opts.force) && Array.isArray(cache[key]) && cache[key].length) {
@@ -10655,7 +11080,7 @@ ipcMain.handle('models:get', async (_e, opts) => {
   } catch (e) {
     return { models: cache[key] || [], cached: !!(cache[key] && cache[key].length), error: String((e && e.message) || e) };
   }
-});
+}));
 
 // chave do cache de modelos por provedor (mesma forma do models:get)
 function modelKey(c) {
@@ -10663,8 +11088,8 @@ function modelKey(c) {
 }
 
 // catálogo p/ o seletor agrupado do chat: favoritos + cada perfil salvo (provedor) com seus modelos cacheados
-ipcMain.handle('models:catalog', () => {
-  const cfg = loadConfig();
+ipcMain.handle('models:catalog', (e) => inSenderChat(e, () => {
+  const cfg = effectiveChatConfig();
   const presets = loadPresets();
   const cache = cfg.modelsCache || {};
   const favs = Array.isArray(cfg.favorites) ? cfg.favorites : [];
@@ -10699,13 +11124,13 @@ ipcMain.handle('models:catalog', () => {
     exists: !f.preset || presets[f.preset] != null,
   }));
   return { current: { model: cfg.model || '', key: activeKey }, groups, favorites };
-});
+}));
 
 // busca + cacheia os modelos de UM perfil (ou da config ativa se preset vazio)
-ipcMain.handle('models:refresh', async (_e, opts) => {
+ipcMain.handle('models:refresh', async (e, opts) => inSenderChat(e, async () => {
   const presets = loadPresets();
   const preset = opts && opts.preset;
-  const target = preset && presets[preset] ? { ...loadConfig(), ...presets[preset] } : loadConfig();
+  const target = preset && presets[preset] ? { ...loadConfig(), ...presets[preset] } : effectiveChatConfig();
   const key = modelKey(target);
   try {
     const models = await listModels(target);
@@ -10718,31 +11143,22 @@ ipcMain.handle('models:refresh', async (_e, opts) => {
     const c = loadConfig();
     return { key, models: (c.modelsCache || {})[key] || [], error: String((e && e.message) || e) };
   }
-});
+}));
 
-// seleciona modelo (e troca de provedor junto, se vier de um perfil): aplica baseUrl/apiKey/provider + model
-ipcMain.handle('models:select', (_e, opts) => {
+// No chat, selecionar modelo/perfil cria um override SÓ desta conversa.
+ipcMain.handle('models:select', (e, opts) => inSenderChat(e, () => {
   const presets = loadPresets();
-  const c = loadConfig();
   const preset = opts && opts.preset;
   const model = opts && opts.model;
-  let next;
+  let values;
   if (preset && presets[preset]) {
-    const p = presets[preset];
-    next = {
-      ...c,
-      provider: p.provider || c.provider,
-      baseUrl: p.baseUrl || c.baseUrl,
-      apiKey: p.apiKey != null ? p.apiKey : c.apiKey,
-      model: model || p.model || c.model,
-    };
+    values = { ...providerSnapshot({ ...loadConfig(), ...presets[preset] }), model: model || presets[preset].model };
   } else {
-    next = { ...c, model: model || c.model };
+    values = { ...providerSnapshot(effectiveChatConfig()), model: model || effectiveChatConfig().model };
   }
-  saveConfig(next);
-  broadcast('config:changed');
-  return { ok: true, model: next.model, provider: next.provider, baseUrl: next.baseUrl };
-});
+  const info = setSessionChatConfig({ values, preset: preset || '', engine: 'native' });
+  return { ok: true, model: info.config.model, provider: info.config.provider, baseUrl: info.config.baseUrl, inherited: false };
+}));
 
 // favorita/desfavorita um (perfil, modelo)
 ipcMain.handle('models:favorite', (_e, opts) => {
@@ -11931,8 +12347,15 @@ ipcMain.handle('chats:list', () => listChats());
 ipcMain.handle('chats:current', (e) => {
   const id = senderChatId(e);
   const found = listChats().find((c) => c.id === id);
-  return { id, title: (found && found.title) || (id === currentChatId ? titleFromHistory(S().history) : 'Conversa') };
+  return {
+    id,
+    title: (found && found.title) || (id === currentChatId ? titleFromHistory(S().history) : 'Conversa'),
+    engineLabel: found && found.engineLabel,
+    customEngine: !!(found && found.customEngine),
+  };
 });
+ipcMain.handle('chat:config:get', (e) => inSenderChat(e, () => chatConfigInfo()));
+ipcMain.handle('chat:config:set', (e, payload) => inSenderChat(e, () => setSessionChatConfig(payload)));
 ipcMain.handle('chats:new', () => {
   startNewChat();
   return { id: currentChatId };
@@ -12036,7 +12459,7 @@ async function handleChatSend(_e, payload) {
   const images = (payload && payload.images) || [];
   // a IA trabalha na PASTA DESTA JANELA (workspace window) — ou global se a janela não tem pasta própria
   S().workspace = winWorkspace.get(_e.sender.id) || null;
-  const cfg = loadConfig();
+  const cfg = effectiveChatConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
   const useGlmCode = cfg.architectMode === true && cfg.codeEngine === 'glm-code';
   const useCodex = cfg.architectMode === true && cfg.codeEngine === 'codex';
@@ -12082,6 +12505,7 @@ async function handleChatSend(_e, payload) {
 // Roda um turno completo do agente sobre o S().history atual (usado pelo enviar E pelo regenerar)
 async function runChatTurn(cfg, popUserOnError) {
   S().running = true;
+  sendToAll('chats:changed');
   S().abort = new AbortController();
   S().cp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map(), bytes: 0 }; // checkpoint deste turno
   beginTurnLog();
@@ -12191,6 +12615,7 @@ async function runChatTurn(cfg, popUserOnError) {
     S().running = false;
     S().abort = null;
     S().steerQueue = [];
+    sendToAll('chats:changed');
   }
 }
 
@@ -12205,13 +12630,14 @@ async function handleChatRegen() {
   if (S().running) return; // não regenera no meio de um turno
   if (!S().history.length || S().history[S().history.length - 1].role !== 'assistant') return;
   S().history.pop();
-  if (loadConfig().architectMode === true && loadConfig().codeEngine === 'claude-code') {
+  const cfg = effectiveChatConfig();
+  if (cfg.architectMode === true && cfg.codeEngine === 'claude-code') {
     S().claudeSessionId = '';
     S().claudeSessionWorkspace = '';
-  } else if (loadConfig().architectMode === true && loadConfig().codeEngine === 'glm-code') {
+  } else if (cfg.architectMode === true && cfg.codeEngine === 'glm-code') {
     S().glmSessionId = '';
     S().glmSessionWorkspace = '';
-  } else if (loadConfig().architectMode === true && loadConfig().codeEngine === 'codex') {
+  } else if (cfg.architectMode === true && cfg.codeEngine === 'codex') {
     S().codexThreadId = '';
     S().codexThreadWorkspace = '';
   }
@@ -12220,7 +12646,7 @@ async function handleChatRegen() {
   // remove os eventos do turno descartado (as ferramentas/horário daquela resposta)
   S().chatEvents = S().chatEvents.filter((e) => e.a < S().history.length);
   broadcast('chat:reload'); // a UI re-renderiza sem a última resposta
-  await runChatTurn(loadConfig(), false);
+  await runChatTurn(cfg, false);
 }
 
 // Stop: aborta o turno DA SESSÃO da janela que clicou (paralelos não são afetados)

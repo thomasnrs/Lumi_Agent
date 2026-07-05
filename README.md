@@ -85,7 +85,7 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 | `grep_files` | Busca texto/regex — cada match já vem com o **símbolo que o contém** e as **linhas ao redor** (decide sem abrir o arquivo) |
 | `find_in_code` | **"Onde está X?"** — acha por nome de arquivo **e** por conteúdo de uma vez |
 | `outline` / `find_usages` | **Mapa de símbolos** do arquivo (função/classe + linha) · onde um símbolo é **usado e definido** (mede impacto antes de mexer) |
-| `project_overview` / `generate_project_doc` | **"Explica este projeto"** (arquitetura + stack) · **gera/atualiza o `CLAUDE.md`** sob medida |
+| `project_overview` / `generate_project_doc` | **"Explica este projeto"** (arquitetura + stack, inclusive monorepos com front/back separados, scripts, venvs e `.env` por pasta) · **gera/atualiza o `CLAUDE.md`** sob medida |
 | `list_dir` / `make_dir` / `delete_file` | Navegação e manutenção de arquivos |
 | `read_project_memory` / `update_project_memory` | Memória por projeto (`.lumi-memory.md`) — decisões, gotchas e pendências entre sessões |
 

@@ -2,6 +2,9 @@
 // Rodar: npm test  (node --test tests/)
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { load } = require('./_extract');
 
 // ---------- navegação de código (símbolo/bloco/contexto) ----------
@@ -367,6 +370,70 @@ test('resposta final é reaberta quando steering chega durante o stream', () => 
   assert.equal(events[0][0], 'chat:newbubble');
 });
 
+test('detector encontra front/back, gerenciador herdado, venvs e .envs aninhados', () => {
+  const detector = load(
+    [
+      'PROJECT_SCAN_SKIP',
+      'PROJECT_MARKERS',
+      'isProjectEnvFile',
+      'isProjectMarker',
+      'discoverProjectDirs',
+      'scopedProjectCommand',
+      'projectMetadata',
+      'detectStackAt',
+      'detectStack',
+      'projectMapText',
+      'parseEnv',
+    ],
+    { fs, path, process }
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-monorepo-'));
+  try {
+    fs.mkdirSync(path.join(root, 'apps', 'web'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'services', 'api', '.venv'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9');
+    fs.writeFileSync(
+      path.join(root, 'apps', 'web', 'package.json'),
+      JSON.stringify({
+        scripts: { dev: 'vite', test: 'vitest run' },
+        dependencies: { react: '^19.0.0' },
+        devDependencies: { typescript: '^5.0.0', vite: '^7.0.0' },
+      })
+    );
+    fs.writeFileSync(path.join(root, 'apps', 'web', '.env.local'), 'VITE_API_URL=https://segredo.invalid\nVITE_MODE=dev\n');
+    fs.writeFileSync(path.join(root, 'services', 'api', 'requirements.txt'), 'fastapi==1.0\nuvicorn==1.0\n');
+    fs.writeFileSync(path.join(root, 'services', 'api', '.env'), 'DATABASE_URL=postgres://usuario:senha@host/db\n');
+    fs.writeFileSync(path.join(root, 'config', '.env.production'), 'FEATURE_FLAG=true\n');
+
+    const started = Date.now();
+    const det = detector.detectStack(root);
+    const byPath = new Map(det.projects.map((p) => [p.path, p]));
+    assert.ok(Date.now() - started < 1000);
+    assert.match(det.stack, /React/);
+    assert.match(det.stack, /FastAPI/);
+    assert.equal(byPath.get('apps/web').packageManager, 'pnpm');
+    assert.deepEqual(byPath.get('apps/web').scripts, ['dev', 'test']);
+    assert.match(byPath.get('apps/web').verify, /pnpm test/);
+    assert.equal(byPath.get('services/api').hasVenv, true);
+    assert.deepEqual(byPath.get('services/api').envFiles[0].keys, ['DATABASE_URL']);
+    assert.deepEqual(byPath.get('config').envFiles[0].keys, ['FEATURE_FLAG']);
+    assert.ok(!JSON.stringify(det).includes('postgres://usuario:senha'));
+    assert.match(detector.projectMapText(det), /apps\/web/);
+    assert.match(detector.projectMapText(det), /services\/api\/\.env: DATABASE_URL/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('caminho de .env aninhado fica preso ao workspace', () => {
+  const envPath = load(['isProjectEnvFile', 'resolveEnvPath'], { path });
+  const cfg = { workspace: path.resolve(os.tmpdir(), 'workspace-lumi') };
+  assert.equal(envPath.resolveEnvPath(cfg, 'backend/.env'), path.resolve(cfg.workspace, 'backend/.env'));
+  assert.equal(envPath.resolveEnvPath(cfg, '../.env'), null);
+  assert.equal(envPath.resolveEnvPath(cfg, 'backend/config.json'), null);
+});
+
 // ---------- persistência assíncrona/coalescida do chat ----------
 test('queueChatWrite serializa por chat e coalesce snapshots intermediários', async () => {
   const writes = [];
@@ -381,7 +448,7 @@ test('queueChatWrite serializa por chat e coalesce snapshots intermediários', a
     },
   };
   const persist = load(
-    ['chatWriteStates', 'chatMetaCache', 'rememberChatMeta', 'pendingChatData', 'queueChatWrite'],
+    ['CHAT_CONFIG_KEYS', 'sanitizeChatConfig', 'chatWriteStates', 'chatMetaCache', 'rememberChatMeta', 'pendingChatData', 'queueChatWrite'],
     { fs: fakeFs, chatFile: (id) => id + '.json', logd: () => {} }
   );
   const done = persist.queueChatWrite('c1', { id: 'c1', title: 'primeiro', history: [1] });
@@ -396,6 +463,33 @@ test('queueChatWrite serializa por chat e coalesce snapshots intermediários', a
     ['primeiro', 'final']
   );
   assert.equal(persist.chatWriteStates.size, 0);
+});
+
+test('configuração por chat aceita só campos do motor e sobrepõe o padrão sem mutá-lo', () => {
+  const chatCfg = load(['CHAT_CONFIG_KEYS', 'sanitizeChatConfig', 'applyChatConfig']);
+  const global = { provider: 'openai', model: 'global', sounds: true, perms: { read: 'ask' } };
+  const override = chatCfg.sanitizeChatConfig({
+    provider: 'anthropic',
+    model: 'claude-tab',
+    apiKey: 'chave-da-aba',
+    _preset: 'Claude',
+    sounds: false,
+    perms: { read: 'allow' },
+    campoInventado: 'não',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(override)), {
+    provider: 'anthropic',
+    apiKey: 'chave-da-aba',
+    model: 'claude-tab',
+    _preset: 'Claude',
+  });
+  const effective = chatCfg.applyChatConfig(global, override);
+  assert.equal(effective.provider, 'anthropic');
+  assert.equal(effective.apiKey, 'chave-da-aba');
+  assert.equal(effective.model, 'claude-tab');
+  assert.equal(effective.sounds, true);
+  assert.deepEqual(global, { provider: 'openai', model: 'global', sounds: true, perms: { read: 'ask' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(chatCfg.applyChatConfig(global, null))), global);
 });
 
 // ---------- parsers de diagnóstico ----------

@@ -828,11 +828,120 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      #chatEngineBadge {
+        max-width: 132px;
+        border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+        border-radius: 999px;
+        padding: 3px 8px;
+        background: color-mix(in srgb, var(--accent) 9%, transparent);
+        color: color-mix(in srgb, var(--text) 78%, var(--accent));
+        font-size: 9.5px;
+        font-weight: 650;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+        transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+      }
+      #chatEngineBadge.custom {
+        border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+        background: color-mix(in srgb, var(--accent) 17%, transparent);
+        color: var(--text);
+      }
+      #chatEngineBadge:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+      #chatTabs {
+        height: 34px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: stretch;
+        gap: 4px;
+        padding: 4px 7px 0;
+        border-bottom: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface-2) 88%, var(--bg));
+      }
+      #chatTabs[hidden] { display: none; }
+      #chatTabsScroll {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        gap: 3px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      #chatTabsScroll::-webkit-scrollbar { display: none; }
+      .chat-tab {
+        min-width: 92px;
+        max-width: 170px;
+        height: 29px;
+        padding: 0 7px 0 10px;
+        border: 1px solid transparent;
+        border-bottom: 0;
+        border-radius: 8px 8px 0 0;
+        background: transparent;
+        color: #858b98;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+      }
+      .chat-tab:hover { color: var(--text); background: color-mix(in srgb, var(--surface) 76%, transparent); }
+      .chat-tab.active {
+        color: var(--text);
+        background: var(--bg);
+        border-color: var(--border);
+        box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 75%, transparent);
+      }
+      .chat-tab .tab-run {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: crunpulse 1.1s ease-in-out infinite;
+      }
+      .chat-tab .tab-label {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10.5px;
+      }
+      .chat-tab .tab-close {
+        width: 17px;
+        height: 17px;
+        flex: 0 0 auto;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: #707684;
+        opacity: 0;
+        cursor: pointer;
+        line-height: 16px;
+        padding: 0;
+      }
+      .chat-tab:hover .tab-close, .chat-tab.active .tab-close { opacity: 1; }
+      .chat-tab .tab-close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+      #tabNew {
+        width: 29px;
+        height: 29px;
+        flex: 0 0 auto;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: #8b91a0;
+        cursor: pointer;
+        font-size: 17px;
+        line-height: 1;
+      }
+      #tabNew:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
       #chatList {
         position: absolute;
         left: 8px;
         right: 8px;
-        top: 48px;
+        top: 82px;
         max-height: 72%;
         overflow-y: auto;
         background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -927,7 +1036,7 @@
         position: absolute;
         left: 8px;
         right: 8px;
-        top: 48px;
+        top: 82px;
         max-height: 78%;
         overflow-y: auto;
         background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -944,6 +1053,77 @@
       .qpbody {
         padding: 10px 12px 12px;
       }
+      body.chat-pinned :is(#chatList, #quickPanel) { top: 48px; }
+      .qscope {
+        padding: 10px;
+        border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+        border-radius: 10px;
+        background:
+          radial-gradient(circle at 92% 0%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 44%),
+          color-mix(in srgb, var(--surface-2) 82%, transparent);
+      }
+      .qscope-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+      .qscope-mark {
+        width: 25px; height: 25px; border-radius: 8px;
+        display: grid; place-items: center;
+        color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+      }
+      .qscope-copy { min-width: 0; flex: 1; }
+      .qscope-title { color: var(--text); font-size: 11.5px; font-weight: 650; }
+      #qScopeHint { margin-top: 2px; color: #7f8795; font-size: 9.5px; line-height: 1.35; }
+      #qUseGlobal {
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        padding: 4px 7px;
+        background: transparent;
+        color: #9aa1ae;
+        font-size: 9.5px;
+        cursor: pointer;
+      }
+      #qUseGlobal:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+      #qEngineModelRow[hidden] { display: none; }
+      #qApiKeyBlock[hidden] { display: none; }
+      .qsecret {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 6px;
+      }
+      .qsecret input {
+        min-width: 0;
+        height: 34px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0 10px;
+        background: var(--surface-2);
+        color: var(--text);
+        font: 12px/1 inherit;
+        outline: none;
+        transition: border-color 150ms ease, box-shadow 150ms ease;
+      }
+      .qsecret input:focus {
+        border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+      }
+      .qsecret button {
+        height: 34px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0 9px;
+        background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+        color: #9ba2af;
+        font-size: 10px;
+        cursor: pointer;
+        transition: color 150ms ease, border-color 150ms ease, background 150ms ease, transform 100ms ease;
+      }
+      .qsecret button:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); }
+      .qsecret button:active { transform: scale(0.97); }
+      .qsecret #qApiApply {
+        border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+        background: color-mix(in srgb, var(--accent) 17%, transparent);
+        color: var(--text);
+        font-weight: 650;
+      }
+      .qsecret-note { margin-top: 5px; color: #747c8a; font-size: 9.5px; line-height: 1.4; }
       .qlbl {
         display: flex;
         align-items: center;
@@ -1284,8 +1464,13 @@
     <div id="chatHeader">
       <button id="btnList" class="hbtn" title="Conversas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/></svg></button>
       <span id="chatTitle">Conversa</span>
+      <button id="chatEngineBadge" type="button" title="Motor desta conversa">Padrão global</button>
       <button id="btnQuick" class="hbtn" title="Ajustes rápidos (modelo, perfil, permissões)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></button>
       <button id="btnNew" class="hbtn" title="Nova conversa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+    </div>
+    <div id="chatTabs">
+      <div id="chatTabsScroll"></div>
+      <button id="tabNew" type="button" title="Nova conversa">+</button>
     </div>
     <div id="chatList" hidden>
       <div class="clhead"><span>Conversas</span><span style="flex:1"></span><button id="clNewWin" class="hbtn" title="Nova conversa em nova janela">↗＋</button><button id="clClose" class="hbtn">✕</button></div>
@@ -1294,11 +1479,41 @@
     <div id="quickPanel" hidden>
       <div class="clhead"><span>Ajustes rápidos</span><button id="qpClose" class="hbtn">✕</button></div>
       <div class="qpbody">
-        <div class="qlbl">Modelo</div>
+        <div class="qscope">
+          <div class="qscope-head">
+            <span class="qscope-mark">✦</span>
+            <div class="qscope-copy">
+              <div class="qscope-title">Motor desta conversa</div>
+              <div id="qScopeHint">Segue automaticamente as configurações globais.</div>
+            </div>
+            <button id="qUseGlobal" type="button" hidden>Usar padrão</button>
+          </div>
+          <select id="qEngine">
+            <option value="inherit">Padrão global</option>
+            <option value="native">API / perfil próprio nesta conversa</option>
+            <option value="claude-code">Claude Code</option>
+            <option value="glm-code">GLM Code</option>
+            <option value="codex">Codex</option>
+          </select>
+          <div id="qEngineModelRow" hidden>
+            <div class="qlbl">Modelo do motor</div>
+            <select id="qEngineModel"></select>
+          </div>
+        </div>
+        <div class="qlbl">Modelo da API</div>
         <div class="qrow"><select id="qModel"></select><button id="qModelRefresh" class="ca" title="Atualizar lista de modelos">↻</button></div>
-        <div class="qlbl">Perfil (preset)</div>
+        <div class="qlbl">Provedor / perfil desta conversa</div>
         <select id="qPreset"></select>
-        <div class="qlbl">Permissões <button id="qPermAll" class="qallbtn">🔓 Permitir todas</button></div>
+        <div id="qApiKeyBlock">
+          <div class="qlbl">Chave API <span id="qProviderName"></span></div>
+          <div class="qsecret">
+            <input id="qApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Chave deste provedor" />
+            <button id="qApiReveal" type="button">Mostrar</button>
+            <button id="qApiApply" type="button">Aplicar</button>
+          </div>
+          <div class="qsecret-note">Ao aplicar, a chave fica vinculada somente a esta conversa. Deixe vazio para endpoints locais sem autenticação.</div>
+        </div>
+        <div class="qlbl">Permissões globais <button id="qPermAll" class="qallbtn">🔓 Permitir todas</button></div>
         <div id="qPerms"></div>
         <div class="qlbl">Transparência da janela</div>
         <div class="qrow"><input type="range" id="qOpacity" min="25" max="100" step="5" /><span id="qOpacityVal">100%</span></div>
@@ -1973,8 +2188,27 @@
       const btnList = document.getElementById('btnList');
       const btnNew = document.getElementById('btnNew');
       const chatTitleEl = document.getElementById('chatTitle');
+      const chatEngineBadge = document.getElementById('chatEngineBadge');
       const chatListEl = document.getElementById('chatList');
       const clItems = document.getElementById('clItems');
+      const chatTabs = document.getElementById('chatTabs');
+      const chatTabsScroll = document.getElementById('chatTabsScroll');
+      const SESSION = new URLSearchParams(location.search).get('session') || '';
+      let openChatTabIds = new Set();
+      try {
+        openChatTabIds = new Set(JSON.parse(localStorage.getItem('lumiOpenChatTabs') || '[]'));
+      } catch (e) {
+        openChatTabIds = new Set();
+      }
+      function saveOpenChatTabs() {
+        try {
+          localStorage.setItem('lumiOpenChatTabs', JSON.stringify([...openChatTabIds].slice(-12)));
+        } catch (e) {}
+      }
+      if (SESSION) {
+        chatTabs.hidden = true;
+        document.body.classList.add('chat-pinned');
+      }
 
       function renderHistoryLegacy(h) {
         msgs.innerHTML = '';
@@ -2164,12 +2398,75 @@
         showHistoryPage(start, true, historyRows.length - start);
       }
 
-      function refreshTitle() {
-        window.api.chatsCurrent().then((c) => (chatTitleEl.textContent = (c && c.title) || 'Conversa'));
+      async function refreshChatIdentity() {
+        const [current, info] = await Promise.all([window.api.chatsCurrent(), window.api.chatConfigGet()]);
+        chatTitleEl.textContent = (current && current.title) || 'Conversa';
+        const label = (info && info.label) || (current && current.engineLabel) || 'Padrão global';
+        chatEngineBadge.textContent = info && info.inherited ? 'Global · ' + label : label;
+        chatEngineBadge.classList.toggle('custom', !!(info && !info.inherited));
+        chatEngineBadge.title = info && info.inherited
+          ? 'Esta conversa segue o motor global · clique para personalizar'
+          : 'Motor exclusivo desta conversa · clique para ajustar';
       }
       function loadHistoryIntoUI() {
         window.api.getHistory().then(renderHistory);
-        refreshTitle();
+        refreshChatIdentity();
+        refreshChatTabs();
+        syncEffectiveEngine(); // seletor inferior acompanha o modelo/motor da aba recém-ativada
+      }
+      function renderChatTabs(list) {
+        if (SESSION) return;
+        const all = list || [];
+        const current = all.find((chat) => chat.current);
+        if (current) openChatTabIds.add(current.id);
+        const knownIds = new Set(all.map((chat) => chat.id));
+        openChatTabIds = new Set([...openChatTabIds].filter((id) => knownIds.has(id)).slice(-12));
+        const visible = all.filter((chat) => openChatTabIds.has(chat.id));
+        saveOpenChatTabs();
+        chatTabsScroll.replaceChildren();
+        visible.forEach((chat) => {
+          const tab = document.createElement('div');
+          tab.className = 'chat-tab' + (chat.current ? ' active' : '');
+          tab.title = `${chat.title || 'Conversa'} · ${chat.engineLabel || 'Padrão global'}`;
+          if (chat.running) {
+            const run = document.createElement('span');
+            run.className = 'tab-run';
+            run.title = 'A Lumi está trabalhando nesta conversa';
+            tab.appendChild(run);
+          }
+          const label = document.createElement('span');
+          label.className = 'tab-label';
+          label.textContent = chat.title || 'Conversa';
+          tab.appendChild(label);
+          const close = document.createElement('button');
+          close.className = 'tab-close';
+          close.type = 'button';
+          close.title = 'Fechar aba (a conversa continua salva)';
+          close.textContent = '×';
+          close.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const fallback = visible.find((item) => item.id !== chat.id) || all.find((item) => item.id !== chat.id);
+            if (chat.current && !fallback) return;
+            openChatTabIds.delete(chat.id);
+            saveOpenChatTabs();
+            if (chat.current && fallback) {
+              openChatTabIds.add(fallback.id);
+              await window.api.chatsSwitch(fallback.id);
+            } else {
+              renderChatTabs(all);
+            }
+          });
+          tab.appendChild(close);
+          tab.addEventListener('click', async () => {
+            if (!chat.current) await window.api.chatsSwitch(chat.id);
+          });
+          chatTabsScroll.appendChild(tab);
+          if (chat.current) requestAnimationFrame(() => tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+        });
+      }
+      function refreshChatTabs() {
+        if (SESSION) return Promise.resolve();
+        return window.api.chatsList().then(renderChatTabs);
       }
       function renderChatList(list) {
         clItems.innerHTML = '';
@@ -2190,10 +2487,17 @@
           }
           const tm = document.createElement('div');
           tm.className = 'ctm';
-          tm.textContent = (c.count || 0) + ' msgs' + (c.running ? '  ·  trabalhando…' : '');
+          tm.textContent =
+            (c.count || 0) +
+            ' msgs · ' +
+            (c.customEngine ? '✦ ' : '') +
+            (c.engineLabel || 'Padrão global') +
+            (c.running ? '  ·  trabalhando…' : '');
           t.appendChild(tt);
           t.appendChild(tm);
           t.addEventListener('click', () => {
+            openChatTabIds.add(c.id);
+            saveOpenChatTabs();
             if (!c.current) window.api.chatsSwitch(c.id);
             chatListEl.hidden = true;
           });
@@ -2225,7 +2529,7 @@
               if (done) return;
               done = true;
               await window.api.chatsRename(c.id, inp.value.trim());
-              if (c.current) refreshTitle();
+              if (c.current) refreshChatIdentity();
               openList();
             };
             inp.addEventListener('keydown', (ev) => {
@@ -2246,6 +2550,8 @@
           del.addEventListener('click', async (e) => {
             e.stopPropagation();
             if (confirm('Apagar esta conversa? (não dá pra desfazer)')) {
+              openChatTabIds.delete(c.id);
+              saveOpenChatTabs();
               await window.api.chatsDelete(c.id);
               openList();
             }
@@ -2264,6 +2570,7 @@
         document.getElementById('quickPanel').hidden = true; // fecha o painel de ajustes
         window.api.chatsList().then((l) => {
           renderChatList(l);
+          renderChatTabs(l);
           chatListEl.hidden = false;
         });
       }
@@ -2274,13 +2581,18 @@
         chatListEl.hidden = true;
       });
       btnNew.addEventListener('click', () => window.api.chatsNew());
+      document.getElementById('tabNew').addEventListener('click', () => window.api.chatsNew());
       window.api.onChatReload(() => {
         chatListEl.hidden = true;
         loadHistoryIntoUI();
       });
+      if (window.api.onChatsChanged)
+        window.api.onChatsChanged(() => {
+          refreshChatTabs();
+          if (!chatListEl.hidden) window.api.chatsList().then(renderChatList);
+        });
 
       // multi-janela: prende esta janela à conversa do ?session (vazio = segue a ativa) ANTES de buscar o histórico
-      const SESSION = new URLSearchParams(location.search).get('session') || '';
       (window.api.chatBind ? window.api.chatBind(SESSION) : Promise.resolve()).then(loadHistoryIntoUI);
 
       // ---------- ajustes rápidos (modelo, preset, permissões) ----------
@@ -2295,6 +2607,16 @@
       const qPreset = document.getElementById('qPreset');
       const qPerms = document.getElementById('qPerms');
       const qModelRefresh = document.getElementById('qModelRefresh');
+      const qEngine = document.getElementById('qEngine');
+      const qEngineModel = document.getElementById('qEngineModel');
+      const qEngineModelRow = document.getElementById('qEngineModelRow');
+      const qScopeHint = document.getElementById('qScopeHint');
+      const qUseGlobal = document.getElementById('qUseGlobal');
+      const qApiKeyBlock = document.getElementById('qApiKeyBlock');
+      const qApiKey = document.getElementById('qApiKey');
+      const qApiReveal = document.getElementById('qApiReveal');
+      const qApiApply = document.getElementById('qApiApply');
+      const qProviderName = document.getElementById('qProviderName');
       const qOpacity = document.getElementById('qOpacity');
       const qOpacityVal = document.getElementById('qOpacityVal');
       qOpacity.addEventListener('input', () => {
@@ -2389,6 +2711,8 @@
         await window.api.modelsSelect(presetName, model);
         mpCurModel = model;
         mpSetLabel(model, presetName);
+        await refreshChatIdentity();
+        refreshChatTabs();
         toast('🧠 ' + model + (presetName ? ' · ' + presetName : ''));
         modelPop.hidden = true;
       }
@@ -2573,15 +2897,19 @@
               : c.model;
         if (label) mpSetLabel(label);
       }
-      window.api.getConfig().then(syncEngineLabel);
+      async function syncEffectiveEngine() {
+        const info = await window.api.chatConfigGet();
+        const c = (info && info.config) || {};
+        syncEngineLabel(c);
+        if (!usingExternalCodeEngine && c.model) mpCurModel = c.model;
+      }
+      syncEffectiveEngine();
       // mudou o modelo em OUTRA janela (⚙ configs, ajustes rápidos…) → o seletor acompanha
       if (window.api.onConfigChanged)
-        window.api.onConfigChanged(async () => {
-          const c = await window.api.getConfig();
-          syncEngineLabel(c);
-          if (!usingExternalCodeEngine && c.model) {
-            mpCurModel = c.model;
-          }
+        window.api.onConfigChanged(() => {
+          syncEffectiveEngine();
+          refreshChatIdentity();
+          refreshChatTabs();
         });
 
       // ---------- ✨ varinha: melhora o prompt antes de enviar (clique de novo = desfaz) ----------
@@ -2649,18 +2977,40 @@
 
       async function openQuick() {
         chatListEl.hidden = true;
-        const c = await window.api.getConfig();
+        const [globalConfig, info] = await Promise.all([window.api.getConfig(), window.api.chatConfigGet()]);
+        const c = (info && info.config) || globalConfig;
+        const engine = (info && info.engine) || 'native';
         fillModelSelect([c.model].filter(Boolean), c.model || '');
         const presets = await window.api.listPresets();
-        qPreset.innerHTML = '<option value="">— escolher perfil —</option>';
+        qPreset.innerHTML = '<option value="">— selecionar perfil —</option>';
         (presets || []).forEach((n) => {
           const o = document.createElement('option');
           o.value = n;
           o.textContent = n;
           qPreset.appendChild(o);
         });
-        qPreset.value = '';
-        renderPerms(c.perms || {});
+        qPreset.value = (info && info.preset) || '';
+        qEngine.value = info && info.inherited ? 'inherit' : engine;
+        qUseGlobal.hidden = !!(info && info.inherited);
+        qScopeHint.textContent =
+          info && info.inherited
+            ? `Segue o padrão global · ${info.label || c.model || 'modelo configurado'}`
+            : `Configuração exclusiva · ${info.label || c.model || 'modelo configurado'}`;
+        const native = engine === 'native';
+        qModel.disabled = !native;
+        qModelRefresh.disabled = !native;
+        qPreset.disabled = !native;
+        qApiKeyBlock.hidden = !native;
+        qApiKey.value = c.apiKey || '';
+        qApiKey.type = 'password';
+        qApiReveal.textContent = 'Mostrar';
+        let providerName = c.provider || 'API';
+        try {
+          providerName += ' · ' + new URL(c.baseUrl).hostname;
+        } catch (e) {}
+        qProviderName.textContent = providerName;
+        await fillEngineModel(info);
+        renderPerms(globalConfig.perms || {});
         // transparência da janela (vem do _chrome.js)
         const op = window.__lumiGetOpacity ? window.__lumiGetOpacity() : 1;
         qOpacity.value = Math.round(op * 100);
@@ -2673,11 +3023,54 @@
           fillModelSelect(list, c.model || '');
         });
       }
-      qModel.addEventListener('change', () => window.api.setConfig({ model: qModel.value }));
+      async function fillEngineModel(info) {
+        const engine = (info && info.engine) || 'native';
+        const c = (info && info.config) || {};
+        qEngineModelRow.hidden = engine === 'native';
+        if (engine === 'native') return;
+        let values = [];
+        let selected = '';
+        if (engine === 'claude-code') {
+          values = [['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']];
+          selected = c.claudeCodeModel || 'sonnet';
+        } else if (engine === 'glm-code') {
+          values = [
+            ['glm-5.2[1m]', 'GLM-5.2 · contexto de 1M'],
+            ['glm-5.2', 'GLM-5.2'],
+            ['glm-4.7', 'GLM-4.7'],
+            ['glm-4.5-air', 'GLM-4.5 Air'],
+          ];
+          selected = c.glmCodeModel || 'glm-5.2[1m]';
+        } else {
+          const result = await window.api.codexModels();
+          values = [['', 'Recomendado pela conta'], ...((result && result.models) || []).map((m) => [m.id || m.model || m, m.displayName || m.name || m.id || m])];
+          selected = c.codexModel || '';
+        }
+        qEngineModel.replaceChildren();
+        values.forEach(([value, label]) => {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = label;
+          qEngineModel.appendChild(option);
+        });
+        if (selected && !values.some(([value]) => value === selected)) {
+          const option = document.createElement('option');
+          option.value = selected;
+          option.textContent = selected;
+          qEngineModel.appendChild(option);
+        }
+        qEngineModel.value = selected;
+      }
+      qModel.addEventListener('change', async () => {
+        await window.api.chatConfigSet({ patch: { model: qModel.value }, engine: 'native' });
+        await refreshChatIdentity();
+        openQuick();
+      });
       qModelRefresh.addEventListener('click', async () => {
         qModelRefresh.textContent = '…';
         const m = await window.api.getModels({ force: true });
-        const c = await window.api.getConfig();
+        const info = await window.api.chatConfigGet();
+        const c = info.config || {};
         const list = (m && m.models) || [];
         if (c.model && !list.includes(c.model)) list.unshift(c.model);
         fillModelSelect(list, c.model || '');
@@ -2686,10 +3079,57 @@
       qPreset.addEventListener('change', async () => {
         const name = qPreset.value;
         if (!name) return;
-        const preset = await window.api.loadPreset(name);
-        if (preset) {
-          await window.api.setConfig(preset);
-          openQuick(); // reabre com os valores do perfil
+        await window.api.chatConfigSet({ preset: name, engine: 'native' });
+        openQuick();
+      });
+      qEngine.addEventListener('change', async () => {
+        await window.api.chatConfigSet(qEngine.value === 'inherit' ? { inherit: true } : { engine: qEngine.value });
+        await refreshChatIdentity();
+        openQuick();
+      });
+      qEngineModel.addEventListener('change', async () => {
+        const engine = qEngine.value;
+        const key = engine === 'claude-code' ? 'claudeCodeModel' : engine === 'glm-code' ? 'glmCodeModel' : 'codexModel';
+        await window.api.chatConfigSet({ engine, patch: { [key]: qEngineModel.value } });
+        await refreshChatIdentity();
+        openQuick();
+      });
+      qUseGlobal.addEventListener('click', async () => {
+        await window.api.chatConfigSet({ inherit: true });
+        await refreshChatIdentity();
+        openQuick();
+      });
+      qApiReveal.addEventListener('click', () => {
+        const reveal = qApiKey.type === 'password';
+        qApiKey.type = reveal ? 'text' : 'password';
+        qApiReveal.textContent = reveal ? 'Ocultar' : 'Mostrar';
+        qApiKey.focus();
+      });
+      async function applyQuickApiKey() {
+        qApiApply.disabled = true;
+        qApiApply.textContent = '…';
+        try {
+          const info = await window.api.chatConfigSet({ engine: 'native', patch: { apiKey: qApiKey.value } });
+          qApiApply.textContent = '✓';
+          qUseGlobal.hidden = false;
+          qScopeHint.textContent = `Configuração exclusiva · ${(info && info.label) || qModel.value || 'modelo configurado'}`;
+          await refreshChatIdentity();
+          refreshChatTabs();
+          toast(qApiKey.value ? '🔑 Chave aplicada somente nesta conversa' : '🔓 Esta conversa usará o endpoint sem chave');
+        } catch (error) {
+          toast('⚠ Não consegui aplicar a chave: ' + (error.message || error), false);
+        } finally {
+          setTimeout(() => {
+            qApiApply.disabled = false;
+            qApiApply.textContent = 'Aplicar';
+          }, 700);
+        }
+      }
+      qApiApply.addEventListener('click', applyQuickApiKey);
+      qApiKey.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          applyQuickApiKey();
         }
       });
       document.getElementById('qPermAll').addEventListener('click', (e) => {
@@ -2700,7 +3140,14 @@
         renderPerms(all);
       });
       btnQuick.addEventListener('click', () => (quickPanel.hidden ? openQuick() : (quickPanel.hidden = true)));
+      chatEngineBadge.addEventListener('click', () => (quickPanel.hidden ? openQuick() : (quickPanel.hidden = true)));
       document.getElementById('qpClose').addEventListener('click', () => (quickPanel.hidden = true));
+      if (window.api.onChatConfigChanged)
+        window.api.onChatConfigChanged(() => {
+          refreshChatIdentity();
+          refreshChatTabs();
+          syncEffectiveEngine();
+        });
 
       window.api.onUser((m) => {
         flushCurAssistant(); // steering: pinta o parcial pendente antes de zerar o balão
@@ -2835,7 +3282,8 @@
         curThinking = null;
         curThinkingDet = null;
         setProcessing(false);
-        refreshTitle(); // a 1ª mensagem define o nome da conversa
+        refreshChatIdentity(); // a 1ª mensagem define o nome da conversa
+        refreshChatTabs();
         if (autoScroll) window.api.getHistory().then(renderHistory);
       });
       window.api.onStopped(() => {
