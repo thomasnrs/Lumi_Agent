@@ -297,6 +297,76 @@ test('aiFetch repete um 429 apenas quando há RPS explícito', async () => {
   assert.equal(calls.length, 1);
 });
 
+test('contexto preserva imagem somente no pedido atual', () => {
+  const image = 'data:image/png;base64,QUJD';
+  const session = {
+    history: [
+      { role: 'user', content: [{ type: 'text', text: 'antiga' }, { type: 'image_url', image_url: { url: image } }] },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: [{ type: 'text', text: 'atual' }, { type: 'image_url', image_url: { url: image } }] },
+    ],
+    lastTurnContext: null,
+  };
+  const context = load(['cloneContextMessage', 'contextMessagesForTurn'], { S: () => session });
+  const messages = context.contextMessagesForTurn();
+  assert.equal(messages[0].content[1].type, 'text');
+  assert.match(messages[0].content[1].text, /imagem do turno anterior/);
+  assert.equal(messages[2].content[1].type, 'image_url');
+  assert.equal(messages[2].content[1].image_url.url, image);
+});
+
+test('estimativa de tokens não conta base64 de imagem como texto', () => {
+  const estimate = load(['estimateTokens']);
+  const hugeImage = 'data:image/jpeg;base64,' + 'A'.repeat(200000);
+  assert.ok(estimate.estimateTokens({ image_url: { url: hugeImage } }) < 100);
+});
+
+test('fila do Claude/GLM entrega steering e converte imagem em bloco multimodal', async () => {
+  const sdk = load(['claudeSdkContent', 'claudeSdkUserMessage', 'createAsyncInputQueue'], { Symbol, Promise });
+  const input = sdk.claudeSdkUserMessage(
+    [
+      { type: 'text', text: 'olha isso' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+    ],
+    'sessao-1'
+  );
+  assert.equal(input.message.content[1].type, 'image');
+  assert.equal(input.message.content[1].source.media_type, 'image/png');
+  assert.equal(input.message.content[1].source.data, 'QUJD');
+
+  const queue = sdk.createAsyncInputQueue(input);
+  assert.equal((await queue.next()).value.message.content[0].text, 'olha isso');
+  assert.equal(queue.push(sdk.claudeSdkUserMessage('mude o rumo', 'sessao-1')), true);
+  assert.equal((await queue.next()).value.message.content, 'mude o rumo');
+  assert.equal(queue.pushedCount, 2);
+  queue.close();
+  assert.equal((await queue.next()).done, true);
+  assert.equal(queue.push(input), false);
+});
+
+test('resposta final é reaberta quando steering chega durante o stream', () => {
+  const session = {
+    steerQueue: [{ content: 'faça de outro jeito' }],
+    pendingTurnTranscript: { historyTailCount: 1, messages: [] },
+    editedSinceTurn: true,
+  };
+  const events = [];
+  const steer = load(['cloneContextMessage', 'injectQueuedSteering', 'continueAfterQueuedSteering'], {
+    S: () => session,
+    broadcast: (...args) => events.push(args),
+  });
+  const messages = [];
+  assert.equal(steer.continueAfterQueuedSteering({ text: 'resposta anterior', responseItems: [] }, messages), true);
+  assert.deepEqual(
+    messages.map((m) => m.role),
+    ['assistant', 'user']
+  );
+  assert.equal(messages[1].content, 'faça de outro jeito');
+  assert.equal(session.steerQueue.length, 0);
+  assert.equal(session.pendingTurnTranscript.historyTailCount, 2);
+  assert.equal(events[0][0], 'chat:newbubble');
+});
+
 // ---------- persistência assíncrona/coalescida do chat ----------
 test('queueChatWrite serializa por chat e coalesce snapshots intermediários', async () => {
   const writes = [];

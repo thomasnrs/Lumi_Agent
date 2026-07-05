@@ -172,6 +172,7 @@ function makeSession(id) {
     claudeSessionId: '',
     claudeSessionWorkspace: '',
     claudeQuery: null, // Query do Agent SDK em andamento NESTA sessão (Stop interrompe só ela)
+    claudeInput: null, // fila bidirecional do Agent SDK (steering + imagens no turno ativo)
     glmSessionId: '',
     glmSessionWorkspace: '',
     codexThreadId: '',
@@ -1419,7 +1420,14 @@ function readRepoRules(ws) {
 function estimateTokens(v) {
   let s = '';
   try {
-    s = typeof v === 'string' ? v : JSON.stringify(v || '');
+    s =
+      typeof v === 'string'
+        ? /^data:image\/[^;]+;base64,/i.test(v)
+          ? '[imagem anexada]'
+          : v
+        : JSON.stringify(v || '', (_key, value) =>
+            typeof value === 'string' && /^data:image\/[^;]+;base64,/i.test(value) ? '[imagem anexada]' : value
+          );
   } catch (e) {
     s = String(v || '');
   }
@@ -6752,6 +6760,37 @@ async function runSubAgent(cfg, agent, task, label) {
   return full;
 }
 
+function injectQueuedSteering(messages) {
+  let count = 0;
+  for (const item of S().steerQueue.splice(0)) {
+    const steering = { role: 'user', content: item.content };
+    messages.push(steering);
+    if (S().pendingTurnTranscript) {
+      S().pendingTurnTranscript.messages.push(cloneContextMessage(steering));
+      S().pendingTurnTranscript.historyTailCount++;
+    }
+    S().editedSinceTurn = false;
+    count++;
+  }
+  return count;
+}
+
+function continueAfterQueuedSteering(turn, messages) {
+  if (!S().steerQueue.length) return false;
+  const assistant = {
+    role: 'assistant',
+    content: turn.text || null,
+    _responsesItems: turn.responseItems,
+  };
+  if ((turn.text && turn.text.trim()) || (Array.isArray(turn.responseItems) && turn.responseItems.length)) {
+    messages.push(assistant);
+    if (S().pendingTurnTranscript) S().pendingTurnTranscript.messages.push(cloneContextMessage(assistant));
+  }
+  injectQueuedSteering(messages);
+  broadcast('chat:newbubble');
+  return true;
+}
+
 async function runAgent(cfg) {
   agentSeq = {}; // zera a numeração dos subagentes a cada turno (Programador 1, 2...)
   S().editedSinceTurn = false; // reseta o rastreio de edições (verificação automática)
@@ -6776,15 +6815,7 @@ async function runAgent(cfg) {
     if (S().abort && S().abort.signal.aborted) break; // botão Stop
     compactTurnMessages(messages, runCfg, tools); // turno longo? encolhe os tool-results antigos
     // STEERING: mensagens enviadas durante o processamento entram como turno do usuário
-    if (S().steerQueue.length) {
-      for (const s of S().steerQueue.splice(0)) {
-        const steering = { role: 'user', content: s.content };
-        messages.push(steering);
-        S().pendingTurnTranscript.messages.push(cloneContextMessage(steering));
-        S().pendingTurnTranscript.historyTailCount++;
-        S().editedSinceTurn = false; // a verificação considera só as edições após o novo pedido
-      }
-    }
+    if (S().steerQueue.length) injectQueuedSteering(messages);
     // RECITAÇÃO: turno longo faz qualquer modelo perder o fio — a cada 8 passos, 1 linha re-ancora o objetivo
     if (step > 0 && step % 8 === 0 && S().currentTurnLog && S().currentTurnLog.goal) {
       const recite = {
@@ -6819,6 +6850,12 @@ async function runAgent(cfg) {
     }
     live.finish(turn.usage);
     recordUsage(runCfg, turn.usage); // gastômetro: cada passo conta (o contexto re-enviado é cobrado)
+    // A orientação pode chegar enquanto a rodada final ainda está em streaming.
+    // Sem esta checagem o loop encerrava logo abaixo e o finally apagava a fila.
+    if (!turn.toolCalls.length && continueAfterQueuedSteering(turn, messages)) {
+      step--; // steering do usuário não consome um passo do orçamento da tarefa
+      continue;
+    }
     if (turn.toolCalls.length) {
       const assistantTools = {
         role: 'assistant',
@@ -6915,6 +6952,11 @@ async function runAgent(cfg) {
     if (!reviewed) {
       reviewed = true;
       if (await maybeSelfReview(cfg, messages)) continue;
+    }
+    // Também cobre steering recebido durante verificação/revisão assíncrona.
+    if (continueAfterQueuedSteering(turn, messages)) {
+      step--;
+      continue;
     }
     // estatisticas: usa o "usage" exato quando vier; senao estima (~4 chars/token)
     const est = (s) => Math.round((s || '').length / 4);
@@ -7248,13 +7290,13 @@ async function synthesize(cfg, text) {
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
-function cloneContextMessage(m) {
+function cloneContextMessage(m, preserveImages) {
   if (!m || typeof m !== 'object') return m;
   try {
     const copy = JSON.parse(JSON.stringify(m));
     if (Array.isArray(copy.content)) {
       copy.content = copy.content.map((p) => {
-        if (p && p.type === 'image_url' && p.image_url && /^data:/i.test(p.image_url.url || '')) {
+        if (!preserveImages && p && p.type === 'image_url' && p.image_url && /^data:/i.test(p.image_url.url || '')) {
           return { type: 'text', text: '[imagem do turno anterior — recapture/reabra se precisar analisar novamente]' };
         }
         return p;
@@ -7276,18 +7318,22 @@ function cloneContextMessage(m) {
   }
 }
 function contextMessagesForTurn() {
-  if (!S().lastTurnContext || !Array.isArray(S().lastTurnContext.messages)) return S().history.map(cloneContextMessage).filter(Boolean);
+  const historyCopy = (messages, offset) =>
+    messages
+      .map((m, i) => cloneContextMessage(m, offset + i === S().history.length - 1 && m && m.role === 'user'))
+      .filter(Boolean);
+  if (!S().lastTurnContext || !Array.isArray(S().lastTurnContext.messages)) return historyCopy(S().history, 0);
   const anchor = parseInt(S().lastTurnContext.anchor, 10);
   const tailCount = Math.max(0, parseInt(S().lastTurnContext.historyTailCount, 10) || 0);
   const start = anchor - tailCount;
   if (start < 0 || anchor > S().history.length) {
     S().lastTurnContext = null;
-    return S().history.map(cloneContextMessage).filter(Boolean);
+    return historyCopy(S().history, 0);
   }
   return [
-    ...S().history.slice(0, start).map(cloneContextMessage).filter(Boolean),
-    ...S().lastTurnContext.messages.map(cloneContextMessage).filter(Boolean),
-    ...S().history.slice(anchor).map(cloneContextMessage).filter(Boolean),
+    ...historyCopy(S().history.slice(0, start), 0),
+    ...S().lastTurnContext.messages.map((m) => cloneContextMessage(m)).filter(Boolean),
+    ...historyCopy(S().history.slice(anchor), anchor),
   ];
 }
 function finalizeLastTurnContext(finalText) {
@@ -7299,7 +7345,7 @@ function finalizeLastTurnContext(finalText) {
   S().lastTurnContext = {
     anchor: S().history.length,
     historyTailCount: S().pendingTurnTranscript.historyTailCount,
-    messages: S().pendingTurnTranscript.messages.map(cloneContextMessage).filter(Boolean),
+    messages: S().pendingTurnTranscript.messages.map((m) => cloneContextMessage(m)).filter(Boolean),
     at: new Date().toISOString(),
   };
   S().pendingTurnTranscript = null;
@@ -11137,20 +11183,91 @@ async function answerClaudeAskUserQuestion(input, engineLabel) {
   }
   return { input: { ...src, answers } };
 }
-function claudePromptFromContent(content) {
-  if (typeof content === 'string') return content;
-  const text = (content || []).filter((p) => p && p.type === 'text').map((p) => p.text).join('\n');
-  const images = (content || []).filter((p) => p && p.type === 'image_url').length;
-  return text + (images ? `\n\n[${images} imagem(ns) foram anexadas na interface; o Modo Claude Code ainda não encaminha imagens diretamente.]` : '');
+function appendUserText(content, extra) {
+  if (!extra) return content;
+  if (typeof content === 'string') return content + extra;
+  return [...(Array.isArray(content) ? content : []), { type: 'text', text: extra }];
 }
-function claudeUserPrompt() {
+
+function claudeUserContent(promptOverride) {
+  if (promptOverride != null) return promptOverride;
   const m = [...S().history].reverse().find((x) => x && x.role === 'user');
-  let prompt = m ? claudePromptFromContent(m.content) : '';
+  let content = m ? m.content : '';
   if (recentWorkspaceFiles.length) {
     const files = recentWorkspaceFiles.splice(0);
-    prompt += `\n\nArquivos adicionados recentemente à workspace:\n${files.map((f) => '- ' + f).join('\n')}`;
+    content = appendUserText(content, `\n\nArquivos adicionados recentemente à workspace:\n${files.map((f) => '- ' + f).join('\n')}`);
   }
-  return prompt;
+  return content;
+}
+
+function claudeSdkContent(content) {
+  if (typeof content === 'string') return content;
+  const blocks = [];
+  for (const part of content || []) {
+    if (!part) continue;
+    if (part.type === 'text' && part.text) {
+      blocks.push({ type: 'text', text: String(part.text) });
+      continue;
+    }
+    if (part.type !== 'image_url' || !part.image_url || !part.image_url.url) continue;
+    const imageUrl = String(part.image_url.url);
+    const data = /^data:([^;]+);base64,(.*)$/s.exec(imageUrl);
+    if (data) blocks.push({ type: 'image', source: { type: 'base64', media_type: data[1], data: data[2] } });
+    else if (/^https?:\/\//i.test(imageUrl)) blocks.push({ type: 'image', source: { type: 'url', url: imageUrl } });
+  }
+  return blocks.length ? blocks : '';
+}
+
+function claudeSdkUserMessage(content, sessionId) {
+  return {
+    type: 'user',
+    message: { role: 'user', content: claudeSdkContent(content) },
+    parent_tool_use_id: null,
+    priority: 'now',
+    ...(sessionId ? { session_id: sessionId } : {}),
+  };
+}
+
+function createAsyncInputQueue(initialValue) {
+  const values = [];
+  const waiters = [];
+  let closed = false;
+  let pushedCount = 0;
+  const queue = {
+    push(value) {
+      if (closed) return false;
+      pushedCount++;
+      const waiter = waiters.shift();
+      if (waiter) waiter({ value, done: false });
+      else values.push(value);
+      return true;
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      while (waiters.length) waiters.shift()({ value: undefined, done: true });
+    },
+    get pushedCount() {
+      return pushedCount;
+    },
+    get closed() {
+      return closed;
+    },
+    next() {
+      if (values.length) return Promise.resolve({ value: values.shift(), done: false });
+      if (closed) return Promise.resolve({ value: undefined, done: true });
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+    return() {
+      queue.close();
+      return Promise.resolve({ value: undefined, done: true });
+    },
+    [Symbol.asyncIterator]() {
+      return queue;
+    },
+  };
+  if (initialValue !== undefined) queue.push(initialValue);
+  return queue;
 }
 function buildClaudeCodePrompt(cfg) {
   const glmMode = cfg.codeEngine === 'glm-code';
@@ -11320,7 +11437,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
 
   const { query } = await claudeSdk();
   const started = Date.now();
-  const prompt = promptOverride || claudeUserPrompt();
+  const userContent = claudeUserContent(promptOverride);
   const sessionId = glmMode ? S().glmSessionId : S().claudeSessionId;
   const sessionWorkspace = glmMode ? S().glmSessionWorkspace : S().claudeSessionWorkspace;
   const sameWorkspace = sessionId && path.resolve(sessionWorkspace || '') === path.resolve(cfg.workspace);
@@ -11369,8 +11486,10 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   };
   if (sameWorkspace) options.resume = sessionId;
 
-  const q = query({ prompt, options });
+  const inputQueue = createAsyncInputQueue(claudeSdkUserMessage(userContent, sameWorkspace ? sessionId : ''));
+  const q = query({ prompt: inputQueue, options });
   S().claudeQuery = q;
+  S().claudeInput = inputQueue;
   let full = '';
   let streamedMain = false;
   const streamedAgents = new Set();
@@ -11378,6 +11497,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
   let claudeLimitHud = null;
   let generatedChars = 0;
   let lastStatsAt = 0;
+  let resultCount = 0;
   const toolInputs = new Map();
   const toolAgentLabels = new Map();
   const refreshClaudeUsageHud = async () => {
@@ -11547,6 +11667,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           }
         }
       } else if (msg.type === 'result') {
+        resultCount++;
         finalUsage = msg.usage || null;
         if ((!full || !full.trim()) && msg.subtype === 'success' && msg.result) {
           full = msg.result;
@@ -11565,12 +11686,19 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
           }
           throw new Error(detail);
         }
+        // Cada mensagem enviada pela fila produz um resultado. Quando todas as
+        // orientações recebidas já foram atendidas, fecha o stdin e deixa o
+        // processo terminar normalmente. Se houver steering pendente, mantém
+        // a entrada aberta para o próximo turno dentro da mesma sessão.
+        if (resultCount >= inputQueue.pushedCount) inputQueue.close();
       }
     }
   } finally {
+    inputQueue.close();
     await refreshClaudeUsageHud();
     await capabilitiesPromise.catch(() => {});
     if (S().claudeQuery === q) S().claudeQuery = null;
+    if (S().claudeInput === inputQueue) S().claudeInput = null;
     try {
       q.close();
     } catch (e) {
@@ -11586,10 +11714,10 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
     );
   }
   if (!(S().abort && S().abort.signal.aborted) && S().steerQueue.length) {
-    const followup = S().steerQueue.splice(0).map((s) => claudePromptFromContent(s.content)).filter(Boolean).join('\n\n');
-    if (followup) {
+    const followups = S().steerQueue.splice(0);
+    for (const followup of followups) {
       broadcast('chat:newbubble');
-      const more = await runClaudeCodeAgent(cfg, followup);
+      const more = await runClaudeCodeAgent(cfg, followup.content);
       if (more && more.trim()) full += (full.trim() ? '\n\n' : '') + more;
     }
   }
@@ -11658,7 +11786,7 @@ function codexInputFromContent(content, extraText) {
 }
 
 function codexUserInput(promptOverride) {
-  if (promptOverride) return [{ type: 'text', text: promptOverride }];
+  if (promptOverride != null) return codexInputFromContent(promptOverride);
   const message = [...S().history].reverse().find((x) => x && x.role === 'user');
   let extra = '';
   if (recentWorkspaceFiles.length) {
@@ -11737,14 +11865,10 @@ async function runCodexAgent(cfg, promptOverride) {
   if (spend) recordUsage({ ...cfg, usageHost: 'codex-chatgpt', model: 'codex-chatgpt' }, spend);
   let full = result.text || '';
   if (!(sess.abort && sess.abort.signal.aborted) && sess.steerQueue.length) {
-    const followup = sess.steerQueue
-      .splice(0)
-      .map((s) => claudePromptFromContent(s.content))
-      .filter(Boolean)
-      .join('\n\n');
-    if (followup) {
+    const followups = sess.steerQueue.splice(0);
+    for (const followup of followups) {
       broadcast('chat:newbubble');
-      const more = await runCodexAgent(cfg, followup);
+      const more = await runCodexAgent(cfg, followup.content);
       if (more && more.trim()) full += (full.trim() ? '\n\n' : '') + more;
     }
   }
@@ -11942,6 +12066,10 @@ async function handleChatSend(_e, payload) {
         logd('codex:steer-fallback', String((e && e.message) || e));
       }
     }
+    if ((useClaudeCode || useGlmCode) && S().claudeInput) {
+      const sessionId = useGlmCode ? S().glmSessionId : S().claudeSessionId;
+      if (S().claudeInput.push(claudeSdkUserMessage(content, sessionId))) return;
+    }
     S().steerQueue.push({ content });
     return;
   }
@@ -12102,6 +12230,7 @@ ipcMain.on('chat:stop', (e0) => {
   if (!sess) return;
   if (sess.claudeQuery) {
     const q = sess.claudeQuery;
+    if (sess.claudeInput) sess.claudeInput.close();
     Promise.resolve()
       .then(() => q.interrupt())
       .catch(() => {})
