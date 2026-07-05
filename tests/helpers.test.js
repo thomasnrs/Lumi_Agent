@@ -233,6 +233,70 @@ test('NVIDIA NIM é detectada pela origem exata e catálogo de modelos é dedupl
   );
 });
 
+const rateLimit = load(['normalizedRequestRps', 'retryAfterMs']);
+test('limite de RPS preserva automático e aceita valores fracionários seguros', () => {
+  assert.equal(rateLimit.normalizedRequestRps({ requestRps: 0 }), 0);
+  assert.equal(rateLimit.normalizedRequestRps({ requestRps: '' }), 0);
+  assert.equal(rateLimit.normalizedRequestRps({ requestRps: 0.5 }), 0.5);
+  assert.equal(rateLimit.normalizedRequestRps({ requestRps: 999 }), 100);
+});
+
+test('Retry-After aceita segundos e data HTTP com teto defensivo', () => {
+  const now = Date.parse('2026-07-04T12:00:00Z');
+  assert.equal(rateLimit.retryAfterMs('1.5', now), 1500);
+  assert.equal(rateLimit.retryAfterMs('Sat, 04 Jul 2026 12:00:03 GMT', now), 3000);
+  assert.equal(rateLimit.retryAfterMs('inválido', now), 0);
+  assert.equal(rateLimit.retryAfterMs('9999', now), 5 * 60000);
+});
+
+test('aiFetch repete um 429 apenas quando há RPS explícito', async () => {
+  const calls = [];
+  const fakeFetch = async () => {
+    calls.push(Date.now());
+    return calls.length === 1
+      ? { status: 429, headers: { get: () => '0' }, body: { cancel: async () => {} } }
+      : { status: 200, headers: { get: () => null }, body: null };
+  };
+  const limiter = load(
+    [
+      'aiRateQueues',
+      'normalizedRequestRps',
+      'retryAfterMs',
+      'aiRateScope',
+      'abortableDelay',
+      'pruneAiRateQueues',
+      'waitForAiRateSlot',
+      'aiFetch',
+    ],
+    {
+      crypto: require('crypto'),
+      fetch: fakeFetch,
+      logd: () => {},
+      setTimeout,
+      clearTimeout,
+      Date,
+      Map,
+      Promise,
+    }
+  );
+  const res = await limiter.aiFetch(
+    { provider: 'openai', baseUrl: 'https://integrate.api.nvidia.com/v1', apiKey: 'teste', requestRps: 100 },
+    'https://integrate.api.nvidia.com/v1/chat/completions',
+    {}
+  );
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 2);
+
+  calls.length = 0;
+  const noLimit = await limiter.aiFetch(
+    { provider: 'openai', baseUrl: 'https://outro.example/v1', apiKey: 'teste', requestRps: 0 },
+    'https://outro.example/v1/chat/completions',
+    {}
+  );
+  assert.equal(noLimit.status, 429);
+  assert.equal(calls.length, 1);
+});
+
 // ---------- persistência assíncrona/coalescida do chat ----------
 test('queueChatWrite serializa por chat e coalesce snapshots intermediários', async () => {
   const writes = [];

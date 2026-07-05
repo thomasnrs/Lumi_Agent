@@ -199,7 +199,9 @@ Na **primeira execução**, o assistente de boas-vindas configura tudo em ~2 min
 **NVIDIA NIM:** escolha `NVIDIA NIM 🆓`, gere uma chave `nvapi-...` pelo atalho da própria
 Lumi e clique em 🔄 para carregar o catálogo hospedado. A integração usa Chat Completions
 com streaming, reasoning e ferramentas quando o modelo escolhido oferecer suporte. O
-catálogo geral também contém NIMs especializados que não são modelos de conversa.
+catálogo geral também contém NIMs especializados que não são modelos de conversa. Se o
+endpoint responder `too_many_requests`, defina em **Configurações → I.A. → Limite de
+requisições (RPS)** um valor como `1`; `0` mantém o modo automático/sem limite local.
 
 Para usar o **Modo Codex**, instale o [Codex CLI](https://developers.openai.com/codex/cli/) ou a extensão oficial da OpenAI no VS Code/Cursor e entre com sua conta ChatGPT. A Lumi detecta o executável e reutiliza a autenticação gerenciada pelo próprio Codex; ela **não lê nem salva seu token**. Para o **Modo Claude Code**, use o botão de login da seção correspondente nas Configurações. Para o **Modo GLM Code**, informe sua chave do [GLM Coding Plan](https://docs.z.ai/devpack/tool/claude): a Lumi injeta a chave e o endpoint da Z.ai somente no processo isolado desse motor, sem alterar a configuração global do Claude Code.
 

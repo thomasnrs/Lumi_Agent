@@ -985,6 +985,10 @@
           <input id="maxSteps" type="number" min="4" max="200" step="1" placeholder="48" />
           <p class="hint">Quanto FÔLEGO ela tem numa tarefa: cada passo = uma rodada de ferramentas. Proxy local/modelo barato? Suba (100+). API paga? Modere. Ao bater o teto ela avisa e você diz "continua".</p>
 
+          <label>Limite de requisições à I.A. (RPS)</label>
+          <input id="requestRps" type="number" min="0" max="100" step="0.1" placeholder="0 = automático" />
+          <p class="hint"><strong>0 = automático</strong>, mantendo o comportamento atual. Um valor como <strong>1</strong> espaça chat, tarefas internas e subagentes para iniciar no máximo uma chamada por segundo com a mesma API/chave. Se houver HTTP 429, a Lumi respeita <code>Retry-After</code> e tenta mais uma vez.</p>
+
           <div style="margin:14px 0 10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--surface,#24242f) 78%,transparent)">
             <div style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent,#7aa2ff);margin-bottom:9px">Orçamento de contexto</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 10px">

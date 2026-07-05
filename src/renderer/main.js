@@ -1160,6 +1160,7 @@ const proactivityEl = document.getElementById('proactivity');
 const reactAppsEl = document.getElementById('reactApps');
 const watchServerEl = document.getElementById('watchServer');
 const maxStepsEl = document.getElementById('maxSteps');
+const requestRpsEl = document.getElementById('requestRps');
 const contextWindowEl = document.getElementById('contextWindow');
 const compactAtPctEl = document.getElementById('compactAtPct');
 const responseReserveTokensEl = document.getElementById('responseReserveTokens');
@@ -1638,6 +1639,7 @@ async function openSettings() {
   reactAppsEl.checked = !!c.reactApps;
   watchServerEl.checked = !!c.watchServer;
   maxStepsEl.value = c.maxSteps || 48;
+  requestRpsEl.value = Number(c.requestRps) > 0 ? c.requestRps : 0;
   contextWindowEl.value = c.contextWindow || 128000;
   compactAtPctEl.value = c.compactAtPct || 80;
   responseReserveTokensEl.value = c.responseReserveTokens || 8192;
@@ -2040,6 +2042,7 @@ function readForm() {
     reactApps: reactAppsEl.checked,
     watchServer: watchServerEl.checked,
     maxSteps: Math.min(200, Math.max(4, parseInt(maxStepsEl.value, 10) || 48)),
+    requestRps: Math.min(100, Math.max(0, parseFloat(requestRpsEl.value) || 0)),
     contextWindow: Math.min(2000000, Math.max(8192, parseInt(contextWindowEl.value, 10) || 128000)),
     compactAtPct: Math.min(95, Math.max(50, parseInt(compactAtPctEl.value, 10) || 80)),
     responseReserveTokens: Math.min(200000, Math.max(1024, parseInt(responseReserveTokensEl.value, 10) || 8192)),

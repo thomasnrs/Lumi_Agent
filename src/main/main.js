@@ -369,6 +369,7 @@ const DEFAULT_CONFIG = {
   apiKey: '',
   model: 'gpt-4o-mini',
   temperature: 0.8,
+  requestRps: 0, // 0 = automatico/sem limite local; >0 espaça chamadas à API de IA
   // voz (TTS)
   ttsProvider: 'off', // 'off' | 'edge' | 'gemini' | 'xtts' | 'elevenlabs' | 'openai'
   ttsApiKey: '',
@@ -599,6 +600,121 @@ async function readSSE(res, onData) {
   }
 }
 
+// ---- Limite compartilhado de requisições à API de IA --------------------
+// Chat, tarefas internas e subagentes podem usar a mesma chave em paralelo.
+// Um espaçamento por endpoint/chave evita rajadas que viram HTTP 429 em
+// provedores mais restritos (como os hosted NVIDIA NIMs). requestRps=0 mantém
+// exatamente o comportamento antigo, sem fila nem retry automático.
+const aiRateQueues = new Map(); // scope -> { tail, nextAt, pending, touched }
+
+function normalizedRequestRps(cfg) {
+  const value = Number(cfg && cfg.requestRps);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(100, Math.max(0.1, value));
+}
+
+function retryAfterMs(value, now) {
+  if (value == null || value === '') return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.min(5 * 60000, Math.max(0, Math.ceil(seconds * 1000)));
+  const at = Date.parse(String(value));
+  if (!Number.isFinite(at)) return 0;
+  return Math.min(5 * 60000, Math.max(0, at - (Number(now) || Date.now())));
+}
+
+function aiRateScope(cfg) {
+  const base = String((cfg && cfg.baseUrl) || '').replace(/\/+$/, '').toLowerCase();
+  const provider = String((cfg && cfg.provider) || 'openai').toLowerCase();
+  const secret = String((cfg && cfg.apiKey) || '');
+  const keyId = secret ? crypto.createHash('sha256').update(secret).digest('hex').slice(0, 12) : 'sem-chave';
+  return provider + '|' + base + '|' + keyId;
+}
+
+function abortableDelay(ms, signal) {
+  const wait = Math.max(0, Math.ceil(Number(ms) || 0));
+  if (!wait) {
+    if (signal && signal.aborted) return Promise.reject(signal.reason || new Error('requisição cancelada'));
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const onAbort = () => {
+      if (timer) clearTimeout(timer);
+      reject(signal.reason || new Error('requisição cancelada'));
+    };
+    if (signal && signal.aborted) return onAbort();
+    timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, wait);
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function pruneAiRateQueues() {
+  if (aiRateQueues.size <= 64) return;
+  const idle = [...aiRateQueues.entries()]
+    .filter(([, state]) => state.pending === 0)
+    .sort((a, b) => a[1].touched - b[1].touched);
+  while (aiRateQueues.size > 48 && idle.length) aiRateQueues.delete(idle.shift()[0]);
+}
+
+async function waitForAiRateSlot(cfg, signal) {
+  const rps = normalizedRequestRps(cfg);
+  if (!rps) return;
+  const scope = aiRateScope(cfg);
+  let state = aiRateQueues.get(scope);
+  if (!state) {
+    state = { tail: Promise.resolve(), nextAt: 0, pending: 0, touched: Date.now() };
+    aiRateQueues.set(scope, state);
+  }
+  state.pending++;
+  state.touched = Date.now();
+  const previous = state.tail.catch(() => {});
+  const slot = previous.then(async () => {
+    await abortableDelay(Math.max(0, state.nextAt - Date.now()), signal);
+    if (signal && signal.aborted) throw signal.reason || new Error('requisição cancelada');
+    const now = Date.now();
+    state.nextAt = now + 1000 / rps;
+    state.touched = now;
+  });
+  state.tail = slot.catch(() => {});
+  try {
+    await slot;
+  } finally {
+    state.pending--;
+    state.touched = Date.now();
+    pruneAiRateQueues();
+  }
+}
+
+async function aiFetch(cfg, input, init) {
+  const options = init || {};
+  const signal = options.signal;
+  await waitForAiRateSlot(cfg, signal);
+  let res = await fetch(input, options);
+  if (res.status !== 429 || !normalizedRequestRps(cfg)) return res;
+
+  // Com limite explícito, uma única repetição respeita o Retry-After do
+  // provedor. Sem cabeçalho, a própria fila garante o próximo intervalo.
+  const providerWait = retryAfterMs(res.headers && res.headers.get('retry-after'), Date.now());
+  try {
+    if (res.body) await res.body.cancel();
+  } catch (e) {
+    /* resposta já pode ter sido consumida/fechada pelo runtime */
+  }
+  logd('ai:rate-limit', {
+    provider: cfg.provider || 'openai',
+    baseUrl: cfg.baseUrl || '',
+    rps: normalizedRequestRps(cfg),
+    retryAfterMs: providerWait,
+  });
+  if (providerWait) await abortableDelay(providerWait, signal);
+  await waitForAiRateSlot(cfg, signal);
+  res = await fetch(input, options);
+  return res;
+}
+
 // Converte o histórico interno (formato OpenAI) pro formato COMPLETO da Anthropic,
 // incluindo ferramentas: assistant.tool_calls → blocos tool_use, role:"tool" → blocos
 // tool_result (consecutivos se fundem num único turno de usuário, como a API espera).
@@ -803,7 +919,7 @@ async function anthropicTurn(cfg, messages, tools, onToken, onThink) {
       input_schema: t.function.parameters,
     }));
   }
-  const res = await fetch(base + '/messages', {
+  const res = await aiFetch(cfg, base + '/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify(body),
@@ -961,7 +1077,7 @@ async function responsesTurn(cfg, messages, tools, onToken, onThink) {
   }
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-  const res = await fetch(base + '/responses', {
+  const res = await aiFetch(cfg, base + '/responses', {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -1102,7 +1218,7 @@ async function geminiTurn(cfg, messages, tools, onToken, onThink) {
   if (cfg.temperature != null) body.generationConfig = { temperature: Number(cfg.temperature) };
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers['x-goog-api-key'] = cfg.apiKey;
-  const res = await fetch(`${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+  const res = await aiFetch(cfg, `${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -6344,7 +6460,7 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
   }
   if (tools && tools.length) body.tools = tools;
   const t0 = Date.now();
-  const res = await fetch(endpoint, {
+  const res = await aiFetch(cfg, endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -6838,7 +6954,7 @@ function modelIdsFromResponse(j) {
 async function listModels(cfg) {
   if (cfg.provider === 'anthropic') {
     const base = (cfg.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
-    const res = await fetch(base + '/models', {
+    const res = await aiFetch(cfg, base + '/models', {
       headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -6846,7 +6962,7 @@ async function listModels(cfg) {
     return modelIdsFromResponse(j);
   }
   const base = cfg.baseUrl.replace(/\/$/, '');
-  const res = await fetch(base + '/models', {
+  const res = await aiFetch(cfg, base + '/models', {
     headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
@@ -7319,7 +7435,7 @@ async function llmComplete(cfg, messages) {
     const base = (cfg.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n');
     const msgs = messages.filter((m) => m.role !== 'system');
-    const res = await fetch(base + '/messages', {
+    const res = await aiFetch(cfg, base + '/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: cfg.model, system: sys, messages: msgs, max_tokens: 1024 }),
@@ -7331,7 +7447,7 @@ async function llmComplete(cfg, messages) {
   const base = cfg.baseUrl.replace(/\/$/, '');
   const headers = { 'Content-Type': 'application/json' };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
-  const res = await fetch(base + '/chat/completions', {
+  const res = await aiFetch(cfg, base + '/chat/completions', {
     method: 'POST',
     headers,
     body: JSON.stringify({ model: cfg.model, messages, stream: false }),
