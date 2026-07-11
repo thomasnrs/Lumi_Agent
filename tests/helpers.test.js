@@ -289,6 +289,52 @@ test('gate de conclusão exige evidência apenas quando código foi alterado', (
   assert.equal(evidence.hasSuccessfulVerification(log), true);
 });
 
+const strategy = load(['toolStrategyKey', 'failureClass', 'strategyRecoveryAdvice']);
+test('anti-loop agrupa falhas equivalentes por alvo e sugere outra estratégia', () => {
+  const a = strategy.toolStrategyKey('edit_file', { path: 'SRC\\Main.js', old_text: 'a' });
+  const b = strategy.toolStrategyKey('edit_file', { path: 'src/main.js', old_text: 'outro trecho' });
+  assert.equal(a, b);
+  assert.equal(strategy.failureClass('old_text NÃO encontrado no arquivo'), 'content-mismatch');
+  assert.match(strategy.strategyRecoveryAdvice('content-mismatch'), /releia/i);
+});
+
+test('resultados grandes viram artefatos recuperáveis durante a compactação', () => {
+  const session = { artifacts: new Map(), artifactSeq: 0 };
+  const artifacts = load(
+    ['compactText', 'ARTIFACT_MIN_CHARS', 'ARTIFACT_MAX_ITEMS', 'ARTIFACT_MAX_CHARS', 'attachToolArtifact', 'readToolArtifact', 'compactToolResultForContext'],
+    { S: () => session }
+  );
+  const result = artifacts.attachToolArtifact('read_file', { content: 'abcdef'.repeat(2500) });
+  assert.ok(result._artifact && result._artifact.id);
+  const compacted = artifacts.compactToolResultForContext(JSON.stringify(result), 160);
+  assert.ok(compacted.length < 1000);
+  assert.match(compacted, new RegExp(result._artifact.id));
+  const page = artifacts.readToolArtifact(result._artifact.id, 10, 300);
+  assert.equal(page.content.length, 300);
+  assert.equal(page.id, result._artifact.id);
+  assert.equal(artifacts.attachToolArtifact('read_artifact', { content: 'x'.repeat(13000) })._artifact, undefined);
+});
+
+const locks = load(['withKeyedLock']);
+test('lock por workspace serializa mutações concorrentes sem bloquear chaves diferentes', async () => {
+  const tails = new Map();
+  const events = [];
+  const first = locks.withKeyedLock(tails, 'ws-a', async () => {
+    events.push('a1-start');
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    events.push('a1-end');
+  });
+  const second = locks.withKeyedLock(tails, 'ws-a', async () => {
+    events.push('a2-start');
+    events.push('a2-end');
+  });
+  const other = locks.withKeyedLock(tails, 'ws-b', async () => events.push('b'));
+  await Promise.all([first, second, other]);
+  assert.ok(events.indexOf('a2-start') > events.indexOf('a1-end'));
+  assert.ok(events.indexOf('b') < events.indexOf('a1-end'));
+  assert.equal(tails.size, 0);
+});
+
 const parallel = load(['READONLY_TOOLS', 'PARALLEL_READ_TOOLS', 'executeToolCallsOrdered']);
 test('toolsets cobrem todo o registro e paralelismo contém apenas leituras', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');

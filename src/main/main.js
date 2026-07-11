@@ -161,11 +161,14 @@ function makeSession(id) {
     editedSinceTurn: false, // p/ verificação automática
     cp: null, // checkpoint do turno em andamento {id, ts, files}
     toolCallLog: [], // anti-loop { key, error, S().stateSeq }
+    strategyFailures: [], // falhas equivalentes por ferramenta/alvo/classe
     stateSeq: 0, // avança quando algo MUDA o estado (escrita/comando)
     readFilesThisTurn: new Set(), // guarda "leia antes de editar"
     activeToolsets: new Set(), // conjuntos de ferramentas carregados neste turno
     taskContract: null, // objetivo/critérios internos usados pelo gate de conclusão
     completionGateUsed: false, // evita cobrar evidência repetidamente no mesmo turno
+    artifacts: new Map(), // resultados grandes recuperáveis por id (LRU curta, não persistida)
+    artifactSeq: 0,
     history: [],
     convSummary: '',
     chatEvents: [], // [{a: nº de msgs no S().history quando ocorreu, t: tipo, d: dados, ts}]
@@ -1737,6 +1740,22 @@ function liveStatsTracker(cfg, messages, tools, handlers) {
     },
   };
 }
+function compactToolResultForContext(content, previewChars) {
+  const raw = String(content || '');
+  const n = Math.max(80, parseInt(previewChars, 10) || 500);
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed._artifact && parsed._artifact.id) {
+      return JSON.stringify({
+        _artifact: parsed._artifact,
+        note: 'resultado antigo compactado; use read_artifact com este id para recuperar qualquer trecho',
+      });
+    }
+  } catch (e) {
+    /* resultado não era JSON */
+  }
+  return raw.slice(0, n) + (raw.length > n ? ' …[resultado antigo compactado; releia ou rode a ferramenta se precisar]' : '');
+}
 function compactTurnMessages(messages, cfg, tools) {
   const lim = contextLimits(cfg);
   if (promptTokenEstimate(messages, tools) < lim.promptBudget) return false;
@@ -1751,7 +1770,7 @@ function compactTurnMessages(messages, cfg, tools) {
   for (let i = 1; i < end; i++) {
     const m = messages[i];
     if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 700) {
-      m.content = m.content.slice(0, 500) + ' …[resultado antigo compactado; releia ou rode a ferramenta se precisar]';
+      m.content = compactToolResultForContext(m.content, 500);
     } else if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
       m.tool_calls.forEach((tc) => {
         if (tc.function) {
@@ -1767,7 +1786,7 @@ function compactTurnMessages(messages, cfg, tools) {
     for (let i = 1; i < end; i++) {
       const m = messages[i];
       if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 220) {
-        m.content = m.content.slice(0, 160) + ' …[compactado]';
+        m.content = compactToolResultForContext(m.content, 160);
       }
       if (m.role === 'assistant') {
         if (typeof m.content === 'string' && m.content.length > 1000) m.content = m.content.slice(0, 700) + ' …[narração antiga compactada]';
@@ -2851,14 +2870,51 @@ const READONLY_TOOLS = new Set([
   'locate_stack', 'read_project_memory', 'read_terminal', 'list_terminals', 'web_search', 'fetch_url', 'see_page',
   'view_image', 'read_clipboard', 'recall_facts', 'get_datetime', 'screen_info', 'list_reminders', 'list_ssh_hosts',
   'project_overview', 'outline', 'find_usages', 'env_info', 'list_scheduled_tasks', 'system_logs', 'db_schema',
+  'read_artifact',
 ]);
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
 function resetTurnGuards() {
   S().toolCallLog = [];
+  S().strategyFailures = [];
   S().stateSeq = 0;
   S().readFilesThisTurn = new Set();
+}
+
+function toolStrategyKey(name, args) {
+  const a = args || {};
+  if (['edit_file', 'write_file', 'append_file', 'delete_file', 'read_file'].includes(name))
+    return name + '|path:' + String(a.path || '').replace(/\\/g, '/').toLowerCase();
+  if (name === 'apply_patch') {
+    const files = [...String(a.patch || '').matchAll(/^\+\+\+ b\/(.+)$/gm)].map((m) => m[1].trim().toLowerCase()).sort();
+    return name + '|files:' + files.join(',');
+  }
+  if (name === 'grep_files') return name + '|path:' + String(a.path || '.').toLowerCase() + '|pattern:' + String(a.pattern || '').toLowerCase().replace(/\W+/g, ' ').trim();
+  if (name === 'find_in_code') return name + '|query:' + String(a.query || '').toLowerCase().replace(/\W+/g, ' ').trim();
+  if (name === 'run_tests') return name + '|cwd:' + String(a.cwd || '.').toLowerCase() + '|filter:' + String(a.filter || '').toLowerCase();
+  return '';
+}
+function failureClass(error) {
+  const e = String(error || '').toLowerCase();
+  if (/crlf|line endings?|\r\n|encoding|utf-?8|acentua/.test(e)) return 'encoding-line-endings';
+  if (/old_text|não encontrado no arquivo|not found in (?:the )?file|patch não aplica|does not apply|context mismatch/.test(e)) return 'content-mismatch';
+  if (/não encontrado|not found|enoent|no such file|caminho/.test(e)) return 'not-found';
+  if (/permission|permissão|access denied|eacces|bloquead/.test(e)) return 'permission';
+  if (/timed? ?out|timeout|etimedout/.test(e)) return 'timeout';
+  if (/invalid json|json inválido|arguments.*json/.test(e)) return 'invalid-json';
+  return e.replace(/\b\d+\b/g, '#').replace(/\s+/g, ' ').slice(0, 120) || 'unknown';
+}
+function strategyRecoveryAdvice(kind) {
+  const map = {
+    'encoding-line-endings': 'Pare de variar aspas/comandos. Releia o trecho com read_file e use edit_file normalizado ou apply_patch preservando o arquivo.',
+    'content-mismatch': 'A base mudou ou o trecho não é exato. Releia com read_file(symbol/around_line) e use o trecho real; se necessário troque edit_file por apply_patch.',
+    'not-found': 'Resolva o caminho real com list_dir/find_in_code antes de tentar novamente.',
+    permission: 'Não repita: peça a permissão necessária ou explique o bloqueio ao usuário.',
+    timeout: 'Reduza o escopo/filtro ou use uma ferramenta mais específica antes de repetir.',
+    'invalid-json': 'Reconstrua argumentos mínimos e válidos; não reutilize o payload quebrado.',
+  };
+  return map[kind] || 'Mude de ferramenta ou obtenha nova evidência antes de tentar novamente.';
 }
 function noteFileRead(abs) {
   try {
@@ -6621,6 +6677,25 @@ const TOOLS = {
       return { ok: true };
     },
   },
+  read_artifact: {
+    category: null,
+    summary: (a) => `recuperar o artefato ${a.id}`,
+    schema: {
+      name: 'read_artifact',
+      description:
+        'Recupera uma janela do resultado completo de uma ferramenta antiga que foi compactado. Use o id _artifact recebido anteriormente; pagine com offset quando necessário.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'id do artefato (ex.: art_1)' },
+          offset: { type: 'number', description: 'posição inicial em caracteres (padrão 0)' },
+          chars: { type: 'number', description: 'tamanho da janela (padrão 12000, máximo 24000)' },
+        },
+        required: ['id'],
+      },
+    },
+    run: async ({ id, offset, chars }) => readToolArtifact(id, offset, chars),
+  },
   load_toolset: {
     category: null,
     summary: (a) => `carregar ferramentas de ${a.toolset}`,
@@ -6685,7 +6760,7 @@ const TOOLS = {
 // piora a escolha em modelos menores. O núcleo fica sempre disponível; capacidades
 // especializadas entram pela intenção do pedido ou via load_toolset.
 const CORE_TOOLS = new Set([
-  'ask_user', 'update_plan', 'load_toolset', 'get_datetime', 'play_animation',
+  'ask_user', 'update_plan', 'load_toolset', 'read_artifact', 'get_datetime', 'play_animation',
   'remember_fact', 'recall_facts', 'read_clipboard', 'write_clipboard',
 ]);
 const TOOLSETS = {
@@ -6836,6 +6911,82 @@ function toolSchemas(opts) {
 // (sessionizado: agora vive em makeSession/S())
 // (claudeQuery agora vive na Session — Claude Code roda em PARALELO, um por sessão)
 const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file', 'apply_patch']; // apply_patch conta: auto-verify/self-review/checkpoint
+const WORKSPACE_MUTATION_TOOLS = new Set([
+  ...WRITE_TOOLS, 'update_project_memory', 'generate_project_doc', 'run_command', 'run_in_terminal', 'db_query',
+]);
+const workspaceMutationTails = new Map();
+async function withKeyedLock(tails, key, fn) {
+  if (!key) return fn();
+  const previous = tails.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const current = previous.catch(() => {}).then(() => gate);
+  tails.set(key, current);
+  await previous.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (tails.get(key) === current) tails.delete(key);
+  }
+}
+function withWorkspaceMutationLock(name, fn) {
+  if (!WORKSPACE_MUTATION_TOOLS.has(name)) return fn();
+  const workspace = path.resolve(S().workspace || loadConfig().workspace || process.cwd()).toLowerCase();
+  return withKeyedLock(workspaceMutationTails, workspace, fn);
+}
+
+const ARTIFACT_MIN_CHARS = 12000;
+const ARTIFACT_MAX_ITEMS = 24;
+const ARTIFACT_MAX_CHARS = 2 * 1024 * 1024;
+function attachToolArtifact(tool, result) {
+  if (tool === 'read_artifact' || !result || typeof result !== 'object' || result._image || result.images || result._artifact) return result;
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(result);
+  } catch (e) {
+    return result;
+  }
+  if (serialized.length < ARTIFACT_MIN_CHARS) return result;
+  if (!S().artifacts || typeof S().artifacts.set !== 'function') S().artifacts = new Map();
+  const id = 'art_' + (++S().artifactSeq).toString(36);
+  S().artifacts.set(id, { id, tool: String(tool || 'tool'), content: serialized, chars: serialized.length, at: Date.now() });
+  let total = 0;
+  for (const item of S().artifacts.values()) total += item.chars || 0;
+  while (S().artifacts.size > ARTIFACT_MAX_ITEMS || total > ARTIFACT_MAX_CHARS) {
+    const oldest = S().artifacts.keys().next().value;
+    const removed = S().artifacts.get(oldest);
+    S().artifacts.delete(oldest);
+    total -= (removed && removed.chars) || 0;
+  }
+  return {
+    _artifact: {
+      id,
+      tool: String(tool || 'tool'),
+      chars: serialized.length,
+      preview: compactText(result, 500),
+    },
+    ...result,
+  };
+}
+
+function readToolArtifact(id, offset, chars) {
+  const key = String(id || '');
+  const item = S().artifacts && typeof S().artifacts.get === 'function' ? S().artifacts.get(key) : null;
+  if (!item) return { error: 'artefato não encontrado ou expirado: ' + key + ' — rode novamente a ferramenta que produziu o resultado' };
+  // toque LRU: artefato consultado volta ao fim do Map
+  S().artifacts.delete(key);
+  S().artifacts.set(key, item);
+  const start = Math.max(0, parseInt(offset, 10) || 0);
+  const size = Math.max(200, Math.min(parseInt(chars, 10) || 12000, 24000));
+  return {
+    id: key,
+    tool: item.tool,
+    content: item.content.slice(start, start + size),
+    showing: `${start}-${Math.min(start + size, item.content.length)} de ${item.content.length} caracteres`,
+    nextOffset: start + size < item.content.length ? start + size : null,
+  };
+}
 
 // ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
 // (sessionizado: agora vive em makeSession/S())
@@ -6905,6 +7056,7 @@ ipcMain.handle('checkpoint:undo', (_e, id) => {
 });
 async function runTool(name, args) {
   const a = args || {};
+  let strategyKey = '';
   // ANTI-LOOP: mesma chamada IDÊNTICA que já falhou 2x sem NADA mudar no estado → 3ª é loop garantido
   const callKey = name + '|' + JSON.stringify(a);
   const identicalFails = S().toolCallLog.filter((c) => c.key === callKey && c.error && c.stateSeq === S().stateSeq).length;
@@ -6926,6 +7078,11 @@ async function runTool(name, args) {
     S().toolCallLog.push({ key: callKey, error: isErr, stateSeq: S().stateSeq, summary: isErr ? String(res.error || 'erro') : '' });
     if (S().toolCallLog.length > 80) S().toolCallLog = S().toolCallLog.slice(-60);
     if (!readonly && !isErr) S().stateSeq++; // escrita/comando bem-sucedido: o mundo mudou
+    if (isErr && strategyKey) {
+      const message = String((res && (res.error || res.message)) || 'erro');
+      S().strategyFailures.push({ key: strategyKey, kind: failureClass(message), stateSeq: S().stateSeq });
+      if (S().strategyFailures.length > 60) S().strategyFailures = S().strategyFailures.slice(-40);
+    }
     // leitura idêntica repetida sem nada ter mudado → avisa (treina o modelo a não re-ler à toa)
     if (readonly && !isErr && res && typeof res === 'object') {
       const prevOk = S().toolCallLog.slice(0, -1).some((c) => c.key === callKey && !c.error && c.stateSeq === S().stateSeq);
@@ -6942,11 +7099,15 @@ async function runTool(name, args) {
       return denied;
     }
     try {
-      const res = await mcpClients[mt.server].callTool({ name: mt.toolName, arguments: a });
+      // MCP não declara de forma confiável se é leitura ou escrita; serializa por
+      // workspace para dois subagentes não dispararem mutações externas concorrentes.
+      const res = await withWorkspaceMutationLock('run_command', () =>
+        mcpClients[mt.server].callTool({ name: mt.toolName, arguments: a })
+      );
       const text = (res.content || [])
         .map((c) => (c.type === 'text' ? c.text : `[${c.type}]`))
         .join('\n');
-      const out = { content: truncate(text, 8000), isError: !!res.isError };
+      const out = attachToolArtifact(name, { content: truncate(text, 24000), isError: !!res.isError });
       recordToolTrace(name, a, out);
       logCall(out, false); // MCP pode mudar estado — trata como escrita
       return out;
@@ -6971,6 +7132,22 @@ async function runTool(name, args) {
     return out;
   }
   normalizeToolArgs(t, a); // aliases comuns de args (file→path, text→content...) — menos chamadas perdidas
+  strategyKey = toolStrategyKey(name, a); // depois dos aliases: file/path apontam para o mesmo alvo
+  if (strategyKey) {
+    const same = (S().strategyFailures || []).filter((x) => x.key === strategyKey && x.stateSeq === S().stateSeq);
+    const counts = new Map();
+    for (const x of same) counts.set(x.kind, (counts.get(x.kind) || 0) + 1);
+    const repeated = [...counts.entries()].find(([, count]) => count >= 2);
+    if (repeated) {
+      const out = {
+        error: `ESTRATÉGIA TRAVADA: ${name} já falhou ${repeated[1]}x no mesmo alvo pelo mesmo motivo (${repeated[0]}). ${strategyRecoveryAdvice(repeated[0])}`,
+        loop: true,
+        strategy: repeated[0],
+      };
+      recordToolTrace(name, a, out);
+      return out;
+    }
+  }
   const ok = await checkPermission(t.category, t.summary ? t.summary(a) : null);
   if (!ok) {
     const out = { error: `permissão negada pelo usuário (${t.category})` };
@@ -6978,8 +7155,10 @@ async function runTool(name, args) {
     return out;
   }
   try {
-    captureForCheckpoint(name, a); // snapshot do estado original (pro "↩ desfazer")
-    const res = await t.run(a);
+    const res = await withWorkspaceMutationLock(name, async () => {
+      captureForCheckpoint(name, a); // snapshot já dentro da barreira de escrita
+      return attachToolArtifact(name, await t.run(a));
+    });
     if (WRITE_TOOLS.includes(name) && !(res && res.error)) S().editedSinceTurn = true; // p/ verificação automática
     recordToolTrace(name, a, res);
     logCall(res, READONLY_TOOLS.has(name));
@@ -7417,7 +7596,7 @@ const PARALLEL_READ_TOOLS = new Set([
   'read_file', 'list_dir', 'grep_files', 'find_in_code', 'git_status', 'git_diff', 'git_log',
   'get_problems', 'locate_stack', 'read_project_memory', 'read_terminal', 'list_terminals',
   'project_overview', 'outline', 'find_usages', 'env_info', 'list_ssh_hosts', 'recall_facts',
-  'list_reminders', 'list_scheduled_tasks', 'get_datetime',
+  'list_reminders', 'list_scheduled_tasks', 'get_datetime', 'read_artifact',
 ]);
 
 async function executeToolCallsOrdered(calls, execute, parallelNames, concurrency) {
@@ -8009,10 +8188,18 @@ function finalizeLastTurnContext(finalText) {
     return;
   }
   if (finalText && String(finalText).trim()) S().pendingTurnTranscript.messages.push({ role: 'assistant', content: String(finalText) });
+  const transcript = S().pendingTurnTranscript.messages
+    .map((m) => cloneContextMessage(m))
+    .filter(Boolean)
+    .map((m) => {
+      if (m.role === 'tool' && typeof m.content === 'string' && m.content.includes('"_artifact"'))
+        m.content = compactToolResultForContext(m.content, 500);
+      return m;
+    });
   S().lastTurnContext = {
     anchor: S().history.length,
     historyTailCount: S().pendingTurnTranscript.historyTailCount,
-    messages: S().pendingTurnTranscript.messages.map((m) => cloneContextMessage(m)).filter(Boolean),
+    messages: transcript,
     at: new Date().toISOString(),
   };
   S().pendingTurnTranscript = null;
