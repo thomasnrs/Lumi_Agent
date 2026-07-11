@@ -37,13 +37,17 @@ let maxFps = 60;
 let idleFps = 30;
 let currentGraphics = QUALITY.balanced;
 const clampGfx = (v, min, max) => Math.min(max, Math.max(min, Number(v) || min));
+const configuredFps = (value, fallback) => {
+  const fps = Number(value);
+  return Number.isFinite(fps) && fps > 0 ? Math.min(60, Math.max(1, fps)) : fallback;
+};
 function graphicsSettings(input) {
   const cfg = typeof input === 'string' ? { gfxQuality: input } : input || {};
   const preset = QUALITY[cfg.gfxQuality] || QUALITY.balanced;
   return {
     pr: cfg.gfxRenderScale ? clampGfx(cfg.gfxRenderScale, 25, 200) / 100 : preset.pr,
-    idleFps: cfg.gfxIdleFps ? clampGfx(cfg.gfxIdleFps, 2, 30) : preset.idleFps,
-    activeFps: cfg.gfxActiveFps ? clampGfx(cfg.gfxActiveFps, 10, 60) : preset.activeFps,
+    idleFps: configuredFps(cfg.gfxIdleFps, preset.idleFps),
+    activeFps: configuredFps(cfg.gfxActiveFps, preset.activeFps),
     tex: preset.tex,
   };
 }
@@ -1535,19 +1539,21 @@ function gfxPresetValues(name) {
 }
 function updateGraphicsControls() {
   const scale = Number(gfxRenderScaleEl.value) || 100;
-  const idle = Number(gfxIdleFpsEl.value) || 30;
-  const active = Number(gfxActiveFpsEl.value) || 60;
+  const idleRaw = Number(gfxIdleFpsEl.value);
+  const activeRaw = Number(gfxActiveFpsEl.value);
   const preset = gfxPresetValues(gfxQualityEl.value);
+  const idle = configuredFps(idleRaw, preset.idle);
+  const active = configuredFps(activeRaw, preset.active);
   const adjusted = scale !== preset.scale || idle !== preset.idle || active !== preset.active;
   gfxRenderScaleValEl.textContent = scale + '%';
-  gfxIdleFpsValEl.textContent = String(idle);
-  gfxActiveFpsValEl.textContent = String(active);
+  gfxIdleFpsValEl.textContent = idleRaw === 0 ? `Auto (${idle})` : String(idle);
+  gfxActiveFpsValEl.textContent = activeRaw === 0 ? `Auto (${active})` : String(active);
   gfxSummaryEl.textContent = (GFX_NAMES[gfxQualityEl.value] || 'Personalizado') + (adjusted ? ' · ajustado' : '');
   const pixelPct = Math.max(1, Math.round((scale / 100) ** 2 * 100));
   const aaOff = ['potato', 'economy'].includes(gfxQualityEl.value);
   gfxNoteEl.textContent =
     `${scale}% desenha aproximadamente ${pixelPct}% dos pixels da resolução normal. ` +
-    `Parada: ${idle} FPS · reagindo/falando: ${active} FPS.` +
+    `Parada: ${idle} FPS${idleRaw === 0 ? ' (automático)' : ''} · reagindo/falando: ${active} FPS${activeRaw === 0 ? ' (automático)' : ''}.` +
     (aaOff ? ' Anti-aliasing e texturas mais leves entram por completo ao reabrir o app.' : '');
 }
 function fillGraphicsControls(c) {
@@ -1555,8 +1561,8 @@ function fillGraphicsControls(c) {
   const preset = gfxPresetValues(name);
   gfxQualityEl.value = name;
   gfxRenderScaleEl.value = c.gfxRenderScale || preset.scale;
-  gfxIdleFpsEl.value = c.gfxIdleFps || preset.idle;
-  gfxActiveFpsEl.value = c.gfxActiveFps || preset.active;
+  gfxIdleFpsEl.value = c.gfxIdleFps == null ? 0 : c.gfxIdleFps;
+  gfxActiveFpsEl.value = c.gfxActiveFps == null ? 0 : c.gfxActiveFps;
   gfxReducedEffectsEl.checked =
     c.gfxReducedEffects == null ? ['potato', 'economy'].includes(name) : !!c.gfxReducedEffects;
   updateGraphicsControls();
@@ -1571,11 +1577,17 @@ gfxQualityEl.addEventListener('change', () => {
 });
 gfxRenderScaleEl.addEventListener('input', updateGraphicsControls);
 gfxIdleFpsEl.addEventListener('input', () => {
-  if (Number(gfxIdleFpsEl.value) > Number(gfxActiveFpsEl.value)) gfxActiveFpsEl.value = gfxIdleFpsEl.value;
+  const preset = gfxPresetValues(gfxQualityEl.value);
+  const idle = configuredFps(gfxIdleFpsEl.value, preset.idle);
+  const active = configuredFps(gfxActiveFpsEl.value, preset.active);
+  if (idle > active) gfxActiveFpsEl.value = gfxIdleFpsEl.value;
   updateGraphicsControls();
 });
 gfxActiveFpsEl.addEventListener('input', () => {
-  if (Number(gfxActiveFpsEl.value) < Number(gfxIdleFpsEl.value)) gfxIdleFpsEl.value = gfxActiveFpsEl.value;
+  const preset = gfxPresetValues(gfxQualityEl.value);
+  const idle = configuredFps(gfxIdleFpsEl.value, preset.idle);
+  const active = configuredFps(gfxActiveFpsEl.value, preset.active);
+  if (active < idle) gfxIdleFpsEl.value = gfxActiveFpsEl.value;
   updateGraphicsControls();
 });
 async function refreshGraphicsPerf() {
@@ -2022,8 +2034,8 @@ function readForm() {
     ttsBaseUrl: ttsBaseUrlEl.value.trim(),
     gfxQuality: gfxQualityEl.value,
     gfxRenderScale: parseInt(gfxRenderScaleEl.value, 10) || 100,
-    gfxIdleFps: parseInt(gfxIdleFpsEl.value, 10) || 30,
-    gfxActiveFps: parseInt(gfxActiveFpsEl.value, 10) || 60,
+    gfxIdleFps: Math.min(60, Math.max(0, parseInt(gfxIdleFpsEl.value, 10) || 0)),
+    gfxActiveFps: Math.min(60, Math.max(0, parseInt(gfxActiveFpsEl.value, 10) || 0)),
     gfxReducedEffects: gfxReducedEffectsEl.checked,
     toolsEnabled: toolsEnabledEl.checked,
     memoryEnabled: memoryEnabledEl.checked,

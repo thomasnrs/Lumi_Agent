@@ -398,8 +398,8 @@ const DEFAULT_CONFIG = {
   ttsBaseUrl: '', // URL do servidor de voz (XTTS no Colab/cloudflared, ou OpenAI-compativel)
   gfxQuality: 'balanced', // 'potato' | 'economy' | 'performance' | 'balanced' | 'quality'
   gfxRenderScale: 0, // 25..200 (%); 0 = valor do preset
-  gfxIdleFps: 0, // 2..30; 0 = valor do preset
-  gfxActiveFps: 0, // 10..60; 0 = valor do preset
+  gfxIdleFps: 0, // 0..60; 0 = valor automático do preset
+  gfxActiveFps: 0, // 0..60; 0 = valor automático do preset
   gfxReducedEffects: false, // reduz animações/blur decorativos nas janelas
   avatarScale: 1, // tamanho da janela/avatar (1 = padrao; scroll do mouse ou config ajusta)
   pageOpacity: {}, // opacidade por pagina (ex.: { chat: 0.9 }) - controle em cada janela
