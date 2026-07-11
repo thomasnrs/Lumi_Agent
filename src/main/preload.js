@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   moveWorkspaceEntry: (src, destDir) => ipcRenderer.invoke('workspace:move', { src, destDir }),
   onWorkspaceChanged: (cb) => ipcRenderer.on('workspace:changed', (_e, root) => cb(root)), // root = pasta que mudou (janelas filtram)
   onWorkspaceSwitched: (cb) => ipcRenderer.on('workspace:switched', (_e, ws) => cb(ws)),
-  setEditorActive: (rel) => ipcRenderer.send('editor:active', rel || ''),
+  setEditorActive: (detail) => ipcRenderer.send('editor:active', detail || ''),
   onEditorActive: (cb) => ipcRenderer.on('editor:active', (_e, rel) => cb(rel)),
   revealInExplorer: (rel) => ipcRenderer.send('workspace:reveal', rel || ''),
   searchWorkspace: (q) => ipcRenderer.invoke('workspace:search', q),

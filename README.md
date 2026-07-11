@@ -160,7 +160,7 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 - **Checkpoints**: cada turno que altera arquivos vira um ponto de restauração — botão **↩ desfazer** no chat (cobre inclusive patches multi-arquivo).
 - **Turnos de maratona**: teto de passos configurável (4–200) com compactação interna do contexto; se bater o teto, "continua" retoma do ponto exato.
 - **Steering & Stop**: redirecione-a no meio da tarefa digitando, ou pare na hora com ⏹ (mantendo o progresso).
-- **@menções e /comandos**: `@arquivo` anexa conteúdo do projeto; `/fork`, `/buscar`, `/tela`… O **arquivo ativo do editor** vira um chip no input e é anexado automaticamente a cada mensagem.
+- **@menções e /comandos**: `@arquivo` anexa conteúdo amplo do projeto; `/fork`, `/buscar`, `/tela`… O **arquivo ativo do editor** vira um chip e envia automaticamente só o símbolo/trecho do cursor, reduzindo ruído e tokens.
 - **Fôlego visual**: diffs em cards com badges `+/-`, ações agrupadas em "🔧 N ações", plano fixo, indicador de digitação, busca na conversa (Ctrl+F) e regeneração da última resposta.
 
 ## 🖥️ O workspace (um mini VS Code com a Lumi dentro)

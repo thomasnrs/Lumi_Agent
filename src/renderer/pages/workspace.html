@@ -1064,6 +1064,7 @@
       let current = null;
       let isImage = false;
       let treeData = [];
+      let treeLoadSeq = 0; // resposta antiga de um refresh nunca pode sobrescrever a árvore nova
       let dragSrc = null;
       const expanded = new Set();
       const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
@@ -1269,18 +1270,22 @@
       };
 
       async function loadTree() {
+        const seq = ++treeLoadSeq;
         const [td] = await Promise.all([window.api.getWorkspaceFullTree(), loadGit()]);
-        treeData = td || [];
+        if (seq !== treeLoadSeq) return;
+        const nextTree = td || [];
         qFlat = null; // árvore mudou → o cache do Ctrl+P refaz na próxima busca
         // restaura pastas que você tinha aberto mas que o BFS não recarregou (lazy) — senão
         // voltariam vazias após um refresh (ex.: ao salvar um arquivo)
         for (const p of expanded) {
-          const n = findNode(treeData, p);
+          const n = findNode(nextTree, p);
           if (n && n.dir && !n.loaded) {
             n.loaded = true;
             n.children = (await window.api.getWorkspaceChildren(p)) || [];
+            if (seq !== treeLoadSeq) return;
           }
         }
+        treeData = nextTree;
         drawTree();
       }
       function drawTree() {
@@ -1510,6 +1515,24 @@
           }
         });
       }
+      let editorContextTimer = null;
+      function publishEditorContext() {
+        if (!current || !editor) return window.api.setEditorActive('');
+        const pos = editor.getPosition() || { lineNumber: 1, column: 1 };
+        const sel = editor.getSelection();
+        window.api.setEditorActive({
+          path: current,
+          line: pos.lineNumber,
+          column: pos.column,
+          selection: sel && !sel.isEmpty()
+            ? { startLine: sel.startLineNumber, endLine: sel.endLineNumber }
+            : null,
+        });
+      }
+      function scheduleEditorContext() {
+        clearTimeout(editorContextTimer);
+        editorContextTimer = setTimeout(publishEditorContext, 120);
+      }
       function activate(p) {
         const t = findTab(p);
         if (!t) return;
@@ -1559,7 +1582,8 @@
         drawTree();
         updateStatus();
         updateGitGutter(); // barrinhas de linhas alteradas
-        window.api.setEditorActive(t.image || t.diff || t.live || t.web ? '' : p); // o chat mostra/anexa o arquivo ativo
+        if (t.image || t.diff || t.live || t.web) window.api.setEditorActive('');
+        else publishEditorContext(); // caminho + cursor: contexto focado, sem anexar o arquivo inteiro
       }
       function disposeTab(t) {
         if (!t) return;
@@ -1877,7 +1901,8 @@
         // (sem root = evento genérico de ferramenta → todas atualizam, como antes)
         const mine = normWsPath(boundWorkspace || (rootnameEl && rootnameEl.title) || '');
         if (root && mine && normWsPath(root) !== mine) return;
-        if (document.querySelector('.modal')) return; // não atrapalha criação/rename em andamento
+        // O modal fica acima da árvore; atualizar atrás dele é seguro. Descartar o evento aqui
+        // fazia criações/renomes sumirem até o próximo refresh manual.
         // janela em BACKGROUND: adia (a IA editando N arquivos disparava N walks da árvore
         // sem ninguém olhando — em remoto isso é rede). Refaz UMA vez ao voltar o foco.
         if (document.hidden) {
@@ -4576,7 +4601,10 @@
             stickyScroll: { enabled: edPrefs.sticky }, // função/classe atual grudada no topo
             mouseWheelZoom: true, // Ctrl+scroll = zoom da fonte
           });
-          editor.onDidChangeCursorPosition(updateStatus); // Ln/Col na barra de status
+          editor.onDidChangeCursorPosition(() => {
+            updateStatus();
+            scheduleEditorContext();
+          }); // Ln/Col + contexto focado do chat
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, qOpen); // Ctrl+P dentro do editor
           // seleção → Lumi (menu de contexto do editor)
           editor.addAction({ id: 'lumi-send', label: '✦ Enviar seleção pra Lumi', contextMenuGroupId: '0_lumi', contextMenuOrder: 1, precondition: 'editorHasSelection', run: () => sendSelectionToLumi('', false) });

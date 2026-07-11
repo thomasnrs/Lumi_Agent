@@ -167,7 +167,7 @@ function makeSession(id) {
     activeToolsets: new Set(), // conjuntos de ferramentas carregados neste turno
     taskContract: null, // objetivo/critérios internos usados pelo gate de conclusão
     completionGateUsed: false, // evita cobrar evidência repetidamente no mesmo turno
-    artifacts: new Map(), // resultados grandes recuperáveis por id (LRU curta, não persistida)
+    artifacts: new Map(), // cache RAM de resultados grandes; cópia durável vive em userData/artifacts
     artifactSeq: 0,
     agentSeq: {}, // numeração de subagentes isolada por conversa/turno
     history: [],
@@ -175,6 +175,7 @@ function makeSession(id) {
     chatEvents: [], // [{a: nº de msgs no S().history quando ocorreu, t: tipo, d: dados, ts}]
     chatArchive: [], // mensagens antigas compactadas (só exibição)
     worklog: [],
+    ledger: [], // fatos técnicos determinísticos (sem resumo gerado por modelo)
     currentTurnLog: null,
     lastTurnContext: null, // último turno técnico completo (reinjetado no prompt seguinte)
     pendingTurnTranscript: null,
@@ -458,7 +459,7 @@ const DEFAULT_CONFIG = {
   responseReserveTokens: 8192,
   recentLiteralTokens: 24000,
   codeBudgetPct: 35,
-  includeActiveTab: true, // anexa o arquivo ativo do editor a cada mensagem do chat (chip liga/desliga)
+  includeActiveTab: true, // anexa símbolo/trecho focado do editor (arquivo inteiro só com @menção)
   // permissoes por tipo de ferramenta: 'ask' (pergunta) | 'allow' (libera) | 'deny' (bloqueia)
   perms: { read: 'ask', write: 'ask', delete: 'ask', exec: 'ask', network: 'ask', open: 'allow', mcp: 'ask', screen: 'ask', control: 'ask' },
   mcpServers: {}, // servidores MCP (ferramentas externas plugaveis)
@@ -2361,6 +2362,8 @@ function buildSystemPrompt(cfg) {
   if (S().convSummary) {
     sp += '\n\n# Resumo da conversa até aqui (contexto anterior já compactado):\n' + S().convSummary;
   }
+  const ledger = ledgerPrompt(cfg);
+  if (ledger) sp += '\n\n# Ledger técnico determinístico (fatos registrados pelas ferramentas; prefira-o ao resumo narrativo)\n' + ledger;
   const diary = worklogPrompt(cfg);
   if (diary) {
     sp +=
@@ -6947,7 +6950,9 @@ const TOOLS = {
       },
     },
     run: async ({ agent, task }) => {
-      const cfg = loadConfig();
+      // O agente herda o motor/provedor/modelo/chave da conversa que o chamou.
+      // Campos definidos no próprio agente continuam tendo prioridade em runSubAgent.
+      const cfg = effectiveChatConfig();
       const list = cfg.agents || [];
       const p = list.find((x) => String(x.name).toLowerCase() === String(agent || '').toLowerCase());
       if (!p) return { error: `agente desconhecido: "${agent}". Disponíveis: ${list.map((x) => x.name).join(', ') || '(nenhum)'}` };
@@ -7413,7 +7418,7 @@ async function integrateAgentWorktree(ctx) {
       S().stateSeq++;
       invalidateProjCtx(ctx.sourceWorkspace);
       invalidateStackCache(ctx.sourceWorkspace);
-      broadcast('workspace:changed');
+      notifyWorkspaceMutation({ workspace: ctx.sourceWorkspace });
     }
     return { ok: true, files };
   });
@@ -7437,6 +7442,95 @@ async function cleanupAgentWorktree(ctx) {
 const ARTIFACT_MIN_CHARS = 12000;
 const ARTIFACT_MAX_ITEMS = 24;
 const ARTIFACT_MAX_CHARS = 2 * 1024 * 1024;
+const ARTIFACT_DISK_MAX_CHARS = 8 * 1024 * 1024;
+const ARTIFACT_DISK_MAX_BYTES = 64 * 1024 * 1024;
+const ARTIFACT_DISK_MAX_ITEMS = 80;
+const artifactWrites = new Set();
+let artifactSweepAt = 0;
+function artifactsDir() {
+  const dir = path.join(app.getPath('userData'), 'artifacts');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function artifactDiskPath(id) {
+  const key = /^art_[a-f0-9]{24}$/.test(String(id || '')) ? String(id) : '';
+  return key ? path.join(artifactsDir(), key + '.json') : '';
+}
+function artifactHash(tool, content) {
+  return 'art_' + crypto.createHash('sha256').update(String(tool || 'tool') + '\0' + String(content || '')).digest('hex').slice(0, 24);
+}
+function rememberArtifact(item) {
+  if (!S().artifacts || typeof S().artifacts.set !== 'function') S().artifacts = new Map();
+  S().artifacts.delete(item.id);
+  S().artifacts.set(item.id, item);
+  let total = 0;
+  for (const value of S().artifacts.values()) total += value.chars || 0;
+  while (S().artifacts.size > ARTIFACT_MAX_ITEMS || total > ARTIFACT_MAX_CHARS) {
+    const oldest = S().artifacts.keys().next().value;
+    const removed = S().artifacts.get(oldest);
+    S().artifacts.delete(oldest);
+    total -= (removed && removed.chars) || 0;
+  }
+}
+async function sweepArtifactDisk(force) {
+  const now = Date.now();
+  if (!force && now - artifactSweepAt < 60 * 60 * 1000) return;
+  artifactSweepAt = now;
+  let entries = [];
+  try {
+    entries = await fs.promises.readdir(artifactsDir(), { withFileTypes: true });
+  } catch (e) {
+    return;
+  }
+  const files = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^art_[a-f0-9]{24}\.json$/.test(entry.name)) continue;
+    try {
+      const fp = path.join(artifactsDir(), entry.name);
+      const st = await fs.promises.stat(fp);
+      files.push({ fp, size: st.size, mtimeMs: st.mtimeMs });
+    } catch (e) {}
+  }
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  let bytes = 0;
+  for (let i = 0; i < files.length; i++) {
+    bytes += files[i].size;
+    const expired = now - files[i].mtimeMs > 14 * 24 * 60 * 60 * 1000;
+    if (i >= ARTIFACT_DISK_MAX_ITEMS || bytes > ARTIFACT_DISK_MAX_BYTES || expired) {
+      await fs.promises.unlink(files[i].fp).catch(() => {});
+    }
+  }
+}
+function persistArtifact(item) {
+  if (!item || item.chars > ARTIFACT_DISK_MAX_CHARS) return false;
+  const fp = artifactDiskPath(item.id);
+  if (!fp) return false;
+  if (fs.existsSync(fp)) {
+    fs.promises.utimes(fp, new Date(), new Date()).catch(() => {});
+    return true; // mesmo hash = mesmo conteúdo; só renova a retenção
+  }
+  const write = fs.promises
+    .writeFile(fp, JSON.stringify(item), { encoding: 'utf8', mode: 0o600 })
+    .catch((e) => logd('artifact:save', item.id, String((e && e.message) || e)))
+    .finally(() => artifactWrites.delete(write));
+  artifactWrites.add(write);
+  sweepArtifactDisk(false).catch(() => {});
+  return true;
+}
+function loadPersistedArtifact(id) {
+  const fp = artifactDiskPath(id);
+  if (!fp) return null;
+  try {
+    const item = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    if (!item || item.id !== id || artifactHash(item.tool, item.content) !== id) return null;
+    item.at = Date.now();
+    rememberArtifact(item);
+    fs.promises.utimes(fp, new Date(), new Date()).catch(() => {});
+    return item;
+  } catch (e) {
+    return null;
+  }
+}
 function attachToolArtifact(tool, result) {
   if (tool === 'read_artifact' || !result || typeof result !== 'object' || result._image || result.images || result._artifact) return result;
   let serialized = '';
@@ -7446,22 +7540,16 @@ function attachToolArtifact(tool, result) {
     return result;
   }
   if (serialized.length < ARTIFACT_MIN_CHARS) return result;
-  if (!S().artifacts || typeof S().artifacts.set !== 'function') S().artifacts = new Map();
-  const id = 'art_' + (++S().artifactSeq).toString(36);
-  S().artifacts.set(id, { id, tool: String(tool || 'tool'), content: serialized, chars: serialized.length, at: Date.now() });
-  let total = 0;
-  for (const item of S().artifacts.values()) total += item.chars || 0;
-  while (S().artifacts.size > ARTIFACT_MAX_ITEMS || total > ARTIFACT_MAX_CHARS) {
-    const oldest = S().artifacts.keys().next().value;
-    const removed = S().artifacts.get(oldest);
-    S().artifacts.delete(oldest);
-    total -= (removed && removed.chars) || 0;
-  }
+  const id = artifactHash(tool, serialized);
+  const item = { id, tool: String(tool || 'tool'), content: serialized, chars: serialized.length, at: Date.now() };
+  rememberArtifact(item);
+  const persisted = persistArtifact(item);
   return {
     _artifact: {
       id,
       tool: String(tool || 'tool'),
       chars: serialized.length,
+      persisted,
       preview: compactText(result, 500),
     },
     ...result,
@@ -7470,11 +7558,11 @@ function attachToolArtifact(tool, result) {
 
 function readToolArtifact(id, offset, chars) {
   const key = String(id || '');
-  const item = S().artifacts && typeof S().artifacts.get === 'function' ? S().artifacts.get(key) : null;
+  let item = S().artifacts && typeof S().artifacts.get === 'function' ? S().artifacts.get(key) : null;
+  if (!item) item = loadPersistedArtifact(key);
   if (!item) return { error: 'artefato não encontrado ou expirado: ' + key + ' — rode novamente a ferramenta que produziu o resultado' };
   // toque LRU: artefato consultado volta ao fim do Map
-  S().artifacts.delete(key);
-  S().artifacts.set(key, item);
+  rememberArtifact(item);
   const start = Math.max(0, parseInt(offset, 10) || 0);
   const size = Math.max(200, Math.min(parseInt(chars, 10) || 12000, 24000));
   return {
@@ -7667,7 +7755,10 @@ async function runTool(name, args) {
       captureForCheckpoint(name, a); // snapshot já dentro da barreira de escrita
       return attachToolArtifact(name, await t.run(a));
     });
-    if (WRITE_TOOLS.includes(name) && !(res && res.error)) S().editedSinceTurn = true; // p/ verificação automática
+    if (WRITE_TOOLS.includes(name) && !(res && res.error)) {
+      S().editedSinceTurn = true; // p/ verificação automática
+      notifyWorkspaceMutation({ workspace: S().workspace || loadConfig().workspace });
+    }
     recordToolTrace(name, a, res);
     logCall(res, READONLY_TOOLS.has(name));
     return res;
@@ -7981,6 +8072,8 @@ function subAgentSystemPrompt(cfg, agent) {
   if (S().convSummary) {
     sp += `\n\n# Contexto da conversa principal (resumo):\n${S().convSummary}`;
   }
+  const deterministic = ledgerPrompt(cfg);
+  if (deterministic) sp += `\n\n# Ledger técnico determinístico\n${deterministic}`;
   const diary = worklogPrompt(cfg);
   if (diary) sp += `\n\n# Diário técnico recente (não repita erros já conhecidos)\n${diary}`;
   // últimas mensagens da conversa principal (o que está rolando agora)
@@ -7995,11 +8088,16 @@ function subAgentSystemPrompt(cfg, agent) {
   return sp;
 }
 
+function subAgentConfig(cfg, agent) {
+  const sub = { ...cfg };
+  if (agent && agent.model) sub.model = agent.model;
+  if (agent && agent.temperature != null) sub.temperature = agent.temperature;
+  return sub;
+}
+
 async function runSubAgent(cfg, agent, task, label) {
   const who = label || agent.name; // rótulo da instância (ex.: "Programador 1")
-  const sub = { ...cfg };
-  if (agent.model) sub.model = agent.model;
-  if (agent.temperature != null) sub.temperature = agent.temperature;
+  const sub = subAgentConfig(cfg, agent);
   const messages = [
     { role: 'system', content: subAgentSystemPrompt(cfg, agent) },
     { role: 'user', content: task },
@@ -8090,6 +8188,7 @@ async function runSubAgentWithIsolation(cfg, agent, task, label) {
   isolated.history = parent.history;
   isolated.convSummary = parent.convSummary;
   isolated.worklog = parent.worklog;
+  isolated.ledger = parent.ledger;
   isolated.currentTurnLog = parent.currentTurnLog; // evidências entram no turno principal
   isolated.chatConfig = parent.chatConfig;
   isolated.taskContract = parent.taskContract;
@@ -8795,9 +8894,21 @@ function looksLikeVerificationCommand(command) {
   const c = String(command || '').trim().toLowerCase();
   return /(?:^|[;&|]\s*)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|typecheck)\b|\b(?:pytest|jest|vitest|mocha|cargo\s+(?:test|check|clippy)|go\s+(?:test|vet|build)|dotnet\s+(?:test|build)|mvn\s+(?:test|verify|package)|gradle\w*\s+(?:test|build)|tsc\b|eslint\b|ruff\b|node\s+--check\b|python\s+-m\s+(?:pytest|compileall))/.test(c);
 }
+function toolResultFailed(result) {
+  const resultStatus = String((result && result.status) || '').toLowerCase();
+  return !!(
+    result &&
+    (result.error ||
+      result.isError ||
+      result.ok === false ||
+      Number(result.status) >= 400 ||
+      (result.exitCode != null && Number(result.exitCode) !== 0) ||
+      /^(?:failed|error|cancelled|canceled|declined|denied|rejected)$/.test(resultStatus))
+  );
+}
 function recordToolTrace(name, args, result) {
   if (!S().currentTurnLog) return;
-  const status = result && (result.error || result.isError || result.ok === false || Number(result.status) >= 400) ? 'failed' : 'success';
+  const status = toolResultFailed(result) ? 'failed' : 'success';
   S().currentTurnLog.tools.push({
     tool: name,
     status,
@@ -8809,8 +8920,9 @@ function recordToolTrace(name, args, result) {
   if (p && ['read_file', 'view_image'].includes(name)) S().currentTurnLog.filesRead.add(String(p));
   if (p && WRITE_TOOLS.includes(name) && status === 'success') S().currentTurnLog.filesChanged.add(String(p));
   // apply_patch não tem args.path — os arquivos alterados vêm no resultado
-  if (name === 'apply_patch' && status === 'success' && result && Array.isArray(result.files)) {
-    for (const f of result.files) S().currentTurnLog.filesChanged.add(String(f));
+  if (name === 'apply_patch' && status === 'success') {
+    const files = [...((args && Array.isArray(args.files) && args.files) || []), ...((result && Array.isArray(result.files) && result.files) || [])];
+    for (const f of files) S().currentTurnLog.filesChanged.add(String(f));
   }
   if (name === 'run_tests') {
     S().currentTurnLog.verification.push({
@@ -8832,6 +8944,46 @@ function recordToolTrace(name, args, result) {
       summary: toolTraceSummary(name, args || {}, result),
     });
   }
+}
+
+// Claude Code e outros motores externos usam nomes/argumentos próprios. Convertemos
+// somente para o diário técnico; a UI continua mostrando os nomes originais do motor.
+function normalizeExternalToolTrace(name, args) {
+  const rawName = String(name || 'tool');
+  const key = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const filePath = input.path || input.file_path || input.filePath || input.notebook_path || input.notebookPath || '';
+  const command = input.command || input.cmd || input.script || '';
+  if (/^(?:read|readfile|view|viewfile)$/.test(key)) return { name: 'read_file', args: { ...input, path: filePath } };
+  if (/^(?:edit|editfile|write|writefile|multiedit|notebookedit)$/.test(key)) {
+    return { name: key.includes('write') ? 'write_file' : 'edit_file', args: { ...input, path: filePath } };
+  }
+  if (/^(?:bash|shell|exec|execute|command|runcommand)$/.test(key)) return { name: 'run_command', args: { ...input, command } };
+  if (/^(?:grep|search|searchfiles)$/.test(key)) {
+    return { name: 'grep_files', args: { ...input, pattern: input.pattern || input.query || input.search || '' } };
+  }
+  if (/^(?:websearch|searchweb)$/.test(key)) return { name: 'web_search', args: { ...input, query: input.query || '' } };
+  if (/^(?:applypatch|patch)$/.test(key)) {
+    const files = Array.isArray(input.files) ? input.files : filePath ? [filePath] : [];
+    return { name: 'apply_patch', args: { ...input, files } };
+  }
+  return { name: rawName, args: input };
+}
+function recordExternalToolTrace(name, args, result, failed) {
+  const normalized = normalizeExternalToolTrace(name, args);
+  let traceResult = result;
+  if (!traceResult || typeof traceResult !== 'object' || Array.isArray(traceResult)) {
+    traceResult = { output: compactText(traceResult, 1200) };
+  }
+  if (failed && !traceResult.error) traceResult = { ...traceResult, error: compactText(traceResult.output || result || 'falha da ferramenta', 600) };
+  if (!toolResultFailed(traceResult) && ['write_file', 'edit_file', 'apply_patch', 'run_command'].includes(normalized.name)) {
+    S().stateSeq++;
+    if (['write_file', 'edit_file', 'apply_patch'].includes(normalized.name)) {
+      S().editedSinceTurn = true;
+      notifyWorkspaceMutation({ workspace: S().workspace || loadConfig().workspace });
+    }
+  }
+  recordToolTrace(normalized.name, normalized.args, traceResult);
 }
 function beginTurnLog() {
   resetTurnGuards(); // anti-loop + leia-antes-de-editar zeram a cada turno novo
@@ -8912,9 +9064,49 @@ function finishTurnLog(outcome, status) {
     verification: S().currentTurnLog.verification.slice(-6),
     outcome: compactText(outcome, 700),
   };
+  const ledgerEntry = {
+    at: S().currentTurnLog.at,
+    goal: S().currentTurnLog.goal,
+    status: status || 'completed',
+    mutations: S().stateSeq || 0,
+    filesRead: [...S().currentTurnLog.filesRead].slice(0, 40),
+    filesChanged: [...S().currentTurnLog.filesChanged].slice(0, 40),
+    commands: S().currentTurnLog.tools
+      .filter((t) => ['run_command', 'run_tests', 'get_problems', 'git_diff', 'git_status'].includes(t.tool))
+      .map((t) => ({ tool: t.tool, status: t.status, target: t.target, summary: t.summary }))
+      .slice(-16),
+    verification: S().currentTurnLog.verification.slice(-8).map((v) => ({ command: v.command, ok: !!v.ok, summary: v.summary || '' })),
+    failures: S().currentTurnLog.tools
+      .filter((t) => t.status !== 'success')
+      .map((t) => ({ tool: t.tool, target: t.target, summary: t.summary }))
+      .slice(-12),
+  };
+  if (!Array.isArray(S().ledger)) S().ledger = [];
+  S().ledger.push(ledgerEntry);
+  if (S().ledger.length > 40) S().ledger = S().ledger.slice(-40);
   S().worklog.push(entry);
   if (S().worklog.length > 60) S().worklog = S().worklog.slice(-60);
   S().currentTurnLog = null;
+}
+function ledgerPrompt(cfg) {
+  if (!Array.isArray(S().ledger) || !S().ledger.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
+  const recent = S().ledger.slice(-12).map((e) => {
+    const lines = [
+      `## ${String(e.at || '').slice(0, 16).replace('T', ' ')} · ${e.mutations || 0} mutação(ões) · ${e.status || 'completed'}`,
+      `Objetivo: ${e.goal || '(não registrado)'}`,
+      e.filesChanged && e.filesChanged.length ? `Alterados: ${e.filesChanged.join(', ')}` : '',
+      e.filesRead && e.filesRead.length ? `Lidos: ${e.filesRead.slice(0, 12).join(', ')}` : '',
+      e.verification && e.verification.length
+        ? `Verificações: ${e.verification.map((v) => `${v.ok ? '✓' : '✗'} ${v.command}`).join('; ')}`
+        : '',
+      e.failures && e.failures.length
+        ? `Falhas: ${e.failures.map((f) => `${f.tool}${f.target ? ` (${f.target})` : ''}: ${f.summary}`).join('; ')}`
+        : '',
+    ];
+    return lines.filter(Boolean).join('\n');
+  }).join('\n\n');
+  const maxChars = Math.min(18000, Math.max(4000, Math.floor(contextLimits(cfg).window * 0.035 * 3.6)));
+  return recent.length > maxChars ? recent.slice(recent.length - maxChars) : recent;
 }
 function worklogPrompt(cfg) {
   if (!S().worklog.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
@@ -9162,6 +9354,7 @@ function saveCurrentChat() {
       events: S().chatEvents, // linha do tempo (tools/agentes/diffs/horários) — sobrevive ao reiniciar
       archive: S().chatArchive, // mensagens antigas compactadas (só pra exibição)
       worklog: S().worklog,
+      ledger: S().ledger,
       lastTurnContext: S().lastTurnContext,
       claudeSessionId: S().claudeSessionId,
       claudeSessionWorkspace: S().claudeSessionWorkspace,
@@ -9219,6 +9412,7 @@ function loadChatInto(id) {
     S().chatEvents = Array.isArray(j.events) ? j.events : [];
     S().chatArchive = Array.isArray(j.archive) ? j.archive : [];
     S().worklog = Array.isArray(j.worklog) ? j.worklog.slice(-60) : [];
+    S().ledger = Array.isArray(j.ledger) ? j.ledger.slice(-40) : [];
     S().lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
     S().claudeSessionId = j.claudeSessionId || '';
     S().claudeSessionWorkspace = j.claudeSessionWorkspace || '';
@@ -9248,12 +9442,13 @@ function setCurrentChatId(id) {
   }
 }
 // começa um chat novo (opcionalmente semeado com um resumo) e o torna atual
-function newChat(seedSummary, seedWorklog) {
+function newChat(seedSummary, seedWorklog, seedLedger) {
   S().history = [];
   S().convSummary = seedSummary || '';
   S().chatEvents = [];
   S().chatArchive = [];
   S().worklog = Array.isArray(seedWorklog) ? seedWorklog.slice(-12) : [];
+  S().ledger = Array.isArray(seedLedger) ? seedLedger.slice(-12) : [];
   S().lastTurnContext = null;
   S().claudeSessionId = '';
   S().claudeSessionWorkspace = '';
@@ -9268,7 +9463,7 @@ function newChat(seedSummary, seedWorklog) {
   saveCurrentChat();
   return currentChatId;
 }
-function activateFreshChat(seedSummary, seedWorklog) {
+function activateFreshChat(seedSummary, seedWorklog, seedLedger) {
   const previous = fgSession;
   if (previous.id) sessions.set(previous.id, previous); // turno em andamento continua em segundo plano
   if (sessions.size > 8) {
@@ -9278,7 +9473,7 @@ function activateFreshChat(seedSummary, seedWorklog) {
     }
   }
   fgSession = makeSession('');
-  return newChat(seedSummary, seedWorklog);
+  return newChat(seedSummary, seedWorklog, seedLedger);
 }
 // cria uma conversa NOVA e vazia em disco SEM mexer na sessão ativa (pra abrir em janela destacada)
 function createEmptyChat() {
@@ -9294,6 +9489,7 @@ function createEmptyChat() {
     archive: [],
     summary: '',
     worklog: [],
+    ledger: [],
     chatConfig: null,
   });
   return id;
@@ -9412,6 +9608,7 @@ function initChats() {
     S().history = [];
     S().convSummary = '';
     S().worklog = [];
+    S().ledger = [];
     S().lastTurnContext = null;
     S().pendingTurnTranscript = null;
     currentChatId = '';
@@ -9481,8 +9678,9 @@ async function forkConversation() {
     /* se o resumo falhar, segue com o resumo atual */
   }
   const technicalSeed = S().worklog.slice(-12);
+  const ledgerSeed = S().ledger.slice(-12);
   saveCurrentChat(); // o chat original continua salvo (na sua própria conversa)
-  activateFreshChat(seed, technicalSeed); // novo chat, leve, com resumo + diário técnico recente
+  activateFreshChat(seed, technicalSeed, ledgerSeed); // novo chat, leve, com fatos técnicos verificáveis
   broadcast('chat:reload');
   broadcast('chat:forked', { hasSummary: !!S().convSummary, archived: true });
   return { ok: true, hasSummary: !!S().convSummary };
@@ -10069,7 +10267,7 @@ function openWorkspaceWindow(folder) {
     try {
       fs.writeFileSync(
         chatFile(session),
-        JSON.stringify({ id: session, title: path.basename(folder), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [], workspace: folder })
+        JSON.stringify({ id: session, title: path.basename(folder), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [], ledger: [], workspace: folder })
       );
     } catch (e) {
       /* ok */
@@ -10121,6 +10319,7 @@ ipcMain.handle('ws:bind', (e, folder) => {
       workspaceOwnerHooks.delete(id);
       workspaceWindows.delete(id);
       activeEditorFiles.delete(id);
+      activeEditorContexts.delete(id);
       unwatchFolder(winWorkspace.get(id) || '', id);
       winWorkspace.delete(id);
     });
@@ -10771,6 +10970,10 @@ ipcMain.handle('workspace:read-image', (e, rel) => {
     return null;
   }
 });
+function notifyWorkspaceMutation(cfg) {
+  const root = cfg && cfg.workspace ? cfg.workspace : '';
+  broadcast('workspace:changed', root || undefined);
+}
 ipcMain.handle('workspace:write', (e, { rel, content }) => {
   const cfg = wsCfg(e);
   const fp = cfg.workspace && safeWsPath(cfg, rel);
@@ -10784,6 +10987,7 @@ ipcMain.handle('workspace:write', (e, { rel, content }) => {
   try {
     fs.writeFileSync(fp, content == null ? '' : String(content));
     broadcastDiff(rel, oldC, String(content || ''));
+    notifyWorkspaceMutation(cfg);
     return true;
   } catch (e) {
     return false;
@@ -11826,7 +12030,7 @@ ipcMain.handle('workspace:import-file', async (e, { srcPath, destDir }) => {
     const rel = path.relative(cfg.workspace, dest).replace(/\\/g, '/');
     recentWorkspaceFiles.push(rel);
     if (recentWorkspaceFiles.length > 20) recentWorkspaceFiles = recentWorkspaceFiles.slice(-20);
-    broadcast('workspace:changed');
+    notifyWorkspaceMutation(cfg);
     return { ok: true, name: path.basename(srcPath), path: rel };
   } catch (e) {
     return { error: String((e && e.message) || e).slice(0, 160) };
@@ -11844,6 +12048,7 @@ ipcMain.handle('workspace:create', (e, { rel, dir }) => {
       if (fs.existsSync(fp)) return { error: 'já existe um arquivo com esse nome' };
       fs.writeFileSync(fp, '');
     }
+    notifyWorkspaceMutation(cfg);
     return { ok: true };
   } catch (e) {
     return { error: String((e && e.message) || e) };
@@ -11855,6 +12060,7 @@ ipcMain.handle('workspace:delete', (e, rel) => {
   if (!fp || fp === path.resolve(cfg.workspace)) return { error: 'caminho inválido' };
   try {
     fs.rmSync(fp, { recursive: true, force: true });
+    notifyWorkspaceMutation(cfg);
     return { ok: true };
   } catch (e) {
     return { error: String((e && e.message) || e) };
@@ -11870,6 +12076,7 @@ ipcMain.handle('workspace:rename', (e, { rel, name }) => {
   if (!target.startsWith(path.resolve(cfg.workspace))) return { error: 'caminho inválido' };
   try {
     fs.renameSync(fp, target);
+    notifyWorkspaceMutation(cfg);
     return { ok: true, path: path.relative(cfg.workspace, target).replace(/\\/g, '/') };
   } catch (e) {
     return { error: String((e && e.message) || e) };
@@ -11887,6 +12094,7 @@ ipcMain.handle('workspace:move', (e, { src, destDir }) => {
   if (fs.existsSync(target)) return { error: 'já existe um item com esse nome no destino' };
   try {
     fs.renameSync(fp, target);
+    notifyWorkspaceMutation(cfg);
     return { ok: true, path: path.relative(cfg.workspace, target).replace(/\\/g, '/') };
   } catch (e) {
     return { error: String((e && e.message) || e) };
@@ -12139,23 +12347,39 @@ ipcMain.handle('config:set', (_e, cfg) => {
   return true;
 });
 
-// arquivo ativo no editor (workspace.html avisa) — o chat anexa às mensagens quando o chip está ligado
+// arquivo/cursor ativos no editor — o chat anexa apenas o contexto focado quando o chip está ligado
 let activeEditorFile = null;
 const activeEditorFiles = new Map(); // webContents.id -> arquivo ativo daquela workspace
+let activeEditorContext = null;
+const activeEditorContexts = new Map(); // webContents.id -> {path,line,column,selection}
 let recentWorkspaceFiles = []; // imports externos recentes; sinalizados no próximo prompt Claude Code
-ipcMain.on('editor:active', (e, rel) => {
-  const value = rel || null;
+ipcMain.on('editor:active', (e, detail) => {
+  const info = detail && typeof detail === 'object'
+    ? {
+        path: String(detail.path || ''),
+        line: Math.max(1, parseInt(detail.line, 10) || 1),
+        column: Math.max(1, parseInt(detail.column, 10) || 1),
+        selection: detail.selection || null,
+      }
+    : { path: String(detail || ''), line: 1, column: 1, selection: null };
+  const value = info.path || null;
   if (e && e.sender && workspaceWindows.has(e.sender.id)) {
     activeEditorFiles.set(e.sender.id, value);
+    activeEditorContexts.set(e.sender.id, value ? info : null);
     sendToWc(e.sender.id, 'editor:active', value);
   } else {
     activeEditorFile = value;
+    activeEditorContext = value ? info : null;
     broadcast('editor:active', value);
   }
 });
 function activeEditorForSession(session) {
   const sess = session || S();
   return sess && sess.workspaceOwner != null ? activeEditorFiles.get(sess.workspaceOwner) || null : activeEditorFile;
+}
+function activeEditorContextForSession(session) {
+  const sess = session || S();
+  return sess && sess.workspaceOwner != null ? activeEditorContexts.get(sess.workspaceOwner) || null : activeEditorContext;
 }
 
 // revela o arquivo no Explorer/Finder do sistema (menu Arquivo do editor)
@@ -12882,6 +13106,8 @@ function buildClaudeCodePrompt(cfg) {
       /* a memória nativa do Claude Code/CLAUDE.md continua disponível */
     }
   }
+  const deterministic = ledgerPrompt(cfg);
+  if (deterministic) parts.push('', '# Ledger técnico determinístico da Lumi', deterministic);
   return parts.join('\n');
 }
 let claudeCapabilities = { sessionId: '', commands: [], agents: [], skills: [], model: '', version: '' };
@@ -13180,6 +13406,7 @@ async function runClaudeCodeAgent(cfg, promptOverride) {
             broadcast('chat:agent', { name: agentLabel, phase: 'done' });
             toolAgentLabels.delete(block.tool_use_id);
           }
+          recordExternalToolTrace(meta.name, meta.input, result, block.is_error === true || msg.is_error === true);
           broadcast('chat:tool-result', {
             name: meta.name,
             args: slimVal(meta.input, 0),
@@ -13331,6 +13558,8 @@ function buildCodexPrompt(cfg) {
       /* AGENTS.md e a memória nativa do Codex continuam disponíveis */
     }
   }
+  const deterministic = ledgerPrompt(cfg);
+  if (deterministic) parts.push('', '# Ledger técnico determinístico da Lumi', deterministic);
   return parts.join('\n');
 }
 
@@ -13405,7 +13634,10 @@ async function runCodexAgent(cfg, promptOverride) {
       think: wrap((text) => broadcast('chat:thinking', text)),
       note: wrap((text) => broadcast('chat:note', { text })),
       toolStart: wrap((data) => broadcast('chat:tool', data)),
-      toolResult: wrap((data) => broadcast('chat:tool-result', data)),
+      toolResult: wrap((data) => {
+        recordExternalToolTrace(data && data.name, data && data.args, data && data.result, false);
+        broadcast('chat:tool-result', data);
+      }),
       diff: wrap((data) => {
         if (data && data.path && path.isAbsolute(data.path)) {
           data = { ...data, path: path.relative(cfg.workspace, data.path).replace(/\\/g, '/') };
@@ -13596,6 +13828,52 @@ async function expandMentions(text) {
   return { text: text + FILES_SENTINEL + blocks.join('\n\n'), files: used };
 }
 
+function focusedEditorBlock(cfg, detail) {
+  if (!cfg || !cfg.workspace || !detail || !detail.path) return '';
+  const rel = String(detail.path).replace(/\\/g, '/');
+  const fp = safeWsPath(cfg, rel);
+  if (!fp) return '';
+  let content = '';
+  try {
+    content = decodeTextBuffer(fs.readFileSync(fp)).text;
+  } catch (e) {
+    return '';
+  }
+  const lines = content.split(/\r?\n/);
+  const line = Math.max(1, Math.min(parseInt(detail.line, 10) || 1, lines.length));
+  const symbol = enclosingSymbol(lines, line - 1);
+  const block = blockAround(lines, line);
+  let start = block.start;
+  let end = block.end;
+  if (detail.selection) {
+    const selectedStart = Math.max(1, parseInt(detail.selection.startLine, 10) || line);
+    const selectedEnd = Math.min(lines.length, parseInt(detail.selection.endLine, 10) || selectedStart);
+    if (selectedEnd >= selectedStart && selectedEnd - selectedStart <= 220) {
+      start = selectedStart;
+      end = selectedEnd;
+    }
+  }
+  // Símbolos gigantes não devem dominar o contexto: mantém a região do cursor.
+  if (end - start > 220) {
+    start = Math.max(1, line - 90);
+    end = Math.min(lines.length, line + 90);
+  }
+  const numbered = [];
+  for (let i = start; i <= end; i++) {
+    numbered.push(`${i === line ? '→' : ' '} ${String(i).padStart(5)} | ${lines[i - 1] || ''}`);
+  }
+  let excerpt = numbered.join('\n');
+  if (excerpt.length > 14000) excerpt = excerpt.slice(0, 14000) + '\n…[trecho ativo cortado]';
+  return [
+    `🎯 Contexto automático do editor: ${rel}:${line}:${Math.max(1, parseInt(detail.column, 10) || 1)}`,
+    symbol ? `Símbolo ativo: ${symbol}` : 'Símbolo ativo: (não identificado; trecho ao redor do cursor)',
+    'Este trecho é uma pista inicial, não substitui a leitura do arquivo atual com as ferramentas antes de editar.',
+    '```',
+    excerpt,
+    '```',
+  ].join('\n');
+}
+
 // PARALELISMO: cada envio roda NA SESSÃO da conversa da janela (AsyncLocalStorage carrega a
 // sessão por todo o turno). Janela presa a outro chat → turno roda EM PARALELO com o fg.
 ipcMain.on('chat:send', (_e, payload) => {
@@ -13621,10 +13899,15 @@ async function handleChatSend(_e, payload) {
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
   let raw2 = raw;
   const activeFile = activeEditorFiles.get(_e.sender.id) || (!workspaceWindows.has(_e.sender.id) ? activeEditorFile : null);
+  const activeDetail = activeEditorContexts.get(_e.sender.id) || (!workspaceWindows.has(_e.sender.id) ? activeEditorContext : null);
   if (cfg.includeActiveTab !== false && activeFile && !raw.includes('@' + activeFile)) {
-    raw2 = useExternalCodeEngine ? raw + `\n\nArquivo ativo no editor: ${activeFile}` : raw + '\n@' + activeFile;
+    if (useExternalCodeEngine) raw2 = raw + `\n\nArquivo ativo no editor: ${activeFile}`;
   }
-  const text = useExternalCodeEngine ? raw2 : (await expandMentions(raw2)).text;
+  let text = useExternalCodeEngine ? raw2 : (await expandMentions(raw2)).text;
+  if (!useExternalCodeEngine && cfg.includeActiveTab !== false && activeFile && !raw.includes('@' + activeFile)) {
+    const focused = focusedEditorBlock(cfg, activeDetail || { path: activeFile, line: 1, column: 1 });
+    if (focused) text += (text.includes(FILES_SENTINEL.trim()) ? '\n\n' : FILES_SENTINEL) + focused;
+  }
   // chave de API e opcional (proxies locais podem nao exigir)
   // monta o conteudo do usuario (com imagens = visao, formato OpenAI)
   let content = text;
@@ -14153,7 +14436,7 @@ async function runScheduledTask(t) {
     try {
       fs.writeFileSync(
         chatFile(t.chatId),
-        JSON.stringify({ id: t.chatId, title: '⏰ ' + (t.name || 'Tarefa'), customTitle: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [] })
+        JSON.stringify({ id: t.chatId, title: '⏰ ' + (t.name || 'Tarefa'), customTitle: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), history: [], events: [], archive: [], summary: '', worklog: [], ledger: [] })
       );
     } catch (e) {
       /* ok */
@@ -14693,7 +14976,7 @@ setInterval(async () => {
 app.on('window-all-closed', () => app.quit());
 let flushingChatWritesOnQuit = false;
 app.on('before-quit', (e) => {
-  const pending = [...chatWriteStates.values()].map((st) => st.promise).filter(Boolean);
+  const pending = [...chatWriteStates.values()].map((st) => st.promise).filter(Boolean).concat([...artifactWrites]);
   if (!pending.length || flushingChatWritesOnQuit) return;
   e.preventDefault();
   flushingChatWritesOnQuit = true;

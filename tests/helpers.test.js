@@ -282,6 +282,19 @@ test('comandos de verificação são reconhecidos sem confundir comandos comuns'
   assert.equal(capability.looksLikeVerificationCommand('git status'), false);
 });
 
+const externalTrace = load(['toolResultFailed', 'normalizeExternalToolTrace']);
+test('diário normaliza ferramentas externas e reconhece falhas do Codex/Claude', () => {
+  assert.deepEqual(externalTrace.normalizeExternalToolTrace('Bash', { command: 'npm test' }), {
+    name: 'run_command',
+    args: { command: 'npm test' },
+  });
+  assert.equal(externalTrace.normalizeExternalToolTrace('Read', { file_path: 'src/app.js' }).name, 'read_file');
+  assert.equal(externalTrace.normalizeExternalToolTrace('Edit', { file_path: 'src/app.js' }).args.path, 'src/app.js');
+  assert.equal(externalTrace.toolResultFailed({ status: 'failed', exitCode: 0 }), true);
+  assert.equal(externalTrace.toolResultFailed({ status: 'completed', exitCode: 1 }), true);
+  assert.equal(externalTrace.toolResultFailed({ status: 'completed', exitCode: 0 }), false);
+});
+
 const evidence = load(['changedCodeFiles', 'hasSuccessfulVerification']);
 test('gate de conclusão exige evidência apenas quando código foi alterado', () => {
   const log = { filesChanged: new Set(['src/main.js', 'README.md']), verification: [] };
@@ -289,6 +302,32 @@ test('gate de conclusão exige evidência apenas quando código foi alterado', (
   assert.equal(evidence.hasSuccessfulVerification(log), false);
   log.verification.push({ command: 'node --check src/main.js', ok: true });
   assert.equal(evidence.hasSuccessfulVerification(log), true);
+});
+
+test('ledger técnico preserva fatos de ferramentas sem incorporar narrativa do modelo', () => {
+  const session = {
+    stateSeq: 3,
+    ledger: [],
+    worklog: [],
+    currentTurnLog: {
+      at: '2026-07-11T12:00:00.000Z',
+      goal: 'corrigir parser',
+      filesRead: new Set(['src/parser.js']),
+      filesChanged: new Set(['src/parser.js']),
+      tools: [{ tool: 'run_tests', status: 'success', target: 'parser', summary: '4 testes passaram' }],
+      verification: [{ command: 'npm test -- parser', ok: true, summary: 'passou' }],
+    },
+  };
+  const ledger = load(['compactText', 'finishTurnLog', 'ledgerPrompt'], {
+    S: () => session,
+    contextLimits: () => ({ window: 128000 }),
+  });
+  ledger.finishTurnLog('afirmação livre potencialmente inventada', 'completed');
+  assert.equal(session.ledger.length, 1);
+  assert.equal(session.ledger[0].mutations, 3);
+  assert.equal(session.ledger[0].verification[0].ok, true);
+  assert.ok(!JSON.stringify(session.ledger).includes('potencialmente inventada'));
+  assert.match(ledger.ledgerPrompt({ workspace: '/ws', memoryEnabled: true }), /npm test -- parser/);
 });
 
 const strategy = load(['toolStrategyKey', 'failureClass', 'strategyRecoveryAdvice']);
@@ -300,20 +339,36 @@ test('anti-loop agrupa falhas equivalentes por alvo e sugere outra estratégia',
   assert.match(strategy.strategyRecoveryAdvice('content-mismatch'), /releia/i);
 });
 
-test('resultados grandes viram artefatos recuperáveis durante a compactação', () => {
+test('resultados grandes viram artefatos persistentes e recuperáveis durante a compactação', async (t) => {
   const session = { artifacts: new Map(), artifactSeq: 0 };
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-artifacts-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
   const artifacts = load(
-    ['compactText', 'ARTIFACT_MIN_CHARS', 'ARTIFACT_MAX_ITEMS', 'ARTIFACT_MAX_CHARS', 'attachToolArtifact', 'readToolArtifact', 'compactToolResultForContext'],
-    { S: () => session }
+    [
+      'compactText', 'ARTIFACT_MIN_CHARS', 'ARTIFACT_MAX_ITEMS', 'ARTIFACT_MAX_CHARS',
+      'ARTIFACT_DISK_MAX_CHARS', 'ARTIFACT_DISK_MAX_BYTES', 'ARTIFACT_DISK_MAX_ITEMS',
+      'artifactWrites', 'artifactSweepAt', 'artifactsDir', 'artifactDiskPath', 'artifactHash',
+      'rememberArtifact', 'sweepArtifactDisk', 'persistArtifact', 'loadPersistedArtifact',
+      'attachToolArtifact', 'readToolArtifact', 'compactToolResultForContext',
+    ],
+    { S: () => session, fs, crypto: require('crypto'), app: { getPath: () => userData }, logd: () => {} }
   );
   const result = artifacts.attachToolArtifact('read_file', { content: 'abcdef'.repeat(2500) });
   assert.ok(result._artifact && result._artifact.id);
+  assert.match(result._artifact.id, /^art_[a-f0-9]{24}$/);
+  assert.equal(result._artifact.persisted, true);
   const compacted = artifacts.compactToolResultForContext(JSON.stringify(result), 160);
   assert.ok(compacted.length < 1000);
   assert.match(compacted, new RegExp(result._artifact.id));
   const page = artifacts.readToolArtifact(result._artifact.id, 10, 300);
   assert.equal(page.content.length, 300);
   assert.equal(page.id, result._artifact.id);
+  await Promise.all([...artifacts.artifactWrites]);
+  session.artifacts.clear();
+  const restored = artifacts.readToolArtifact(result._artifact.id, 20, 240);
+  assert.equal(restored.content.length, 240);
+  const same = artifacts.attachToolArtifact('read_file', { content: 'abcdef'.repeat(2500) });
+  assert.equal(same._artifact.id, result._artifact.id);
   assert.equal(artifacts.attachToolArtifact('read_artifact', { content: 'x'.repeat(13000) })._artifact, undefined);
 });
 
@@ -723,6 +778,26 @@ test('configuração por chat aceita só campos do motor e sobrepõe o padrão s
   assert.deepEqual(JSON.parse(JSON.stringify(chatCfg.applyChatConfig(global, null))), global);
 });
 
+test('subagente herda a configuração efetiva da aba quando não possui modelo próprio', () => {
+  const { subAgentConfig } = load(['subAgentConfig']);
+  const chat = { provider: 'anthropic', baseUrl: 'https://chat.example/v1', apiKey: 'tab-key', model: 'modelo-da-aba', temperature: 0.8 };
+  const inherited = subAgentConfig(chat, { name: 'Revisor', model: '' });
+  assert.equal(inherited.provider, 'anthropic');
+  assert.equal(inherited.apiKey, 'tab-key');
+  assert.equal(inherited.model, 'modelo-da-aba');
+  const explicit = subAgentConfig(chat, { name: 'Revisor', model: 'modelo-específico', temperature: 0.2 });
+  assert.equal(explicit.model, 'modelo-específico');
+  assert.equal(explicit.temperature, 0.2);
+  assert.equal(chat.model, 'modelo-da-aba');
+});
+
+test('mutação do workspace notifica o Explorer com a raiz correta', () => {
+  const calls = [];
+  const { notifyWorkspaceMutation } = load(['notifyWorkspaceMutation'], { broadcast: (...args) => calls.push(args) });
+  notifyWorkspaceMutation({ workspace: 'C:\\projeto' });
+  assert.deepEqual(calls, [['workspace:changed', 'C:\\projeto']]);
+});
+
 test('mounts SSH ficam isolados por owner e o fallback global é explícito', () => {
   const winWorkspace = new Map([[404, path.resolve('C:\\local')]]);
   const ssh = load(
@@ -787,12 +862,36 @@ test('terminais ficam visíveis apenas para a sessão dona', () => {
 });
 
 test('arquivo ativo do editor é isolado por janela/workspace', () => {
-  const editors = load(['activeEditorFile', 'activeEditorFiles', 'activeEditorForSession'], { S: () => ({}) });
+  const editors = load(
+    ['activeEditorFile', 'activeEditorFiles', 'activeEditorContext', 'activeEditorContexts', 'activeEditorForSession', 'activeEditorContextForSession'],
+    { S: () => ({}) }
+  );
   editors.activeEditorFiles.set(10, 'front/src/App.tsx');
   editors.activeEditorFiles.set(20, 'back/server.py');
+  editors.activeEditorContexts.set(10, { path: 'front/src/App.tsx', line: 42, column: 7 });
   assert.equal(editors.activeEditorForSession({ workspaceOwner: 10 }), 'front/src/App.tsx');
   assert.equal(editors.activeEditorForSession({ workspaceOwner: 20 }), 'back/server.py');
   assert.equal(editors.activeEditorForSession({ workspaceOwner: 30 }), null);
+  assert.equal(editors.activeEditorContextForSession({ workspaceOwner: 10 }).line, 42);
+});
+
+test('contexto automático do editor envia o símbolo focado, não o arquivo inteiro', () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-focused-context-'));
+  try {
+    const lines = ['const distante = true;', '', 'function alvo(valor) {', '  const dobro = valor * 2;', '  return dobro;', '}', '', 'x'.repeat(20000)];
+    fs.writeFileSync(path.join(ws, 'app.js'), lines.join('\n'));
+    const focused = load(
+      ['DEF_PATTERNS', 'CTRL_KW', 'defNameAt', 'enclosingSymbol', 'blockAround', 'decodeTextBuffer', 'safeWsPath', 'focusedEditorBlock'],
+      { fs, Buffer, TextDecoder }
+    );
+    const block = focused.focusedEditorBlock({ workspace: ws }, { path: 'app.js', line: 4, column: 9 });
+    assert.match(block, /Símbolo ativo: alvo/);
+    assert.match(block, /const dobro/);
+    assert.ok(block.length < 15000);
+    assert.ok(!block.includes('x'.repeat(1000)));
+  } finally {
+    fs.rmSync(ws, { recursive: true, force: true });
+  }
 });
 
 // ---------- parsers de diagnóstico ----------
