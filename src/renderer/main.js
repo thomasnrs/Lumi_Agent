@@ -1224,6 +1224,11 @@ const PRESETS = {
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
   },
+  'Hugging Face Inference': {
+    provider: 'openai',
+    baseUrl: 'https://router.huggingface.co/v1',
+    model: 'zai-org/GLM-5.2:novita',
+  },
   DeepSeek: { provider: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   Mistral: { provider: 'openai', baseUrl: 'https://api.mistral.ai/v1', model: 'mistral-small-latest' },
   OpenRouter: { provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
@@ -1258,15 +1263,26 @@ function presetForBaseUrl(url) {
 }
 function updateProviderHelp() {
   const nvidia = /^https:\/\/integrate\.api\.nvidia\.com\/v1\/?$/i.test(baseUrlEl.value.trim());
-  providerHelpEl.hidden = !nvidia;
-  apiKeyEl.placeholder = nvidia ? 'nvapi-...' : 'sk-...';
+  const huggingface = /^https:\/\/router\.huggingface\.co\/v1\/?$/i.test(baseUrlEl.value.trim());
+  providerHelpEl.hidden = !nvidia && !huggingface;
+  apiKeyEl.placeholder = nvidia ? 'nvapi-...' : huggingface ? 'hf_...' : 'sk-...';
   if (nvidia) {
     providerHelpTextEl.textContent =
       'NVIDIA NIM oferece endpoints gratuitos para prototipagem. O catálogo pode incluir NIMs especializados que não são modelos de chat.';
     providerHelpActionEl.textContent = 'Gerar chave NVIDIA';
+    providerHelpActionEl.dataset.url = 'https://build.nvidia.com/settings/api-key';
+  } else if (huggingface) {
+    providerHelpTextEl.textContent =
+      'Hugging Face Inference Providers roteia modelos de chat por vários provedores. Use IDs como modelo:provedor, :preferred ou :fastest.';
+    providerHelpActionEl.textContent = 'Gerar token HF';
+    providerHelpActionEl.dataset.url = 'https://huggingface.co/settings/tokens';
+  } else {
+    delete providerHelpActionEl.dataset.url;
   }
 }
-providerHelpActionEl.addEventListener('click', () => window.api.openExternal('https://build.nvidia.com/settings/api-key'));
+providerHelpActionEl.addEventListener('click', () => {
+  if (providerHelpActionEl.dataset.url) window.api.openExternal(providerHelpActionEl.dataset.url);
+});
 
 // Presets de STT (transcricao): preenchem URL + modelo automaticamente
 const STT_PRESETS = {

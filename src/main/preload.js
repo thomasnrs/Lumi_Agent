@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('api', {
   sshEnsureKey: (host) => ipcRenderer.invoke('ssh:ensure-key', host),
   sshListDir: (host, path) => ipcRenderer.invoke('ssh:listdir', { host, path }),
   sshRecents: () => ipcRenderer.invoke('ssh:recents'),
+  sshStatus: () => ipcRenderer.invoke('ssh:status'),
   onRemoteActive: (cb) => ipcRenderer.on('remote:active', (_e, d) => cb(d)),
 
   // REST client

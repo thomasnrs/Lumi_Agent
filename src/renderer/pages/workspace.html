@@ -4017,7 +4017,7 @@
       //  Barra de menus (estilo VS Code) + troca rápida de workspace
       // ============================================================
       // multi-janela: esta janela do editor pode ter PASTA própria (?ws) e CHAT próprio (?session)
-      const boundWorkspace = new URLSearchParams(location.search).get('ws') || '';
+      let boundWorkspace = new URLSearchParams(location.search).get('ws') || '';
       if (boundWorkspace && window.api.wsBind) window.api.wsBind(boundWorkspace); // resolve antes do loadTree (IPC rápido)
       (function () {
         const s = new URLSearchParams(location.search).get('session') || '';
@@ -4118,9 +4118,19 @@
       }
       // o main avisa quando um remoto monta/desmonta (inclusive via comando no chat) → statusbar 📡
       window.api.onRemoteActive((d) => {
+        if (d && d.scoped === false && boundWorkspace) return;
         remoteActive = d && d.host ? d.host : null;
         updateStatus();
       });
+      if (window.api.sshStatus)
+        window.api.sshStatus().then((d) => {
+          remoteActive = d && d.active ? d.host : null;
+          if (d && d.active && d.mountPoint) {
+            boundWorkspace = d.mountPoint;
+            updateRoot();
+          }
+          updateStatus();
+        });
 
       // ---- navegador de pastas remotas (autocomplete estilo Remote-SSH) ----
       const rbrOv = document.getElementById('rbrOv');
@@ -4215,7 +4225,13 @@
         if (sideMode === 'git') setSideMode('git'); // re-renderiza o painel git pro novo repo
         else updateRoot();
       }
-      window.api.onWorkspaceSwitched((ws) => {
+      window.api.onWorkspaceSwitched((payload) => {
+        const scoped = payload && typeof payload === 'object' && payload.scoped === true;
+        const ws = scoped ? payload.workspace || '' : payload || '';
+        // Janelas destacadas ignoram trocas do workspace global; eventos scoped pertencem
+        // somente a esta janela e podem rebindá-la para um SSHFS ou restaurá-la depois.
+        if (!scoped && boundWorkspace) return;
+        if (scoped) boundWorkspace = payload.bound === false ? '' : ws;
         resetWorkspaceUI();
         toast('📁 Workspace: ' + ws);
       });

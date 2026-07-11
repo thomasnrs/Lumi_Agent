@@ -153,6 +153,7 @@ function makeSession(id) {
   return {
     id: id || '', // chatId desta sessão
     workspace: null, // pasta em que a IA trabalha NESTA sessão (janela de workspace própria)
+    workspaceOwner: null, // webContents.id da janela dona (mount SSH/terminal/contexto por janela)
     running: false, // turno em andamento?
     deleted: false, // impede saves atrasados de ressuscitarem uma aba fechada
     abort: null, // AbortController do turno (botão Stop)
@@ -162,6 +163,9 @@ function makeSession(id) {
     toolCallLog: [], // anti-loop { key, error, S().stateSeq }
     stateSeq: 0, // avança quando algo MUDA o estado (escrita/comando)
     readFilesThisTurn: new Set(), // guarda "leia antes de editar"
+    activeToolsets: new Set(), // conjuntos de ferramentas carregados neste turno
+    taskContract: null, // objetivo/critérios internos usados pelo gate de conclusão
+    completionGateUsed: false, // evita cobrar evidência repetidamente no mesmo turno
     history: [],
     convSummary: '',
     chatEvents: [], // [{a: nº de msgs no S().history quando ocorreu, t: tipo, d: dados, ts}]
@@ -245,6 +249,8 @@ function inSenderChat(e, fn) {
 //    Como só roda 1 turno por vez (serializado), isso é sempre bem definido e não conflita.
 // Sem binding = pasta global (comportamento atual, retrocompatível).
 const winWorkspace = new Map();
+const workspaceWindows = new Set(); // inclui janelas que seguem o workspace global (sem entrada no Map)
+const workspaceOwnerHooks = new Set();
 // (sessionizado: agora vive em makeSession/S())
 function wsCfg(e) {
   const cfg = loadConfig();
@@ -1135,6 +1141,15 @@ function isNvidiaIntegrate(cfg) {
   }
 }
 
+function isHuggingFaceRouter(cfg) {
+  try {
+    const u = new URL(String((cfg && cfg.baseUrl) || ''));
+    return u.hostname.toLowerCase() === 'router.huggingface.co' && /^\/v1\/?$/i.test(u.pathname);
+  } catch (e) {
+    return false;
+  }
+}
+
 function turnAdapter(cfg) {
   if (cfg.provider === 'anthropic') return anthropicTurn;
   if (cfg.provider === 'opencode') {
@@ -1144,6 +1159,31 @@ function turnAdapter(cfg) {
     if (protocol === 'anthropic') return anthropicTurn;
   }
   return openaiTurn;
+}
+
+const modelCapabilityCache = new Map(); // provider|base|model -> capacidades observadas nesta sessão
+function modelCapabilityKey(cfg) {
+  return [cfg && cfg.provider, cfg && cfg.baseUrl, cfg && cfg.model].map((x) => String(x || '').toLowerCase().replace(/\/+$/, '')).join('|');
+}
+function observedCapabilities(cfg) {
+  const key = modelCapabilityKey(cfg);
+  let value = modelCapabilityCache.get(key);
+  if (!value) {
+    value = { tools: null, vision: null, updatedAt: 0 };
+    modelCapabilityCache.set(key, value);
+    if (modelCapabilityCache.size > 200) modelCapabilityCache.delete(modelCapabilityCache.keys().next().value);
+  }
+  return value;
+}
+function isExplicitToolUnsupportedError(err) {
+  const msg = String((err && err.message) || err || '');
+  if (/tool_calls?\[?\]?\.?(?:function\.)?arguments|invalid tool call in messages|invalid json/i.test(msg)) return false;
+  return /(?:tools?|function(?: calling|s)?)\b.{0,100}\b(?:not supported|unsupported|not allowed|unknown|unrecognized|disabled|does not support|extra_forbidden)|(?:not supported|unsupported|not allowed|unknown|unrecognized|disabled|does not support|extra inputs?|extra_forbidden)\b.{0,100}\b(?:tools?|function(?: calling|s)?)/i.test(msg);
+}
+function noteToolCapability(cfg, supported) {
+  const cap = observedCapabilities(cfg);
+  cap.tools = !!supported;
+  cap.updatedAt = Date.now();
 }
 
 function convertToResponses(messages) {
@@ -2810,7 +2850,7 @@ const READONLY_TOOLS = new Set([
   'read_file', 'list_dir', 'grep_files', 'find_in_code', 'git_status', 'git_diff', 'git_log', 'get_problems',
   'locate_stack', 'read_project_memory', 'read_terminal', 'list_terminals', 'web_search', 'fetch_url', 'see_page',
   'view_image', 'read_clipboard', 'recall_facts', 'get_datetime', 'screen_info', 'list_reminders', 'list_ssh_hosts',
-  'project_overview',
+  'project_overview', 'outline', 'find_usages', 'env_info', 'list_scheduled_tasks', 'system_logs', 'db_schema',
 ]);
 // (sessionizado: agora vive em makeSession/S())
 // (sessionizado: agora vive em makeSession/S())
@@ -4151,13 +4191,14 @@ ipcMain.handle('ssh:ensure-key', async (_e, host) => {
 //  PAINEL DO SERVIDOR (systemd + recursos) — opera no remoto SSH ativo,
 //  ou na própria máquina se for Linux. No Windows sem remoto, fica inerte.
 // ============================================================
-function serverCtx() {
-  if (remoteMount) return { kind: 'remote', host: remoteMount.host };
+function serverCtx(e) {
+  const ownerId = e && e.sender ? e.sender.id : null;
+  const remote = remoteMountForOwner(ownerId, ownerId == null || !winWorkspace.has(ownerId));
+  if (remote) return { kind: 'remote', host: remote.host, ownerId: remote.ownerId };
   if (IS_LINUX) return { kind: 'local' };
   return { kind: 'none' };
 }
-async function serverRun(cmd, timeout, retries) {
-  const ctx = serverCtx();
+async function serverRunWithContext(ctx, cmd, timeout, retries) {
   if (ctx.kind === 'none') throw new Error('sem servidor (conecte a um host SSH ou rode no Linux)');
   // retry só em LEITURAS (idempotentes): a 1ª conexão a um host "frio" costuma demorar mais
   // que o timeout — algumas tentativas com backoff resolvem a flakiness. Ações NÃO usam retry.
@@ -4181,6 +4222,9 @@ async function serverRun(cmd, timeout, retries) {
     }
   }
   throw lastErr;
+}
+async function serverRun(e, cmd, timeout, retries) {
+  return serverRunWithContext(serverCtx(e), cmd, timeout, retries);
 }
 // REST client (aba do painel): dispara a requisição e devolve a resposta completa
 ipcMain.handle('rest:send', async (_e, { method, url, headers, body }) => {
@@ -4217,9 +4261,9 @@ ipcMain.handle('rest:send', async (_e, { method, url, headers, body }) => {
   }
 });
 
-ipcMain.handle('server:context', () => serverCtx());
-ipcMain.handle('server:stats', async () => {
-  const ctx = serverCtx();
+ipcMain.handle('server:context', (e) => serverCtx(e));
+ipcMain.handle('server:stats', async (e) => {
+  const ctx = serverCtx(e);
   if (ctx.kind === 'none') return { error: 'conecte a um servidor SSH (📡) ou rode no Linux' };
   try {
     const cmd =
@@ -4227,7 +4271,7 @@ ipcMain.handle('server:stats', async () => {
       "echo LOAD:$(cut -d' ' -f1-3 /proc/loadavg):$(nproc); " +
       "echo MEM:$(free -b | awk '/Mem:/{print $2\" \"$3}'); " +
       "echo DISK:$(df -B1 / | awk 'NR==2{print $2\" \"$3\" \"$5}')";
-    const out = await serverRun(cmd, 15000, 3); // até 4 tentativas (1ª conexão fria demora)
+    const out = await serverRunWithContext(ctx, cmd, 15000, 3); // até 4 tentativas (1ª conexão fria demora)
     const g = (re) => (re.exec(out) || [])[1] || '';
     const mem = g(/MEM:(.+)/).trim().split(/\s+/).map(Number);
     const disk = g(/DISK:(.+)/).trim().split(/\s+/);
@@ -4247,9 +4291,9 @@ ipcMain.handle('server:stats', async () => {
     return { error: String((e && e.message) || e).slice(0, 160) };
   }
 });
-ipcMain.handle('server:services', async () => {
+ipcMain.handle('server:services', async (e) => {
   try {
-    const out = await serverRun('systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -200', 15000, 2);
+    const out = await serverRun(e, 'systemctl list-units --type=service --all --no-pager --no-legend --plain 2>/dev/null | head -200', 15000, 2);
     const svcs = [];
     for (const line of out.split(/\r?\n/)) {
       const m = /^(\S+\.service)\s+\S+\s+(\S+)\s+(\S+)\s+(.*)$/.exec(line.trim());
@@ -4262,11 +4306,11 @@ ipcMain.handle('server:services', async () => {
     return { error: String((e && e.message) || e).slice(0, 160) };
   }
 });
-ipcMain.handle('server:action', async (_e, { name, action }) => {
+ipcMain.handle('server:action', async (e, { name, action }) => {
   if (!/^[\w.@-]+$/.test(String(name || '')) || !['start', 'stop', 'restart'].includes(action)) return { error: 'inválido' };
   try {
     // tenta sem sudo; serviços de sistema podem exigir sudo -n (sem senha) configurado
-    await serverRun('systemctl ' + action + " '" + name + "' 2>&1 || sudo -n systemctl " + action + " '" + name + "' 2>&1", 30000);
+    await serverRun(e, 'systemctl ' + action + " '" + name + "' 2>&1 || sudo -n systemctl " + action + " '" + name + "' 2>&1", 30000);
     return { ok: true };
   } catch (e) {
     const err = String((e && e.message) || e);
@@ -4274,12 +4318,12 @@ ipcMain.handle('server:action', async (_e, { name, action }) => {
   }
 });
 // logs ao vivo de um serviço, no terminal integrado (journalctl -fu)
-ipcMain.handle('server:logs', (_e, name) => {
+ipcMain.handle('server:logs', (e, name) => {
   if (!/^[\w.@-]+$/.test(String(name || ''))) return { error: 'nome inválido' };
-  const ctx = serverCtx();
+  const ctx = serverCtx(e);
   const jcmd = 'journalctl -fu ' + name + ' -n 100 --no-pager';
-  if (ctx.kind === 'remote') return createTerminal({ shell: 'ssh', args: ['-t', ctx.host, jcmd], title: 'logs: ' + name });
-  if (ctx.kind === 'local') return createTerminal({ command: jcmd, title: 'logs: ' + name });
+  if (ctx.kind === 'remote') return createTerminal({ shell: 'ssh', args: ['-t', ctx.host, jcmd], title: 'logs: ' + name, owner: e.sender.id });
+  if (ctx.kind === 'local') return createTerminal({ command: jcmd, title: 'logs: ' + name, owner: e.sender.id });
   return { error: 'sem servidor' };
 });
 
@@ -4308,11 +4352,65 @@ ipcMain.handle('ssh:listdir', async (_e, { host, path: p }) => {
   }
 });
 
-let remoteMount = null; // { host, mountPoint, prevWorkspace }
-async function unmountRemote() {
-  if (!remoteMount) return;
-  const mp = remoteMount.mountPoint;
-  logd('ssh:unmount', mp);
+const remoteMounts = new Map(); // ownerKey -> { ownerId, host, mountPoint, prevWorkspace, hadBinding, terms }
+const remoteOwnerHooks = new Set();
+const pendingRemoteMountPoints = new Set(); // evita duas janelas escolherem a mesma letra simultaneamente
+const remoteMountOps = new Map(); // serializa conectar/reconectar do mesmo owner
+const remoteMountEpoch = new Map(); // cancela mount pendente ao desmontar/fechar a janela
+function remoteOwnerKey(ownerId) {
+  return ownerId == null ? 'global' : String(ownerId);
+}
+function remoteMountForOwner(ownerId, fallbackGlobal) {
+  return remoteMounts.get(remoteOwnerKey(ownerId)) || (fallbackGlobal ? remoteMounts.get('global') : null) || null;
+}
+function isRemoteWorkspace(root) {
+  if (!root) return false;
+  const resolved = path.resolve(root);
+  for (const remote of remoteMounts.values()) {
+    if (path.resolve(remote.workspace || remote.mountPoint) === resolved) return true;
+  }
+  return false;
+}
+function bindWindowWorkspace(ownerId, workspace) {
+  if (ownerId == null) return;
+  const before = winWorkspace.get(ownerId);
+  if (before && before !== workspace) unwatchFolder(before, ownerId);
+  if (workspace) {
+    winWorkspace.set(ownerId, workspace);
+    watchFolder(workspace, ownerId);
+  } else {
+    winWorkspace.delete(ownerId);
+  }
+}
+function notifyRemoteOwner(remote, channel, payload) {
+  if (remote && remote.ownerId != null) sendToWc(remote.ownerId, channel, { ...(payload || {}), scoped: true });
+  else broadcast(channel, { ...(payload || {}), scoped: false });
+}
+function hookRemoteOwner(sender) {
+  const ownerId = sender && sender.id;
+  if (ownerId == null || remoteOwnerHooks.has(ownerId)) return;
+  remoteOwnerHooks.add(ownerId);
+  sender.once('destroyed', () => {
+    remoteOwnerHooks.delete(ownerId);
+    unmountRemote(ownerId, { restore: false }).catch(() => {});
+  });
+}
+function restoreSessionsFromRemote(remote) {
+  const all = [fgSession, ...sessions.values()];
+  for (const sess of all) {
+    if (sess.workspaceOwner !== remote.ownerId || path.resolve(sess.workspace || '.') !== path.resolve(remote.workspace || remote.mountPoint)) continue;
+    sess.workspace = remote.prevWorkspace || null;
+  }
+}
+async function unmountRemote(ownerId, opts) {
+  const key = remoteOwnerKey(ownerId);
+  if (!(opts && opts.internal)) remoteMountEpoch.set(key, (remoteMountEpoch.get(key) || 0) + 1);
+  const remote = remoteMounts.get(key);
+  if (!remote) return null;
+  // remove primeiro do mapa: watcher/painel deixam de tratar este mount como ativo imediatamente
+  remoteMounts.delete(key);
+  const mp = remote.mountPoint;
+  logd('ssh:unmount', key, mp);
   try {
     if (process.platform === 'win32') {
       // net use /delete encerra o backend sshfs GRACIOSAMENTE (confirmado: o processo some).
@@ -4326,8 +4424,8 @@ async function unmountRemote() {
     /* best-effort */
   }
   // fecha terminais abertos pelo mount (net use / ssh de brinde) — senão ficam zumbis
-  if (remoteMount.terms) {
-    for (const id of remoteMount.terms) {
+  if (remote.terms) {
+    for (const id of remote.terms) {
       const t = terminals.get(id);
       if (t) {
         try {
@@ -4338,9 +4436,41 @@ async function unmountRemote() {
       }
     }
   }
-  remoteMount = null;
+  unwatchFolder(remote.workspace || mp, remote.ownerId == null ? 'global' : remote.ownerId);
+  restoreSessionsFromRemote(remote);
+  if (!(opts && opts.restore === false)) {
+    if (remote.ownerId != null) {
+      bindWindowWorkspace(remote.ownerId, remote.hadBinding ? remote.prevWorkspace : '');
+      sendToWc(remote.ownerId, 'workspace:switched', {
+        workspace: remote.prevWorkspace || '',
+        scoped: true,
+        bound: remote.hadBinding,
+      });
+    } else {
+      saveConfig({ ...loadConfig(), workspace: remote.prevWorkspace || '', remoteWs: undefined });
+      startWorkspaceWatcher();
+      broadcast('workspace:switched', remote.prevWorkspace || '');
+    }
+    notifyRemoteOwner(remote, 'remote:active', { host: null });
+  }
+  return remote;
 }
-async function doSshMount(host, remotePath) {
+function queueRemoteMount(host, remotePath, opts) {
+  const ownerKey = remoteOwnerKey(opts && opts.ownerId != null ? opts.ownerId : null);
+  const epoch = (remoteMountEpoch.get(ownerKey) || 0) + 1;
+  remoteMountEpoch.set(ownerKey, epoch);
+  const previous = remoteMountOps.get(ownerKey) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(() => doSshMount(host, remotePath, { ...(opts || {}), epoch }));
+  remoteMountOps.set(ownerKey, operation);
+  operation.finally(() => {
+    if (remoteMountOps.get(ownerKey) === operation) remoteMountOps.delete(ownerKey);
+  });
+  return operation;
+}
+async function doSshMount(host, remotePath, opts) {
+  const ownerId = opts && opts.ownerId != null ? opts.ownerId : null;
+  const ownerKey = remoteOwnerKey(ownerId);
+  const mountEpoch = opts && opts.epoch;
   if (!host) return { error: 'host vazio' };
   const sshfsBin = findSshfs();
   if (!sshfsBin) return { error: 'sshfs não encontrado. Instale: Linux → "sudo apt install sshfs"; Windows → SSHFS-Win + WinFsp.' };
@@ -4363,57 +4493,34 @@ async function doSshMount(host, remotePath) {
       /* rede instável no teste: segue e deixa o mount tentar mesmo assim */
     }
   }
-  if (remoteMount) await unmountRemote().catch(() => {});
+  if (remoteMounts.has(ownerKey)) await unmountRemote(ownerId, { internal: true }).catch(() => {});
   let mp; // ponto de montagem passado pro sshfs
   let wsPath; // caminho que vira o workspace
   if (process.platform === 'win32') {
-    // derruba QUALQUER conexão sshfs anterior na TABELA do net use — zumbis "Indisponível"
-    // nem aparecem como unidade (existsSync falso) mas bloqueiam a reconexão (erro 64/1219)
-    try {
-      const { stdout } = await execAsync('net use', { windowsHide: true, timeout: 8000 });
-      for (const line of stdout.split(/\r?\n/)) {
-        if (!/\\\\sshfs/i.test(line)) continue;
-        const letter = /\s([A-Z]):(\s|$)/.exec(line);
-        const remote = /(\\\\sshfs\S*)/i.exec(line);
-        const target = letter ? letter[1] + ':' : remote && remote[1];
-        if (!target) continue;
-        logd('ssh:mount derrubando conexão sshfs anterior', target);
-        await execAsync('net use ' + target + ' /delete /y', { windowsHide: true, timeout: 8000 }).catch(() => {});
-      }
-    } catch (e) {
-      /* sem conexões listáveis — segue */
-    }
-    // limpa unidades de rede MORTAS de tentativas anteriores (existem mas não listam)
-    for (const L of 'ZYXWVUTSRQPONML') {
-      const root = L + ':\\';
-      try {
-        if (fs.existsSync(root)) {
-          try {
-            fs.readdirSync(root);
-          } catch (dead) {
-            logd('ssh:mount limpando unidade morta', L + ':');
-            await execAsync('net use ' + L + ': /delete /y', { windowsHide: true, timeout: 8000 }).catch(() => {});
-          }
-        }
-      } catch (e) {
-        /* segue */
-      }
-    }
-    // respiro pro WinFsp.Launcher concluir o cleanup das conexões deletadas antes de
-    // remontar (sem isso, remontar a MESMA pasta rápido demais dá erro 64). Sem taskkill:
-    // o /delete acima já encerra os backends; force-kill envenenaria a UNC.
+    // Nunca derruba mounts SSHFS alheios ou de outra janela. O unmount acima removeu
+    // somente o mount deste owner; damos um respiro pro WinFsp concluir o cleanup.
     await new Promise((r) => setTimeout(r, 1500));
     // SSHFS-Win/WinFsp: letra de unidade é o formato robusto ("invalid mount point" com diretório)
+    const reserved = new Set([...remoteMounts.values()].map((r) => String(r.mountPoint || '').slice(0, 2).toUpperCase()));
+    const mapped = new Set();
+    try {
+      const { stdout } = await execAsync('net use', { windowsHide: true, timeout: 8000 });
+      for (const match of String(stdout).matchAll(/\b([A-Z]):\s+\\\\/gi)) mapped.add(match[1].toUpperCase() + ':');
+    } catch (e) {
+      /* net use indisponível: existsSync + reservas ainda protegem os mounts vivos */
+    }
     for (const L of 'ZYXWVUTSRQPONML') {
-      if (!fs.existsSync(L + ':\\')) {
+      if (!reserved.has(L + ':') && !mapped.has(L + ':') && !pendingRemoteMountPoints.has(L + ':') && !fs.existsSync(L + ':\\')) {
         mp = L + ':';
+        pendingRemoteMountPoints.add(mp);
         break;
       }
     }
     if (!mp) return { error: 'nenhuma letra de unidade livre (Z–L ocupadas?)' };
     wsPath = mp + '\\';
   } else {
-    const safe = String(host).replace(/[^\w.-]/g, '_');
+    const suffix = crypto.createHash('sha1').update(ownerKey + '|' + String(remotePath || '.')).digest('hex').slice(0, 8);
+    const safe = String(host).replace(/[^\w.-]/g, '_') + '_' + suffix;
     const base = path.join(app.getPath('userData'), 'remotes');
     try {
       fs.mkdirSync(base, { recursive: true });
@@ -4443,16 +4550,19 @@ async function doSshMount(host, remotePath) {
     const abs = p && p.startsWith('/');
     const svc = '\\\\sshfs' + (hasKey ? '.k' : '') + (abs ? (hasKey ? 'r' : '.r') : '') + '\\';
     const unc = svc + userHost + (abs ? p.replace(/\//g, '\\') : p && p !== '.' ? '\\' + p.replace(/\//g, '\\') : '');
-    t = createTerminal({ shell: 'net', args: ['use', mp, unc, '/persistent:no'], title: 'sshfs: ' + host });
+    t = createTerminal({ shell: 'net', args: ['use', mp, unc, '/persistent:no'], title: 'sshfs: ' + host, owner: ownerId });
     logd('ssh:mount via net use', mp, unc, hasKey ? '(chave)' : '(senha)');
   } else {
     const spec = host + ':' + (remotePath && remotePath.trim() ? remotePath.trim() : '.');
     const args = [spec, mp, '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,StrictHostKeyChecking=accept-new,idmap=user'];
     // roda NO TERMINAL INTEGRADO (PTY): senha e confirmação de host key aparecem e funcionam
-    t = createTerminal({ shell: sshfsBin, args, title: 'sshfs: ' + host });
+    t = createTerminal({ shell: sshfsBin, args, title: 'sshfs: ' + host, owner: ownerId });
     logd('ssh:mount via terminal', sshfsBin, spec, '→', mp);
   }
-  if (t && t.error) return { error: t.error };
+  if (t && t.error) {
+    pendingRemoteMountPoints.delete(mp);
+    return { error: t.error };
+  }
   // vigia o ponto de montagem por até 35s (com chave monta em segundos; path já foi validado)
   const t0 = Date.now();
   while (Date.now() - t0 < 35000) {
@@ -4463,21 +4573,40 @@ async function doSshMount(host, remotePath) {
         // linux: o dir existe antes — confirma que virou mountpoint de verdade
         require('child_process').execSync('mountpoint -q "' + mp + '"', { timeout: 3000 });
       }
-      const prev = loadConfig().workspace || '';
+      if (mountEpoch != null && remoteMountEpoch.get(ownerKey) !== mountEpoch) {
+        pendingRemoteMountPoints.delete(mp);
+        if (process.platform === 'win32') await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true }).catch(() => {});
+        else await execAsync('fusermount -u "' + mp + '"', { timeout: 8000 }).catch(() => {});
+        if (t && t.id) {
+          const pendingTerm = terminals.get(t.id);
+          if (pendingTerm) termKill(pendingTerm);
+        }
+        return { error: 'montagem cancelada' };
+      }
+      const hadBinding = ownerId != null && winWorkspace.has(ownerId);
+      const prev = ownerId != null ? winWorkspace.get(ownerId) || rawWorkspace() || loadConfig().workspace || '' : loadConfig().workspace || '';
       const terms = t && t.id ? [t.id] : []; // terminal do net use/sshfs — fechado no unmount
       // shell SSH no servidor de brinde, já no path montado (criado no MAIN pra ser rastreado/morto)
       const rp = (remotePath || '').trim();
       const sshArgs = rp && rp !== '.' ? ['-t', host, 'cd "' + rp.replace(/"/g, '\\"') + '" && exec ${SHELL:-bash} -l'] : [host];
-      const st = createTerminal({ shell: 'ssh', args: sshArgs, title: 'SSH: ' + host });
+      const st = createTerminal({ shell: 'ssh', args: sshArgs, title: 'SSH: ' + host, owner: ownerId });
       if (st && st.id) terms.push(st.id);
-      remoteMount = { host, mountPoint: mp, prevWorkspace: prev, terms };
-      // remoteWs marca que o workspace é um mount de sessão — o boot seguinte restaura o prev
-      saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true, remoteWs: { host, prev } });
+      const remote = { ownerId, host, mountPoint: mp, workspace: wsPath, prevWorkspace: prev, hadBinding, terms };
+      pendingRemoteMountPoints.delete(mp);
+      remoteMounts.set(ownerKey, remote);
+      if (ownerId != null) {
+        bindWindowWorkspace(ownerId, wsPath);
+        sendToWc(ownerId, 'workspace:switched', { workspace: wsPath, scoped: true, bound: true });
+      } else {
+        // compatibilidade com chat/avatar sem janela dona: este é o slot global legado.
+        saveConfig({ ...loadConfig(), workspace: wsPath, architectMode: true, remoteWs: { host, prev } });
+        startWorkspaceWatcher();
+        broadcast('workspace:switched', wsPath);
+      }
+      if (sessionALS.getStore() && (ownerId == null || S().workspaceOwner === ownerId)) S().workspace = wsPath;
       rememberRemote(host, rpTrim || '.'); // histórico (menu Arquivo → Remotos recentes)
-      startWorkspaceWatcher(); // re-observa o novo workspace (modo rede: poll leve)
-      broadcast('workspace:switched', wsPath);
       broadcast('config:changed');
-      broadcast('remote:active', { host }); // a statusbar/menu marcam 📡 (inclusive se foi via chat)
+      notifyRemoteOwner(remote, 'remote:active', { host, mountPoint: wsPath });
       logd('ssh:mount OK', wsPath);
       return { ok: true, mountPoint: wsPath, host };
     } catch (e) {
@@ -4485,7 +4614,8 @@ async function doSshMount(host, remotePath) {
     }
   }
   logd('ssh:mount TIMEOUT', host);
-  // limpa o mount meio-feito (remoteMount ainda é null aqui) pra não deixar drive/terminal pendurado
+  pendingRemoteMountPoints.delete(mp);
+  // limpa o mount meio-feito (ainda não entrou em remoteMounts) pra não deixar drive/terminal pendurado
   if (process.platform === 'win32') await execAsync('net use ' + mp + ' /delete /y', { windowsHide: true }).catch(() => {});
   if (t && t.id) {
     const tt = terminals.get(t.id);
@@ -4510,16 +4640,19 @@ function rememberRemote(host, p) {
     /* ok */
   }
 }
-ipcMain.handle('ssh:mount', (_e, { host, remotePath }) => doSshMount(host, remotePath));
+ipcMain.handle('ssh:mount', (e, { host, remotePath }) => {
+  hookRemoteOwner(e.sender);
+  return queueRemoteMount(host, remotePath, { ownerId: e.sender.id });
+});
 ipcMain.handle('ssh:recents', () => loadConfig().recentRemotes || []);
-ipcMain.handle('ssh:unmount', async () => {
-  const prev = (remoteMount && remoteMount.prevWorkspace) || (loadConfig().remoteWs && loadConfig().remoteWs.prev) || '';
-  await unmountRemote();
-  saveConfig({ ...loadConfig(), workspace: prev, remoteWs: undefined });
-  startWorkspaceWatcher(); // volta a observar o workspace local
-  broadcast('workspace:switched', prev);
+ipcMain.handle('ssh:status', (e) => {
+  const remote = remoteMountForOwner(e.sender.id, !winWorkspace.has(e.sender.id));
+  return remote ? { active: true, host: remote.host, mountPoint: remote.workspace } : { active: false };
+});
+ipcMain.handle('ssh:unmount', async (e) => {
+  const ownerId = remoteMountForOwner(e.sender.id, false) ? e.sender.id : !winWorkspace.has(e.sender.id) && remoteMounts.has('global') ? null : e.sender.id;
+  await unmountRemote(ownerId);
   broadcast('config:changed');
-  broadcast('remote:active', { host: null });
   return { ok: true };
 });
 
@@ -4771,7 +4904,7 @@ const TOOLS = {
           return { error: 'não consegui acessar ' + host + ' por chave. Use o botão 📡 do workspace a 1ª vez (instala a chave com a senha).' };
         }
       }
-      const r = await doSshMount(host, p || '.');
+      const r = await queueRemoteMount(host, p || '.', { ownerId: S().workspaceOwner });
       if (r && r.error) return { error: r.error };
       return { ok: true, mounted: host, at: r.mountPoint, note: 'workspace remoto ativo' };
     },
@@ -5587,26 +5720,39 @@ const TOOLS = {
         properties: {
           filter: { type: 'string', description: 'arquivo ou nome do teste pra focar (recomendado)' },
           command: { type: 'string', description: 'comando exato (opcional; sobrepõe a detecção)' },
+          cwd: { type: 'string', description: 'subprojeto relativo ao workspace (ex.: frontend ou backend)' },
         },
       },
     },
-    run: async ({ filter, command }) => {
+    run: async ({ filter, command, cwd }) => {
       const cfg = loadConfig();
       if (!cfg.workspace) return { error: 'nenhum workspace aberto' };
+      let workdir = cfg.workspace;
+      if (cwd) {
+        const candidate = path.resolve(cfg.workspace, String(cwd));
+        const root = path.resolve(cfg.workspace);
+        if (candidate !== root && !candidate.startsWith(root + path.sep)) return { error: 'cwd precisa ficar dentro do workspace' };
+        try {
+          if (!fs.statSync(candidate).isDirectory()) return { error: 'cwd não é uma pasta: ' + cwd };
+        } catch (e) {
+          return { error: 'cwd não encontrado: ' + cwd };
+        }
+        workdir = candidate;
+      }
       let cmd = command && String(command).trim();
       if (!cmd) {
-        const g = guessTestCommand(cfg.workspace);
+        const g = guessTestCommand(workdir);
         if (!g) return { error: 'não detectei o runner de testes — passe `command` com o comando exato (ex.: "npx vitest run src/x.test.ts")' };
         cmd = filter ? withTestFilter(g.cmd, g.runner, filter) : g.cmd;
       } else if (filter) {
         cmd = cmd + ' ' + filter;
       }
       try {
-        const { stdout, stderr } = await execAsync(cmd, { cwd: cfg.workspace, timeout: 180000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
-        return { ok: true, command: cmd, output: tailStr(((stdout || '') + (stderr || '')).trim(), 6000) };
+        const { stdout, stderr } = await execAsync(cmd, { cwd: workdir, timeout: 180000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+        return { ok: true, command: cmd, cwd: path.relative(cfg.workspace, workdir).replace(/\\/g, '/') || '.', output: tailStr(((stdout || '') + (stderr || '')).trim(), 6000) };
       } catch (e) {
         const out = (((e && e.stdout) || '') + ((e && e.stderr) || '')).trim() || String((e && e.message) || e);
-        return { ok: false, command: cmd, exitCode: e && e.code, output: tailStr(out, 8000), note: 'testes falharam (ou o comando errou) — veja a saída' };
+        return { ok: false, command: cmd, cwd: path.relative(cfg.workspace, workdir).replace(/\\/g, '/') || '.', exitCode: e && e.code, output: tailStr(out, 8000), note: 'testes falharam (ou o comando errou) — veja a saída' };
       }
     },
   },
@@ -6475,6 +6621,31 @@ const TOOLS = {
       return { ok: true };
     },
   },
+  load_toolset: {
+    category: null,
+    summary: (a) => `carregar ferramentas de ${a.toolset}`,
+    schema: {
+      name: 'load_toolset',
+      description:
+        'Carrega um conjunto adicional de ferramentas para a próxima etapa do turno. Use quando a tarefa exigir uma capacidade que não está disponível agora. Conjuntos: code, terminal, web, computer, system, data, media, reminders, remote, agents, mcp ou all.',
+      parameters: {
+        type: 'object',
+        properties: { toolset: { type: 'string', description: 'nome do conjunto a carregar' } },
+        required: ['toolset'],
+      },
+    },
+    run: async ({ toolset }) => {
+      const name = String(toolset || '').trim().toLowerCase();
+      if (!TOOLSET_NAMES.has(name)) return { error: 'conjunto desconhecido: ' + name + '. Use: ' + [...TOOLSET_NAMES].join(', ') };
+      if (!(S().activeToolsets instanceof Set)) S().activeToolsets = new Set();
+      if (name === 'all') Object.keys(TOOLSETS).forEach((x) => S().activeToolsets.add(x));
+      else if (name === 'code') {
+        S().activeToolsets.add('code_read');
+        S().activeToolsets.add('code_write');
+      } else S().activeToolsets.add(name);
+      return { ok: true, loaded: [...S().activeToolsets], note: 'as novas ferramentas estarão disponíveis na próxima rodada' };
+    },
+  },
   delegate_to_agent: {
     category: null, // sem permissao propria; as ferramentas do subagente pedem normalmente
     summary: (a) => `delegar ao agente "${a.agent}"`,
@@ -6509,6 +6680,76 @@ const TOOLS = {
     },
   },
 };
+
+// Toolsets sob demanda: mandar dezenas de schemas em TODA rodada custa contexto e
+// piora a escolha em modelos menores. O núcleo fica sempre disponível; capacidades
+// especializadas entram pela intenção do pedido ou via load_toolset.
+const CORE_TOOLS = new Set([
+  'ask_user', 'update_plan', 'load_toolset', 'get_datetime', 'play_animation',
+  'remember_fact', 'recall_facts', 'read_clipboard', 'write_clipboard',
+]);
+const TOOLSETS = {
+  code_read: new Set([
+    'project_overview', 'find_in_code', 'list_dir', 'read_file', 'grep_files', 'git_status',
+    'git_diff', 'git_log', 'locate_stack', 'get_problems', 'outline', 'find_usages',
+    'env_info', 'read_project_memory',
+  ]),
+  code_write: new Set([
+    'edit_file', 'apply_patch', 'run_tests', 'generate_project_doc', 'update_project_memory',
+    'write_file', 'append_file', 'make_dir', 'delete_file', 'run_command',
+  ]),
+  terminal: new Set(['run_command', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal']),
+  web: new Set(['web_search', 'fetch_url', 'http_request', 'open_url']),
+  computer: new Set(['see_screen', 'screen_info', 'move_mouse', 'click', 'scroll', 'type_text', 'press_keys', 'focus_window']),
+  system: new Set(['system_logs', 'env_info', 'get_problems', 'locate_stack', 'run_command']),
+  data: new Set(['db_schema', 'db_query', 'read_file', 'write_file', 'append_file']),
+  media: new Set(['generate_image', 'view_image', 'see_page', 'see_screen', 'open_url']),
+  reminders: new Set(['set_reminder', 'list_reminders', 'cancel_reminder', 'schedule_task', 'list_scheduled_tasks', 'cancel_scheduled_task']),
+  remote: new Set(['connect_remote', 'list_ssh_hosts', 'run_in_terminal', 'read_terminal', 'list_terminals', 'kill_terminal']),
+  agents: new Set(['delegate_to_agent']),
+  mcp: new Set(), // schemas MCP são adicionados separadamente quando este conjunto está ativo
+};
+const TOOLSET_NAMES = new Set([...Object.keys(TOOLSETS).filter((x) => !x.startsWith('code_')), 'code', 'all']);
+
+function inferToolsets(text, cfg) {
+  const q = String(text || '').toLowerCase();
+  const sets = new Set();
+  const add = (name, re) => {
+    if (re.test(q)) sets.add(name);
+  };
+  add('code_read', /\b(c[oó]digo|projeto|workspace|arquivo|contexto|m[eé]todo|fun[cç][aã]o|vari[aá]vel|m[oó]dulo|componente|handler|ipc|renderer|classe|bug|erro|fix|corrig|implement|refator|teste|lint|build|git|commit|package|depend[eê]ncia|api|frontend|backend|banco|sql|css|html|javascript|typescript|python|java|rust|electron)\b/i);
+  add('terminal', /\b(terminal|comando|shell|powershell|cmd|bash|servidor|processo|porta|npm|pnpm|yarn|pytest|docker)\b/i);
+  add('web', /\b(web|internet|pesquis|buscar online|site|url|documenta[cç][aã]o|not[ií]cia|atual)\b/i);
+  add('computer', /\b(tela|mouse|clic|digitar|teclado|janela|controlar o pc|screenshot|print)\b/i);
+  add('system', /\b(sistema|windows|linux|macos|log|crash|evento|servi[cç]o|cpu|mem[oó]ria)\b/i);
+  add('data', /\b(banco|database|sql|tabela|schema|query|consulta)\b/i);
+  add('media', /\b(imagem|foto|desenho|mockup|visual|layout|p[aá]gina|screenshot)\b/i);
+  add('reminders', /\b(lembrete|lembrar|agenda|agendar|tarefa agendada|daqui a \d+)\b/i);
+  add('remote', /\b(ssh|remoto|servidor remoto|vps|sshfs)\b/i);
+  add('agents', /\b(agente|subagente|deleg|paralel)\b/i);
+  add('mcp', /\b(mcp|model context protocol|ferramenta externa)\b/i);
+  // No modo arquiteto, pedidos de ação ambíguos normalmente se referem ao projeto.
+  const mutating = /\b(fa[cç]a|altere|adicion[ae]|implemente|corrija|conserte|remova|refatore|melhore|crie|atualize|continue|manda ver|resolve)\b/i.test(q);
+  if (sets.has('code_read') && mutating) sets.add('code_write');
+  if (cfg && cfg.architectMode && mutating) {
+    sets.add('code_read');
+    sets.add('code_write');
+  }
+  if (cfg && agentsAvailable(cfg) && (sets.has('code_read') || sets.has('code_write'))) sets.add('agents');
+  return sets;
+}
+
+function selectedToolNames(toolsets, includeDelegate) {
+  const out = new Set(CORE_TOOLS);
+  const sets = new Set(toolsets || []);
+  if (sets.has('all')) Object.keys(TOOLSETS).forEach((name) => sets.add(name));
+  for (const name of sets) {
+    const group = TOOLSETS[name];
+    if (group) for (const tool of group) out.add(tool);
+  }
+  if (!includeDelegate) out.delete('delegate_to_agent');
+  return out;
+}
 
 // ---- MCP (Model Context Protocol): ferramentas externas plugaveis ----
 const mcpClients = {}; // nome do servidor -> client
@@ -6574,15 +6815,17 @@ async function connectMcpServers() {
 function toolSchemas(opts) {
   opts = opts || {};
   const allow = opts.allow || null;
+  const selected = allow ? null : opts.toolsets ? selectedToolNames(opts.toolsets, opts.delegate) : null;
   const ok = (name) => {
     if (name === 'delegate_to_agent') return !!opts.delegate; // só no orquestrador
-    return !allow || allow.includes(name);
+    if (allow) return allow.includes(name);
+    return !selected || selected.has(name);
   };
   const native = Object.entries(TOOLS)
     .filter(([n]) => ok(n))
     .map(([, t]) => ({ type: 'function', function: t.schema }));
   const mcp = mcpTools
-    .filter((t) => !allow || allow.includes(t.fn))
+    .filter((t) => (allow ? allow.includes(t.fn) : !selected || (opts.toolsets instanceof Set && (opts.toolsets.has('all') || opts.toolsets.has('mcp')))))
     .map((t) => ({ type: 'function', function: t.schema }));
   return native.concat(mcp);
 }
@@ -6836,6 +7079,10 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
     // O hosted NIM aceita temperature entre 0 e 1; a UI genérica permite até 2.
     body.temperature = Math.min(1, Math.max(0, Number(cfg.temperature) || 0));
   }
+  // O Inference Providers Router expõe Chat Completions OpenAI-compatible.
+  // O sufixo do modelo (ex.: :novita/:preferred/:fastest) é parte do ID e
+  // segue intacto; requestModel só altera IDs quando o provider é OpenCode.
+  if (isHuggingFaceRouter(cfg)) headers.Accept = 'text/event-stream';
   if (tools && tools.length) body.tools = tools;
   const t0 = Date.now();
   const res = await aiFetch(cfg, endpoint, {
@@ -7072,6 +7319,7 @@ async function runSubAgent(cfg, agent, task, label) {
   // tools como array (mesmo vazio) = lista exata permitida; ausente/não-array = todas
   const allow = Array.isArray(agent.tools) ? agent.tools : null;
   let tools = toolSchemas({ allow, delegate: false });
+  if (observedCapabilities(sub).tools === false) tools = [];
   const turnFn = turnAdapter(sub);
   let full = '';
   let lastText = ''; // última narração não-vazia (caso o turno final venha sem texto)
@@ -7085,9 +7333,11 @@ async function runSubAgent(cfg, agent, task, label) {
     let turn;
     try {
       turn = await turnFn(sub, messages, tools, onTok, () => {});
+      if (tools.length) noteToolCapability(sub, true);
     } catch (e) {
       if (S().abort && S().abort.signal.aborted) break; // parado pelo usuário
-      if (tools.length) {
+      if (tools.length && isExplicitToolUnsupportedError(e)) {
+        noteToolCapability(sub, false);
         tools = [];
         turn = await turnFn(sub, messages, tools, onTok, () => {});
       } else {
@@ -7163,6 +7413,37 @@ function continueAfterQueuedSteering(turn, messages) {
   return true;
 }
 
+const PARALLEL_READ_TOOLS = new Set([
+  'read_file', 'list_dir', 'grep_files', 'find_in_code', 'git_status', 'git_diff', 'git_log',
+  'get_problems', 'locate_stack', 'read_project_memory', 'read_terminal', 'list_terminals',
+  'project_overview', 'outline', 'find_usages', 'env_info', 'list_ssh_hosts', 'recall_facts',
+  'list_reminders', 'list_scheduled_tasks', 'get_datetime',
+]);
+
+async function executeToolCallsOrdered(calls, execute, parallelNames, concurrency) {
+  const items = Array.isArray(calls) ? calls : [];
+  const safe = parallelNames || PARALLEL_READ_TOOLS;
+  const cap = Math.max(1, Math.min(parseInt(concurrency, 10) || 4, 8));
+  const out = [];
+  let reads = [];
+  const flushReads = async () => {
+    for (let i = 0; i < reads.length; i += cap) {
+      const batch = reads.slice(i, i + cap);
+      out.push(...(await Promise.all(batch.map((tc) => execute(tc)))));
+    }
+    reads = [];
+  };
+  for (const tc of items) {
+    if (safe.has(tc.name)) reads.push(tc);
+    else {
+      await flushReads(); // efeitos anteriores terminam antes de uma escrita/comando
+      out.push(await execute(tc));
+    }
+  }
+  await flushReads();
+  return out;
+}
+
 async function runAgent(cfg) {
   agentSeq = {}; // zera a numeração dos subagentes a cada turno (Programador 1, 2...)
   S().editedSinceTurn = false; // reseta o rastreio de edições (verificação automática)
@@ -7173,8 +7454,10 @@ async function runAgent(cfg) {
     historyTailCount: currentUser && currentUser.role === 'user' ? 1 : 0,
     messages: currentUser && currentUser.role === 'user' ? [cloneContextMessage(currentUser)] : [],
   };
-  const messages = [{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()];
-  let tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
+  const contractNote = taskContractPrompt(S().taskContract);
+  const messages = [{ role: 'system', content: buildSystemPrompt(cfg) + (contractNote ? '\n\n' + contractNote : '') }, ...contextMessagesForTurn()];
+  let tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg), toolsets: S().activeToolsets });
+  if (observedCapabilities(cfg).tools === false) tools = [];
   let full = '';
   let verifyAttempts = 0;
   let reviewed = false; // auto-revisão roda no máximo 1x por turno
@@ -7201,6 +7484,7 @@ async function runAgent(cfg) {
     let live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
     try {
       turn = await turnAdapter(runCfg)(runCfg, messages, tools, live.onToken, live.onThink);
+      if (tools.length) noteToolCapability(runCfg, true);
     } catch (e) {
       live.fail();
       if (S().abort && S().abort.signal.aborted) break; // parado pelo usuário
@@ -7212,7 +7496,8 @@ async function runAgent(cfg) {
         step--;
         continue;
       }
-      if (tools.length) {
+      if (tools.length && isExplicitToolUnsupportedError(e)) {
+        noteToolCapability(runCfg, false);
         tools = []; // modelo pode nao suportar ferramentas -> tenta sem
         live = liveStatsTracker(runCfg, messages, tools, { onToken, onThink });
         turn = await turnAdapter(runCfg)(runCfg, messages, tools, live.onToken, live.onThink);
@@ -7255,11 +7540,17 @@ async function runAgent(cfg) {
       const delegations = turn.toolCalls.filter((tc) => tc.name === 'delegate_to_agent');
       const others = turn.toolCalls.filter((tc) => tc.name !== 'delegate_to_agent');
 
-      for (const tc of others) {
+      const executedOthers = await executeToolCallsOrdered(others, async (tc) => {
         const args = parseToolArguments(tc.arguments);
         broadcast('chat:tool', { name: tc.name, args });
         const result = await runTool(tc.name, args);
         broadcast('chat:tool-result', { name: tc.name, args, result });
+        return { tc, args, result };
+      });
+
+      // Resultados voltam ao contexto na ordem original, mesmo quando leituras
+      // independentes foram executadas juntas.
+      for (const { tc, result } of executedOthers) {
         if (result && result._image) {
           // imagem (tela/página/arquivo) -> responde a tool e injeta como visão
           const note = result._imageNote || 'Esta é a captura da minha tela agora:';
@@ -7304,6 +7595,9 @@ async function runAgent(cfg) {
           S().pendingTurnTranscript.messages.push(cloneContextMessage(toolMessage));
         }
       }
+      // load_toolset pode ter expandido as capacidades durante esta rodada.
+      tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg), toolsets: S().activeToolsets });
+      if (observedCapabilities(runCfg).tools === false) tools = [];
       continue; // volta pro modelo com os resultados
     }
     full = turn.text;
@@ -7325,6 +7619,7 @@ async function runAgent(cfg) {
       reviewed = true;
       if (await maybeSelfReview(cfg, messages)) continue;
     }
+    if (maybeRequireCompletionEvidence(messages)) continue;
     // Também cobre steering recebido durante verificação/revisão assíncrona.
     if (continueAfterQueuedSteering(turn, messages)) {
       step--;
@@ -7746,6 +8041,10 @@ function toolTraceSummary(name, args, result) {
   if (name === 'delegate_to_agent') return compactText((result && (result.result || result.error)) || args.task || 'delegação', 280);
   return compactText(result, 280);
 }
+function looksLikeVerificationCommand(command) {
+  const c = String(command || '').trim().toLowerCase();
+  return /(?:^|[;&|]\s*)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|typecheck)\b|\b(?:pytest|jest|vitest|mocha|cargo\s+(?:test|check|clippy)|go\s+(?:test|vet|build)|dotnet\s+(?:test|build)|mvn\s+(?:test|verify|package)|gradle\w*\s+(?:test|build)|tsc\b|eslint\b|ruff\b|node\s+--check\b|python\s+-m\s+(?:pytest|compileall))/.test(c);
+}
 function recordToolTrace(name, args, result) {
   if (!S().currentTurnLog) return;
   const status = result && (result.error || result.isError || result.ok === false || Number(result.status) >= 400) ? 'failed' : 'success';
@@ -7763,6 +8062,26 @@ function recordToolTrace(name, args, result) {
   if (name === 'apply_patch' && status === 'success' && result && Array.isArray(result.files)) {
     for (const f of result.files) S().currentTurnLog.filesChanged.add(String(f));
   }
+  if (name === 'run_tests') {
+    S().currentTurnLog.verification.push({
+      command: compactText((result && result.command) || 'run_tests', 180),
+      ok: !!(result && result.ok === true),
+      summary: compactText((result && (result.output || result.error)) || '', 300),
+    });
+  } else if (name === 'get_problems' && result && !result.error && Array.isArray(result.tools) && result.tools.length) {
+    const errors = Number(result.errors != null ? result.errors : result.total) || 0;
+    S().currentTurnLog.verification.push({
+      command: 'get_problems',
+      ok: errors === 0,
+      summary: errors ? `${errors} erro(s) encontrado(s)` : 'nenhum erro encontrado',
+    });
+  } else if (name === 'run_command' && looksLikeVerificationCommand(args && args.command)) {
+    S().currentTurnLog.verification.push({
+      command: compactText(args.command, 180),
+      ok: status === 'success',
+      summary: toolTraceSummary(name, args || {}, result),
+    });
+  }
 }
 function beginTurnLog() {
   resetTurnGuards(); // anti-loop + leia-antes-de-editar zeram a cada turno novo
@@ -7776,6 +8095,56 @@ function beginTurnLog() {
     filesChanged: new Set(),
     verification: [],
   };
+}
+
+function taskContractFor(goal, cfg) {
+  const text = String(goal || '').trim();
+  const toolsets = inferToolsets(text, cfg);
+  const mutating = /\b(fa[cç]a|altere|adicione|implemente|corrija|conserte|remova|refatore|melhore|crie|atualize|continue|manda ver|resolve)\b/i.test(text);
+  return {
+    goal: compactText(text, 500),
+    toolsets,
+    requiresCodeEvidence: toolsets.has('code_write') && mutating,
+  };
+}
+
+function taskContractPrompt(contract) {
+  if (!contract || !contract.goal) return '';
+  return (
+    '# Contrato deste turno\n' +
+    `Objetivo: ${contract.goal}\n` +
+    (contract.requiresCodeEvidence
+      ? 'Critério de conclusão: não finalize após apenas editar. Releia/revise o diff e obtenha evidência proporcional (problemas, sintaxe, teste ou build) do subprojeto afetado. Diga exatamente o que foi verificado.'
+      : 'Critério de conclusão: resolva o objetivo diretamente e não execute trabalho fora do escopo.')
+  );
+}
+
+function changedCodeFiles(log) {
+  if (!log || !log.filesChanged || typeof log.filesChanged[Symbol.iterator] !== 'function') return [];
+  return Array.from(log.filesChanged).filter((f) => /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|fs|cpp|cc|cxx|c|h|hpp|php|rb|swift|dart|vue|svelte|astro|html|css|scss|sass|less|json|ya?ml|toml)$/i.test(String(f)));
+}
+
+function hasSuccessfulVerification(log) {
+  return !!(log && Array.isArray(log.verification) && log.verification.some((v) => v && v.ok === true));
+}
+
+function maybeRequireCompletionEvidence(messages) {
+  const contract = S().taskContract;
+  if (!contract || !contract.requiresCodeEvidence || S().completionGateUsed) return false;
+  const files = changedCodeFiles(S().currentTurnLog);
+  if (!files.length || hasSuccessfulVerification(S().currentTurnLog)) return false;
+  S().completionGateUsed = true;
+  const request = {
+    role: 'user',
+    content:
+      '[gate de conclusão] Você alterou código, mas ainda não há verificação bem-sucedida registrada. ' +
+      `Arquivos: ${files.slice(0, 12).join(', ')}. ` +
+      'Antes de concluir, revise o diff e rode a menor verificação pertinente ao subprojeto afetado (get_problems, run_tests focado ou comando de sintaxe/build). Se não for possível verificar, explique objetivamente o bloqueio e não afirme que passou.',
+  };
+  messages.push(request);
+  if (S().pendingTurnTranscript) S().pendingTurnTranscript.messages.push(cloneContextMessage(request));
+  broadcast('chat:note', { text: '🧪 código alterado — pedindo evidência antes de concluir' });
+  return true;
 }
 function finishTurnLog(outcome, status) {
   if (!S().currentTurnLog) return;
@@ -7879,7 +8248,7 @@ async function llmComplete(cfg, messages) {
 async function maybeSummarize(cfg) {
   if (S().history.length <= 4) return;
   const lim = contextLimits(cfg);
-  const tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
+  const tools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg), toolsets: S().activeToolsets });
   const projected = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], tools);
   if (projected < lim.promptBudget) return;
   let keptTokens = 0;
@@ -8987,14 +9356,24 @@ function openWorkspaceWindow(folder) {
 // a janela do editor se prende a uma pasta ('' = pasta global). Auto-limpa ao fechar.
 ipcMain.handle('ws:bind', (e, folder) => {
   const id = e.sender.id;
-  if (folder) {
-    winWorkspace.set(id, String(folder));
-    watchFolder(String(folder), id); // auto-refresh da pasta DESTA janela (árvore/abas/git)
-  } else winWorkspace.delete(id);
-  e.sender.once('destroyed', () => {
-    unwatchFolder(winWorkspace.get(id) || String(folder || ''), id);
+  workspaceWindows.add(id);
+  const remote = remoteMountForOwner(id, false);
+  if (remote) bindWindowWorkspace(id, remote.workspace); // reload da página não perde o mount ativo
+  else if (folder) bindWindowWorkspace(id, String(folder));
+  else {
+    const before = winWorkspace.get(id);
+    if (before) unwatchFolder(before, id);
     winWorkspace.delete(id);
-  });
+  }
+  if (!workspaceOwnerHooks.has(id)) {
+    workspaceOwnerHooks.add(id);
+    e.sender.once('destroyed', () => {
+      workspaceOwnerHooks.delete(id);
+      workspaceWindows.delete(id);
+      unwatchFolder(winWorkspace.get(id) || '', id);
+      winWorkspace.delete(id);
+    });
+  }
   return { workspace: winWorkspace.get(id) || rawWorkspace() || loadConfig().workspace || '' };
 });
 // abre uma OUTRA pasta numa nova janela de workspace (cada uma com seu editor + chat + IA)
@@ -10794,7 +11173,7 @@ function watchFolder(root, refKey) {
   } catch (e) {
     // fs.watch recursive indisponível (Linux antigo / FS de rede) -> polling leve como fallback
     let lastSig = '';
-    const remote = !!remoteMount; // workspace via SSHFS: poll mais espaçado e SEM stat (rede)
+    const remote = isRemoteWorkspace(root); // somente ESTE root usa polling de rede
     const pollTimer = setInterval(() => {
       try {
         // assinatura barata: nomes (+ mtime só no local) do 1º nível
@@ -12458,6 +12837,7 @@ async function handleChatSend(_e, payload) {
   const raw = typeof payload === 'string' ? payload : payload.text || '';
   const images = (payload && payload.images) || [];
   // a IA trabalha na PASTA DESTA JANELA (workspace window) — ou global se a janela não tem pasta própria
+  S().workspaceOwner = workspaceWindows.has(_e.sender.id) ? _e.sender.id : null;
   S().workspace = winWorkspace.get(_e.sender.id) || null;
   const cfg = effectiveChatConfig();
   const useClaudeCode = cfg.architectMode === true && cfg.codeEngine === 'claude-code';
@@ -12509,6 +12889,9 @@ async function runChatTurn(cfg, popUserOnError) {
   S().abort = new AbortController();
   S().cp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map(), bytes: 0 }; // checkpoint deste turno
   beginTurnLog();
+  S().taskContract = taskContractFor((S().currentTurnLog && S().currentTurnLog.goal) || '', cfg);
+  S().activeToolsets = new Set(S().taskContract.toolsets);
+  S().completionGateUsed = false;
   let full = '';
   let turnLogStatus = 'completed';
   try {
@@ -12532,9 +12915,10 @@ async function runChatTurn(cfg, popUserOnError) {
         engine: cfg.codeEngine,
       });
     } else {
-      const initialTools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg) });
+      const initialTools = cfg.toolsEnabled === false ? [] : toolSchemas({ delegate: agentsAvailable(cfg), toolsets: S().activeToolsets });
       const initialLim = contextLimits(cfg);
-      const initialCtx = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) }, ...contextMessagesForTurn()], initialTools);
+      const contractNote = taskContractPrompt(S().taskContract);
+      const initialCtx = promptTokenEstimate([{ role: 'system', content: buildSystemPrompt(cfg) + (contractNote ? '\n\n' + contractNote : '') }, ...contextMessagesForTurn()], initialTools);
       broadcast('chat:stats', {
         tps: 0,
         out: 0,
@@ -12615,6 +12999,9 @@ async function runChatTurn(cfg, popUserOnError) {
     S().running = false;
     S().abort = null;
     S().steerQueue = [];
+    S().activeToolsets = new Set();
+    S().taskContract = null;
+    S().completionGateUsed = false;
     sendToAll('chats:changed');
   }
 }
@@ -13048,23 +13435,29 @@ ipcMain.handle('tasks:run-now', (_e, id) => {
 
 // vigia do servidor remoto (opt-in): a cada ~5min checa disco e serviços caídos do host
 // montado e a Lumi AVISA (sem virar spam — só quando algo novo fica crítico)
-let srvWatchState = { disk: false, failed: '' };
+const srvWatchStates = new Map(); // ownerKey -> { disk, failed }
 setInterval(async () => {
-  if (!loadConfig().watchServer || !remoteMount || S().running || proactivityLevel() < 1) return;
-  try {
-    const out = await serverRun("echo D:$(df / | awk 'NR==2{print $5}'); echo F:$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | wc -l):$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | head -3 | awk '{print $1}' | tr '\\n' ' ')", 12000);
+  if (!loadConfig().watchServer || !remoteMounts.size || S().running || proactivityLevel() < 1) return;
+  for (const [ownerKey, remote] of remoteMounts) try {
+    const state = srvWatchStates.get(ownerKey) || { disk: false, failed: '' };
+    srvWatchStates.set(ownerKey, state);
+    const out = await serverRunWithContext(
+      { kind: 'remote', host: remote.host, ownerId: remote.ownerId },
+      "echo D:$(df / | awk 'NR==2{print $5}'); echo F:$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | wc -l):$(systemctl list-units --type=service --state=failed --no-legend --plain 2>/dev/null | head -3 | awk '{print $1}' | tr '\\n' ' ')",
+      12000
+    );
     const diskPct = parseInt((/D:(\d+)/.exec(out) || [])[1], 10) || 0;
     const fm = /F:(\d+):(.*)/.exec(out) || [];
     const failedN = parseInt(fm[1], 10) || 0;
     const failedList = (fm[2] || '').trim();
-    if (diskPct >= 90 && !srvWatchState.disk) {
-      srvWatchState.disk = true;
-      proactiveSay(await proactiveLLM('O disco do servidor ' + remoteMount.host + ' está em ' + diskPct + '% — avise com cuidado e sugira liberar espaço.', '⚠ O disco do ' + remoteMount.host + ' tá em ' + diskPct + '%! Bora liberar espaço? 😬'), 'surprised');
-    } else if (diskPct < 85) srvWatchState.disk = false; // histerese: só re-avisa se cair e subir de novo
-    if (failedN > 0 && failedList !== srvWatchState.failed) {
-      srvWatchState.failed = failedList;
-      proactiveSay(await proactiveLLM('Serviço(s) com falha no servidor ' + remoteMount.host + ': ' + failedList + '. Avise e ofereça ajuda (ver logs/reiniciar).', '⚠ Caiu serviço no ' + remoteMount.host + ': ' + failedList + ' — quer que eu veja os logs?'), 'sad');
-    } else if (failedN === 0) srvWatchState.failed = '';
+    if (diskPct >= 90 && !state.disk) {
+      state.disk = true;
+      proactiveSay(await proactiveLLM('O disco do servidor ' + remote.host + ' está em ' + diskPct + '% — avise com cuidado e sugira liberar espaço.', '⚠ O disco do ' + remote.host + ' tá em ' + diskPct + '%! Bora liberar espaço? 😬'), 'surprised');
+    } else if (diskPct < 85) state.disk = false; // histerese: só re-avisa se cair e subir de novo
+    if (failedN > 0 && failedList !== state.failed) {
+      state.failed = failedList;
+      proactiveSay(await proactiveLLM('Serviço(s) com falha no servidor ' + remote.host + ': ' + failedList + '. Avise e ofereça ajuda (ver logs/reiniciar).', '⚠ Caiu serviço no ' + remote.host + ': ' + failedList + ' — quer que eu veja os logs?'), 'sad');
+    } else if (failedN === 0) state.failed = '';
   } catch (e) {
     /* servidor inacessível no momento — ignora */
   }
@@ -13523,7 +13916,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   codexEngine.close();
   stopAppWatcher(); // encerra o powershell do app ativo
-  if (remoteMount) unmountRemote().catch(() => {}); // best-effort: solta o SSHFS
+  for (const remote of [...remoteMounts.values()]) unmountRemote(remote.ownerId, { restore: false }).catch(() => {}); // solta todos os SSHFS
   dbClose().catch(() => {}); // fecha conexão de banco
   if (cursorTimer) clearInterval(cursorTimer);
   if (hookOk) {

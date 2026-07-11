@@ -226,7 +226,7 @@ test('promptTokenEstimate cacheia e invalida quando o conteúdo muda de tamanho'
   assert.ok(t2 > t1, 'estimativa deveria crescer após o conteúdo dobrar');
 });
 
-const providers = load(['isNvidiaIntegrate', 'modelIdsFromResponse'], { URL });
+const providers = load(['isNvidiaIntegrate', 'isHuggingFaceRouter', 'modelIdsFromResponse'], { URL });
 test('NVIDIA NIM é detectada pela origem exata e catálogo de modelos é deduplicado', () => {
   assert.equal(providers.isNvidiaIntegrate({ baseUrl: 'https://integrate.api.nvidia.com/v1' }), true);
   assert.equal(providers.isNvidiaIntegrate({ baseUrl: 'https://evil.example/?next=integrate.api.nvidia.com' }), false);
@@ -234,6 +234,93 @@ test('NVIDIA NIM é detectada pela origem exata e catálogo de modelos é dedupl
     providers.modelIdsFromResponse({ data: [{ id: 'nvidia/b' }, { id: 'nvidia/a' }, { id: 'nvidia/b' }] }),
     ['nvidia/a', 'nvidia/b']
   );
+});
+
+test('Hugging Face Inference reconhece somente o router OpenAI-compatible oficial', () => {
+  assert.equal(providers.isHuggingFaceRouter({ baseUrl: 'https://router.huggingface.co/v1' }), true);
+  assert.equal(providers.isHuggingFaceRouter({ baseUrl: 'https://router.huggingface.co/v1/' }), true);
+  assert.equal(providers.isHuggingFaceRouter({ baseUrl: 'https://router.huggingface.co/hf-inference' }), false);
+  assert.equal(providers.isHuggingFaceRouter({ baseUrl: 'https://evil.example/?next=router.huggingface.co/v1' }), false);
+});
+
+// ---------- roteamento agentic (menos schemas, expansão sob demanda) ----------
+const routing = load(['CORE_TOOLS', 'TOOLSETS', 'inferToolsets', 'selectedToolNames'], {
+  agentsAvailable: () => false,
+});
+test('roteador carrega somente capacidades pertinentes e mantém o núcleo', () => {
+  const codeSets = routing.inferToolsets('corrija o bug no backend e rode os testes', { architectMode: true });
+  assert.ok(codeSets.has('code_read'));
+  assert.ok(codeSets.has('code_write'));
+  assert.ok(!codeSets.has('computer'));
+  const names = routing.selectedToolNames(codeSets, false);
+  assert.ok(names.has('read_file'));
+  assert.ok(names.has('run_tests'));
+  assert.ok(names.has('ask_user'));
+  assert.ok(names.has('load_toolset'));
+  assert.ok(!names.has('click'));
+  assert.ok(!names.has('delegate_to_agent'));
+
+  const reminderSets = routing.inferToolsets('me lembra daqui a 20 minutos', null);
+  assert.ok(reminderSets.has('reminders'));
+  assert.ok(routing.selectedToolNames(reminderSets, false).has('set_reminder'));
+});
+
+const capability = load(['isExplicitToolUnsupportedError', 'looksLikeVerificationCommand']);
+test('fallback sem ferramentas ocorre só quando o provedor declara falta de suporte', () => {
+  assert.equal(capability.isExplicitToolUnsupportedError(new Error('This model does not support tools')), true);
+  assert.equal(capability.isExplicitToolUnsupportedError(new Error('HTTP 429: too many requests')), false);
+  assert.equal(capability.isExplicitToolUnsupportedError(new Error("tool_calls[].function.arguments must be valid JSON")), false);
+});
+
+test('comandos de verificação são reconhecidos sem confundir comandos comuns', () => {
+  assert.equal(capability.looksLikeVerificationCommand('npm test'), true);
+  assert.equal(capability.looksLikeVerificationCommand('node --check src/main.js'), true);
+  assert.equal(capability.looksLikeVerificationCommand('python -m pytest -q'), true);
+  assert.equal(capability.looksLikeVerificationCommand('npm install'), false);
+  assert.equal(capability.looksLikeVerificationCommand('git status'), false);
+});
+
+const evidence = load(['changedCodeFiles', 'hasSuccessfulVerification']);
+test('gate de conclusão exige evidência apenas quando código foi alterado', () => {
+  const log = { filesChanged: new Set(['src/main.js', 'README.md']), verification: [] };
+  assert.deepEqual(Array.from(evidence.changedCodeFiles(log)), ['src/main.js']);
+  assert.equal(evidence.hasSuccessfulVerification(log), false);
+  log.verification.push({ command: 'node --check src/main.js', ok: true });
+  assert.equal(evidence.hasSuccessfulVerification(log), true);
+});
+
+const parallel = load(['READONLY_TOOLS', 'PARALLEL_READ_TOOLS', 'executeToolCallsOrdered']);
+test('toolsets cobrem todo o registro e paralelismo contém apenas leituras', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  const start = source.indexOf('const TOOLS = {');
+  const end = source.indexOf('// Toolsets sob demanda', start);
+  const actual = new Set([...source.slice(start, end).matchAll(/^  ([a-zA-Z0-9_]+): \{/gm)].map((m) => m[1]));
+  const routed = new Set(Array.from(routing.CORE_TOOLS));
+  for (const group of Object.values(routing.TOOLSETS)) for (const name of group) routed.add(name);
+  assert.deepEqual([...routed].filter((name) => !actual.has(name)), []);
+  assert.deepEqual([...actual].filter((name) => !routed.has(name)), []);
+  assert.deepEqual([...parallel.PARALLEL_READ_TOOLS].filter((name) => !parallel.READONLY_TOOLS.has(name)), []);
+});
+
+test('leituras paralelizam em lotes, mas escrita preserva a barreira e a ordem', async () => {
+  const events = [];
+  const calls = [{ name: 'read_file', id: 1 }, { name: 'grep_files', id: 2 }, { name: 'edit_file', id: 3 }, { name: 'read_file', id: 4 }];
+  const result = await parallel.executeToolCallsOrdered(
+    calls,
+    async (tc) => {
+      events.push('start' + tc.id);
+      await new Promise((resolve) => setTimeout(resolve, tc.id === 1 ? 12 : 2));
+      events.push('end' + tc.id);
+      return tc.id;
+    },
+    parallel.PARALLEL_READ_TOOLS,
+    4
+  );
+  assert.deepEqual(Array.from(result), [1, 2, 3, 4]);
+  assert.ok(events.indexOf('start2') < events.indexOf('end1'), 'as duas leituras deveriam se sobrepor');
+  assert.ok(events.indexOf('start3') > events.indexOf('end1'));
+  assert.ok(events.indexOf('start3') > events.indexOf('end2'));
+  assert.ok(events.indexOf('start4') > events.indexOf('end3'));
 });
 
 const rateLimit = load(['normalizedRequestRps', 'retryAfterMs']);
@@ -490,6 +577,29 @@ test('configuração por chat aceita só campos do motor e sobrepõe o padrão s
   assert.equal(effective.sounds, true);
   assert.deepEqual(global, { provider: 'openai', model: 'global', sounds: true, perms: { read: 'ask' } });
   assert.deepEqual(JSON.parse(JSON.stringify(chatCfg.applyChatConfig(global, null))), global);
+});
+
+test('mounts SSH ficam isolados por owner e o fallback global é explícito', () => {
+  const winWorkspace = new Map([[404, path.resolve('C:\\local')]]);
+  const ssh = load(['remoteMounts', 'remoteOwnerKey', 'remoteMountForOwner', 'isRemoteWorkspace', 'serverCtx'], {
+    winWorkspace,
+    IS_LINUX: false,
+  });
+  ssh.remoteMounts.set('global', { ownerId: null, host: 'global', workspace: path.resolve('Z:\\') });
+  ssh.remoteMounts.set('101', { ownerId: 101, host: 'janela-a', workspace: path.resolve('Y:\\') });
+  ssh.remoteMounts.set('202', { ownerId: 202, host: 'janela-b', workspace: path.resolve('X:\\') });
+
+  assert.equal(ssh.remoteOwnerKey(null), 'global');
+  assert.equal(ssh.remoteOwnerKey(101), '101');
+  assert.equal(ssh.remoteMountForOwner(101, true).host, 'janela-a');
+  assert.equal(ssh.remoteMountForOwner(202, false).host, 'janela-b');
+  assert.equal(ssh.remoteMountForOwner(303, false), null);
+  assert.equal(ssh.remoteMountForOwner(303, true).host, 'global');
+  assert.equal(ssh.isRemoteWorkspace(path.resolve('Y:\\')), true);
+  assert.equal(ssh.isRemoteWorkspace(path.resolve('W:\\')), false);
+  assert.equal(ssh.serverCtx({ sender: { id: 101 } }).host, 'janela-a');
+  assert.equal(ssh.serverCtx({ sender: { id: 404 } }).kind, 'none'); // janela local não herda remoto global
+  assert.equal(ssh.serverCtx({ sender: { id: 505 } }).host, 'global'); // janela sem binding segue o slot global legado
 });
 
 // ---------- parsers de diagnóstico ----------

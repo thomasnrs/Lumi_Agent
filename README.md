@@ -57,8 +57,8 @@ Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. J
 | | |
 |---|---|
 | 🧍 **Avatar vivo** | Janela transparente sempre no topo, click-through inteligente (clica através dela fora do corpo), olhos seguem o cursor, animações `.vrma`, emoções faciais reais (entende português: "empolgada", "melancólica"…), senta na barra de tarefas |
-| 🧠 **I.A. multi-provedor** | **22 provedores pré-cadastrados** (OpenCode Zen/Go, OpenAI, Anthropic, Gemini, NVIDIA NIM, Grok, Groq, DeepSeek, Mistral, OpenRouter, Blackbox, Kimi, GLM, Cerebras, Ollama/LM Studio local…) — com roteamento automático dos protocolos do OpenCode e loop completo de agente. Streaming, thinking, visão, fallback automático de modelo |
-| 🛠️ **Agente de verdade** | **~55 ferramentas** nativas com sistema de permissões (aprovação em **cards bonitos no chat**), turnos longos (até 200 passos) com compactação automática, checkpoints com **desfazer**, **guardrails** (comandos destrutivos bloqueados + arquivos protegidos), **anti-loop**, verificação automática com correção e **auto-revisão do próprio diff** antes de entregar |
+| 🧠 **I.A. multi-provedor** | **23 provedores pré-cadastrados** (OpenCode Zen/Go, OpenAI, Anthropic, Gemini, NVIDIA NIM, Hugging Face Inference, Grok, Groq, DeepSeek, Mistral, OpenRouter, Blackbox, Kimi, GLM, Cerebras, Ollama/LM Studio local…) — com roteamento automático dos protocolos do OpenCode e loop completo de agente. Streaming, thinking, visão, fallback automático de modelo |
+| 🛠️ **Agente de verdade** | **64 ferramentas** organizadas em toolsets sob demanda, com sistema de permissões (aprovação em **cards bonitos no chat**), leituras paralelas seguras, turnos longos (até 200 passos), checkpoints com **desfazer**, **guardrails**, **anti-loop** e gate de verificação antes de concluir alterações de código |
 | ✦ **Modo Claude Code** | No Modo Arquiteto, o chat pode ser assumido pelo **Claude Code oficial** usando a assinatura Claude Pro/Max via OAuth — sessões retomáveis por projeto, `CLAUDE.md`, skills, MCP, ferramentas, subagentes, streaming e permissões dentro da interface da Lumi, sem API key |
 | 🟢 **Modo GLM Code** | Usa o **GLM Coding Plan da Z.ai** através do harness do Claude Code — sem assinatura Claude ativa. Tem sessões próprias por chat/workspace, contexto de até 1M, ferramentas, agentes, skills, MCPs, perguntas e permissões dentro da Lumi |
 | ◇ **Modo Codex** | O **Codex oficial** assume o Modo Código usando o login ChatGPT compartilhado pelo CLI/extensão da OpenAI — threads por chat/workspace, `AGENTS.md`, skills, plugins, MCPs, comandos, diffs, planos, subagentes, aprovações e usage ao vivo, sem copiar credenciais |
@@ -203,6 +203,11 @@ catálogo geral também contém NIMs especializados que não são modelos de con
 endpoint responder `too_many_requests`, defina em **Configurações → I.A. → Limite de
 requisições (RPS)** um valor como `1`; `0` mantém o modo automático/sem limite local.
 
+**Hugging Face Inference Providers:** escolha `Hugging Face Inference`, gere um token
+`hf_...` pelo atalho da Lumi e atualize a lista de modelos. O router usa Chat Completions
+OpenAI-compatible com streaming e ferramentas. Você pode fixar um backend no próprio ID
+(`zai-org/GLM-5.2:novita`) ou usar as políticas `:preferred` e `:fastest` quando disponíveis.
+
 Para usar o **Modo Codex**, instale o [Codex CLI](https://developers.openai.com/codex/cli/) ou a extensão oficial da OpenAI no VS Code/Cursor e entre com sua conta ChatGPT. A Lumi detecta o executável e reutiliza a autenticação gerenciada pelo próprio Codex; ela **não lê nem salva seu token**. Para o **Modo Claude Code**, use o botão de login da seção correspondente nas Configurações. Para o **Modo GLM Code**, informe sua chave do [GLM Coding Plan](https://docs.z.ai/devpack/tool/claude): a Lumi injeta a chave e o endpoint da Z.ai somente no processo isolado desse motor, sem alterar a configuração global do Claude Code.
 
 > A avatar padrão (**Cerberia**, liberada pra distribuição) e as animações `.vrma` (packs gratuitos: motions oficiais do VRoid + gestos do [vrm-viewer](https://github.com/tk256ailab/vrm-viewer)) **já vêm no repositório**. Outros `.vrm` ficam de fora por licença — cada um traz o seu.
@@ -292,7 +297,7 @@ A Lumi é **gratuita e open source**, feita por uma pessoa só à base de café 
 
 ## 🗺️ Roadmap
 
-✅ Avatar vivo · ✅ I.A. multi-provedor (22 presets, favoritos ★) · ✅ Claude Code + GLM Code + Codex · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH, Problemas) · ✅ Multi-janela e turnos paralelos · ✅ Harness de excelência (guardrails, anti-loop, auto-revisão, diagnósticos, testes focados) · ✅ Modo econômico para PCs modestos · ✅ Tarefas agendadas · ✅ Sentinela de logs · ✅ Proatividade com contexto · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · ✅ Testes do próprio harness (`npm test`) · 🔜 i18n (EN) · 🎯 **Steam**
+✅ Avatar vivo · ✅ I.A. multi-provedor (23 presets, favoritos ★) · ✅ Claude Code + GLM Code + Codex · ✅ Voz + lip-sync · ✅ Memória & personalidade · ✅ Agente + multi-agentes · ✅ Workspace completo (git, Live Server, navegador, Docker, terminal PTY, remoto SSH, Problemas) · ✅ Multi-janela e turnos paralelos · ✅ Harness de excelência (guardrails, anti-loop, auto-revisão, diagnósticos, testes focados) · ✅ Modo econômico para PCs modestos · ✅ Tarefas agendadas · ✅ Sentinela de logs · ✅ Proatividade com contexto · ✅ Identidade visual · ✅ Transparência (memória + gastômetro) · ✅ Wizard de primeiro uso · ✅ Auto-update + CI (Releases) · ✅ Testes do próprio harness (`npm test`) · 🔜 i18n (EN) · 🎯 **Steam**
 
 ---
 
