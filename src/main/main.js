@@ -2376,7 +2376,7 @@ function buildSystemPrompt(cfg) {
     const mem = pctx.mem ? pctx.mem.slice(0, memChars) : '(memória do projeto ainda vazia — crie uma com update_project_memory)';
     const det = detectStackCached(cfg.workspace);
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
-    const remote = remoteMountForWorkspace(ws) || remoteMountForSession(S());
+    const remote = remoteMountForWorkspace(cfg.workspace) || remoteMountForSession(S());
     if (remote) {
       proj +=
         `\nExecução remota ativa: SSH ${remote.host}, pasta ${remote.remotePath || '.'}. ` +
@@ -3797,6 +3797,7 @@ function createTerminal(opts) {
     pty: false,
     title,
     buf: '',
+    cwd,
     ai: !!o.ai,
     owner: o.owner != null ? o.owner : null,
     remoteHost: o.remoteHost || '',
@@ -6953,7 +6954,7 @@ const TOOLS = {
       const label = nextAgentLabel(p.name); // ex.: "Programador 1", "Programador 2"...
       broadcast('chat:agent', { name: label, task: String(task || ''), phase: 'start' });
       try {
-        const result = await runSubAgent(cfg, p, String(task || ''), label);
+        const result = await runSubAgentWithIsolation(cfg, p, String(task || ''), label);
         broadcast('chat:agent', { name: label, phase: 'done' });
         return { agent: label, result };
       } catch (e) {
@@ -7124,6 +7125,9 @@ const WORKSPACE_EXCLUSIVE_TOOLS = new Set([
   ...WRITE_TOOLS, 'update_project_memory', 'generate_project_doc', 'run_command', 'run_in_terminal', 'run_tests', 'get_problems', 'git_status', 'git_diff', 'db_query',
 ]);
 const workspaceMutationTails = new Map();
+const agentWorktreeSetupTails = new Map();
+const AGENT_WRITE_TOOLS = new Set([...WRITE_TOOLS, 'update_project_memory', 'generate_project_doc']);
+let agentWorktreeSeq = 0;
 async function withKeyedLock(tails, key, fn) {
   if (!key) return fn();
   const previous = tails.get(key) || Promise.resolve();
@@ -7143,6 +7147,291 @@ function withWorkspaceMutationLock(name, fn) {
   if (!WORKSPACE_EXCLUSIVE_TOOLS.has(name)) return fn();
   const workspace = path.resolve(S().workspace || loadConfig().workspace || process.cwd()).toLowerCase();
   return withKeyedLock(workspaceMutationTails, workspace, fn);
+}
+
+function agentCanWrite(agent) {
+  return !!(agent && Array.isArray(agent.tools) && agent.tools.some((name) => AGENT_WRITE_TOOLS.has(name)));
+}
+
+function safeWorktreeRel(value) {
+  const rel = String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  const escapes = rel.split('/').some((part) => part === '..');
+  return rel && !path.isAbsolute(rel) && !escapes ? rel : '';
+}
+
+async function localGit(cwd, args, opts) {
+  return execFileAsync('git', args, {
+    cwd,
+    timeout: 30000,
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+    ...(opts || {}),
+  });
+}
+
+async function gitPathList(cwd, args) {
+  const { stdout } = await localGit(cwd, args);
+  return String(stdout || '').split('\0').map(safeWorktreeRel).filter(Boolean);
+}
+
+async function gitBlobFingerprint(root, rel) {
+  const safe = safeWorktreeRel(rel);
+  if (!safe) return '!invalid';
+  const abs = path.join(root, safe);
+  try {
+    const st = fs.lstatSync(abs);
+    if (st.isDirectory()) return '!dir';
+  } catch (e) {
+    return '!missing';
+  }
+  try {
+    const { stdout } = await localGit(root, ['hash-object', `--path=${safe}`, '--', safe]);
+    return String(stdout || '').trim() || '!missing';
+  } catch (e) {
+    return '!missing';
+  }
+}
+
+async function baselineFingerprint(ctx, rel) {
+  if (ctx.untrackedBaseline && Object.prototype.hasOwnProperty.call(ctx.untrackedBaseline, rel))
+    return ctx.untrackedBaseline[rel];
+  try {
+    const { stdout } = await localGit(ctx.worktreeRoot, ['rev-parse', `${ctx.baseCommit}:${safeWorktreeRel(rel)}`]);
+    return String(stdout || '').trim() || '!missing';
+  } catch (e) {
+    return '!missing';
+  }
+}
+
+function copyIsolatedFile(from, to) {
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  try {
+    fs.rmSync(to, { recursive: true, force: true });
+  } catch (e) {
+    /* destino ainda não existe */
+  }
+  const st = fs.lstatSync(from);
+  if (st.isSymbolicLink()) {
+    const kind = process.platform === 'win32' && fs.statSync(from).isDirectory() ? 'junction' : undefined;
+    fs.symlinkSync(fs.readlinkSync(from), to, kind);
+  }
+  else fs.copyFileSync(from, to);
+}
+
+async function linkWorktreeDependencies(sourceWorkspace, isolatedWorkspace) {
+  const roots = discoverProjectDirs(sourceWorkspace).map((x) => x.rel || '');
+  for (const rel of new Set(['', ...roots])) {
+    for (const name of ['node_modules', '.venv', 'venv']) {
+      const source = path.join(sourceWorkspace, rel, name);
+      const target = path.join(isolatedWorkspace, rel, name);
+      try {
+        if (!fs.existsSync(source) || fs.existsSync(target)) continue;
+        const gitRel = path.relative(sourceWorkspace, source).replace(/\\/g, '/');
+        await localGit(sourceWorkspace, ['check-ignore', '-q', '--', gitRel]);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.symlinkSync(source, target, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch (e) {
+        /* dependência não ignorada, sem permissão de link ou ausente — segue isolado */
+      }
+    }
+  }
+}
+
+async function createAgentWorktree(cfg, label) {
+  if (!cfg.workspace || remoteMountForWorkspace(cfg.workspace) || remoteMountForSession(S())) return null;
+  let repoRoot = '';
+  try {
+    const { stdout } = await localGit(cfg.workspace, ['rev-parse', '--show-toplevel']);
+    repoRoot = String(stdout || '').trim();
+  } catch (e) {
+    return null; // workspace sem Git: mantém a serialização antiga
+  }
+  const workspaceRel = path.relative(repoRoot, cfg.workspace);
+  if (workspaceRel === '..' || workspaceRel.startsWith('..' + path.sep)) return null;
+  const baseDir = path.join(app.getPath('temp'), 'lumi-agent-worktrees');
+  fs.mkdirSync(baseDir, { recursive: true });
+  const id = `${Date.now().toString(36)}-${(++agentWorktreeSeq).toString(36)}-${sanitizeName(label || 'agent').toLowerCase()}`;
+  const worktreeRoot = path.join(baseDir, id);
+  const patchFile = path.join(baseDir, id + '.baseline.patch');
+  try {
+    await localGit(repoRoot, ['worktree', 'add', '--detach', worktreeRoot, 'HEAD'], { timeout: 60000 });
+    const { stdout: dirtyPatch } = await localGit(repoRoot, ['diff', '--binary', 'HEAD']);
+    if (dirtyPatch) {
+      fs.writeFileSync(patchFile, dirtyPatch, 'utf8');
+      await localGit(worktreeRoot, ['apply', '--whitespace=nowarn', patchFile]);
+    }
+    const untracked = await gitPathList(repoRoot, ['ls-files', '--others', '--exclude-standard', '-z']);
+    let copied = 0;
+    for (const rel of untracked) {
+      const source = path.join(repoRoot, rel);
+      try {
+        const st = fs.lstatSync(source);
+        if (!st.isFile() && !st.isSymbolicLink()) continue;
+        copied += st.size || 0;
+        if (copied > 128 * 1024 * 1024) throw new Error('arquivos não rastreados excedem 128 MB');
+        copyIsolatedFile(source, path.join(worktreeRoot, rel));
+      } catch (e) {
+        if (/128 MB/.test(String(e && e.message))) throw e;
+      }
+    }
+    const untrackedBaseline = {};
+    for (const rel of untracked) untrackedBaseline[rel] = await gitBlobFingerprint(worktreeRoot, rel);
+    // Um commit sintético fixa o snapshot RASTREADO visto pelo agente. Arquivos
+    // não rastreados ficam apenas no disco + fingerprint em memória: segredos nunca
+    // são transformados em objetos Git temporários.
+    await localGit(worktreeRoot, ['add', '-u']);
+    const hooksDir = path.join(baseDir, '.empty-hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    await localGit(worktreeRoot, [
+      '-c', `core.hooksPath=${hooksDir}`,
+      '-c', 'user.name=Lumi Isolated Agent', '-c', 'user.email=lumi-agent@local',
+      'commit', '--allow-empty', '--no-gpg-sign', '-m', `lumi baseline: ${label || 'agent'}`,
+    ]);
+    const { stdout: base } = await localGit(worktreeRoot, ['rev-parse', 'HEAD']);
+    const ctx = {
+      repoRoot,
+      sourceWorkspace: cfg.workspace,
+      workspaceRel,
+      worktreeRoot,
+      isolatedWorkspace: path.join(worktreeRoot, workspaceRel),
+      baseCommit: String(base || '').trim(),
+      untrackedBaseline,
+      label: label || 'agente',
+    };
+    await linkWorktreeDependencies(cfg.workspace, ctx.isolatedWorkspace);
+    return ctx;
+  } catch (e) {
+    try {
+      await localGit(repoRoot, ['worktree', 'remove', '--force', worktreeRoot]);
+    } catch (_) {}
+    throw new Error('não consegui criar o worktree isolado: ' + String((e && e.message) || e));
+  } finally {
+    try {
+      fs.unlinkSync(patchFile);
+    } catch (e) {}
+  }
+}
+
+async function changedWorktreePaths(ctx) {
+  const tracked = await gitPathList(ctx.worktreeRoot, ['diff', '--name-only', '-z', ctx.baseCommit, '--']);
+  const untracked = await gitPathList(ctx.worktreeRoot, ['ls-files', '--others', '--exclude-standard', '-z']);
+  const changedUntracked = [];
+  for (const rel of untracked) {
+    const before = ctx.untrackedBaseline && ctx.untrackedBaseline[rel];
+    const now = await gitBlobFingerprint(ctx.worktreeRoot, rel);
+    if (!before || before !== now) changedUntracked.push(rel);
+  }
+  // Também detecta arquivo não rastreado do snapshot que o agente apagou.
+  for (const rel of Object.keys(ctx.untrackedBaseline || {})) {
+    if (!untracked.includes(rel)) changedUntracked.push(rel);
+  }
+  return [...new Set([...tracked, ...changedUntracked])].sort();
+}
+
+function textForDiff(abs) {
+  try {
+    const b = fs.readFileSync(abs);
+    if (b.length > 1024 * 1024 || b.includes(0)) return null;
+    return b.toString('utf8');
+  } catch (e) {
+    return '';
+  }
+}
+
+function planAgentIntegration(changed, baseline, agent, current) {
+  const plan = [];
+  const conflicts = [];
+  for (const rel of changed || []) {
+    const before = baseline[rel] == null ? '!missing' : baseline[rel];
+    const after = agent[rel] == null ? '!missing' : agent[rel];
+    const now = current[rel] == null ? '!missing' : current[rel];
+    if (after === before) continue;
+    if (now !== before) conflicts.push(rel);
+    else plan.push({ rel, agent: after });
+  }
+  return { plan, conflicts };
+}
+
+async function saveAgentConflict(ctx, conflicts, changed) {
+  const dir = path.join(app.getPath('userData'), 'agent-conflicts', path.basename(ctx.worktreeRoot));
+  fs.mkdirSync(dir, { recursive: true });
+  const { stdout: patch } = await localGit(ctx.worktreeRoot, ['diff', '--binary', ctx.baseCommit, '--']);
+  fs.writeFileSync(path.join(dir, 'changes.patch'), patch || '', 'utf8');
+  fs.writeFileSync(path.join(dir, 'README.txt'), `Agente: ${ctx.label}\nConflitos: ${conflicts.join(', ')}\n`, 'utf8');
+  // O patch do Git não inclui arquivos novos ainda não rastreados. Guarda também
+  // a árvore final tocada pelo agente para nenhum resultado ficar irrecuperável.
+  let copied = 0;
+  for (const rel of changed || []) {
+    const source = path.join(ctx.worktreeRoot, rel);
+    const target = path.join(dir, 'files', rel);
+    try {
+      const st = fs.lstatSync(source);
+      copied += st.size || 0;
+      if (copied > 128 * 1024 * 1024) break;
+      copyIsolatedFile(source, target);
+    } catch (e) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target + '.deleted', 'arquivo removido pelo agente\n', 'utf8');
+    }
+  }
+  return dir;
+}
+
+async function integrateAgentWorktree(ctx) {
+  const changed = await changedWorktreePaths(ctx);
+  if (!changed.length) return { ok: true, files: [], note: 'o agente não alterou arquivos' };
+  return withKeyedLock(workspaceMutationTails, path.resolve(ctx.sourceWorkspace).toLowerCase(), async () => {
+    const baseline = {};
+    const agent = {};
+    const current = {};
+    for (const rel of changed) {
+      baseline[rel] = await baselineFingerprint(ctx, rel);
+      agent[rel] = await gitBlobFingerprint(ctx.worktreeRoot, rel);
+      current[rel] = await gitBlobFingerprint(ctx.repoRoot, rel);
+    }
+    const { plan, conflicts } = planAgentIntegration(changed, baseline, agent, current);
+    if (conflicts.length) {
+      const savedAt = await saveAgentConflict(ctx, conflicts, changed);
+      return { error: 'conflito ao integrar o worktree: ' + conflicts.join(', '), conflicts, savedAt };
+    }
+    const files = [];
+    for (const item of plan) {
+      const source = path.join(ctx.worktreeRoot, item.rel);
+      const target = path.join(ctx.repoRoot, item.rel);
+      const display = path.relative(ctx.sourceWorkspace, target).replace(/\\/g, '/');
+      snapshotForCheckpoint(target);
+      const oldText = textForDiff(target);
+      if (item.agent === '!missing') fs.rmSync(target, { recursive: true, force: true });
+      else copyIsolatedFile(source, target);
+      const newText = textForDiff(target);
+      if (oldText != null && newText != null) broadcastDiff(display, oldText, newText);
+      files.push(display);
+      if (S().currentTurnLog) S().currentTurnLog.filesChanged.add(display);
+    }
+    if (files.length) {
+      S().editedSinceTurn = true;
+      S().stateSeq++;
+      invalidateProjCtx(ctx.sourceWorkspace);
+      invalidateStackCache(ctx.sourceWorkspace);
+      broadcast('workspace:changed');
+    }
+    return { ok: true, files };
+  });
+}
+
+async function cleanupAgentWorktree(ctx) {
+  if (!ctx) return;
+  // Processos longos iniciados dentro do snapshot não podem sobreviver à pasta.
+  for (const rec of terminals.values()) {
+    const cwd = String(rec.cwd || '');
+    if (cwd && path.resolve(cwd).startsWith(path.resolve(ctx.worktreeRoot) + path.sep)) termKill(rec);
+  }
+  try {
+    await localGit(ctx.repoRoot, ['worktree', 'remove', '--force', ctx.worktreeRoot], { timeout: 60000 });
+    await localGit(ctx.repoRoot, ['worktree', 'prune']);
+  } catch (e) {
+    logd('agent worktree cleanup falhou', ctx.worktreeRoot, String((e && e.message) || e));
+  }
 }
 
 const ARTIFACT_MIN_CHARS = 12000;
@@ -7779,6 +8068,60 @@ async function runSubAgent(cfg, agent, task, label) {
     else full = '(o agente finalizou sem produzir texto)';
   }
   return full;
+}
+
+async function runSubAgentWithIsolation(cfg, agent, task, label) {
+  if (!agentCanWrite(agent)) return runSubAgent(cfg, agent, task, label);
+  const parent = S();
+  let ctx = null;
+  try {
+    const setupKey = path.resolve(cfg.workspace || process.cwd()).toLowerCase();
+    ctx = await withKeyedLock(agentWorktreeSetupTails, setupKey, () => createAgentWorktree(cfg, label));
+  } catch (e) {
+    logd('agent worktree indisponível; usando serialização', String((e && e.message) || e));
+    broadcast('chat:note', { text: `⚠ ${label}: isolamento Git indisponível; usando escrita serializada segura` });
+  }
+  if (!ctx) return runSubAgent(cfg, agent, task, label); // SSH, sem Git ou workspace ausente
+  broadcast('chat:note', { text: `🌿 ${label} trabalhando em snapshot Git isolado` });
+  const isolated = makeSession(parent.id);
+  isolated.workspace = ctx.isolatedWorkspace;
+  isolated.workspaceOwner = parent.workspaceOwner;
+  isolated.abort = parent.abort;
+  isolated.history = parent.history;
+  isolated.convSummary = parent.convSummary;
+  isolated.worklog = parent.worklog;
+  isolated.currentTurnLog = parent.currentTurnLog; // evidências entram no turno principal
+  isolated.chatConfig = parent.chatConfig;
+  isolated.taskContract = parent.taskContract;
+  let result = '';
+  let failure = null;
+  let integrated = null;
+  try {
+    result = await sessionALS.run(isolated, () =>
+      runSubAgent({ ...cfg, workspace: ctx.isolatedWorkspace }, agent, task, label)
+    );
+  } catch (e) {
+    failure = e;
+  }
+  try {
+    integrated = await integrateAgentWorktree(ctx);
+    if (integrated && integrated.error) {
+      broadcast('chat:note', {
+        text: `⚠ ${label}: alterações isoladas não foram aplicadas por conflito (${integrated.conflicts.join(', ')}). Cópia salva em ${integrated.savedAt}`,
+      });
+    } else if (integrated && integrated.files.length) {
+      broadcast('chat:note', { text: `🌿 ${label}: ${integrated.files.length} arquivo(s) integrado(s) com segurança` });
+    }
+  } finally {
+    await cleanupAgentWorktree(ctx);
+  }
+  if (integrated && integrated.error) {
+    const detail = `\n\n[isolamento Git] ${integrated.error}. Cópia recuperável: ${integrated.savedAt}`;
+    if (failure) failure.message = String(failure.message || failure) + detail;
+    else result = String(result || '') + detail;
+  }
+  if (failure) throw failure;
+  return result;
 }
 
 function injectQueuedSteering(messages) {

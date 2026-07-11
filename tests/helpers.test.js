@@ -5,6 +5,8 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
 const { load } = require('./_extract');
 
 // ---------- navegação de código (símbolo/bloco/contexto) ----------
@@ -385,6 +387,84 @@ test('leituras paralelizam em lotes, mas escrita preserva a barreira e a ordem',
   assert.ok(events.indexOf('start3') > events.indexOf('end1'));
   assert.ok(events.indexOf('start3') > events.indexOf('end2'));
   assert.ok(events.indexOf('start4') > events.indexOf('end3'));
+});
+
+// ---------- isolamento de subagentes escritores (Git worktrees) ----------
+const worktrees = load(['WRITE_TOOLS', 'AGENT_WRITE_TOOLS', 'agentCanWrite', 'safeWorktreeRel', 'planAgentIntegration']);
+
+test('somente subagentes com ferramentas de escrita pedem worktree', () => {
+  assert.equal(worktrees.agentCanWrite({ tools: ['read_file', 'grep_files'] }), false);
+  assert.equal(worktrees.agentCanWrite({ tools: ['read_file', 'edit_file'] }), true);
+  assert.equal(worktrees.agentCanWrite({ tools: ['update_project_memory'] }), true);
+});
+
+test('caminhos de worktree rejeitam escape do repositório', () => {
+  assert.equal(worktrees.safeWorktreeRel('src/main.js'), 'src/main.js');
+  assert.equal(worktrees.safeWorktreeRel('src\\main.js'), 'src/main.js');
+  assert.equal(worktrees.safeWorktreeRel('../fora.txt'), '');
+  assert.equal(worktrees.safeWorktreeRel('src/../../fora.txt'), '');
+  assert.equal(worktrees.safeWorktreeRel('src/..'), '');
+});
+
+test('integração de worktree aceita arquivos independentes e bloqueia sobreposição', () => {
+  const clean = worktrees.planAgentIntegration(
+    ['a.js', 'b.js'],
+    { 'a.js': 'base-a', 'b.js': 'base-b' },
+    { 'a.js': 'agent-a', 'b.js': 'base-b' },
+    { 'a.js': 'base-a', 'b.js': 'outro-b' }
+  );
+  assert.deepEqual(clean.plan, [{ rel: 'a.js', agent: 'agent-a' }]);
+  assert.deepEqual(clean.conflicts, []);
+
+  const overlap = worktrees.planAgentIntegration(
+    ['a.js'],
+    { 'a.js': 'base' },
+    { 'a.js': 'agente-2' },
+    { 'a.js': 'agente-1' }
+  );
+  assert.deepEqual(overlap.plan, []);
+  assert.deepEqual(overlap.conflicts, ['a.js']);
+});
+
+test('worktree real nasce do snapshot sujo e detecta somente a edição do agente', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-worktree-test-'));
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-worktree-base-'));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'a.txt'), 'commitado\n');
+  execFileSync('git', ['add', 'a.txt'], { cwd: root });
+  execFileSync('git', ['-c', 'user.name=Teste', '-c', 'user.email=teste@local', 'commit', '-q', '-m', 'base'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'a.txt'), 'alteração local\n');
+  fs.writeFileSync(path.join(root, 'segredo-local.txt'), 'não grave isto em objeto Git\n');
+
+  const runtime = load(
+    ['safeWorktreeRel', 'localGit', 'gitPathList', 'gitBlobFingerprint', 'copyIsolatedFile', 'linkWorktreeDependencies', 'createAgentWorktree', 'changedWorktreePaths'],
+    {
+      fs,
+      process,
+      execFileAsync: promisify(execFile),
+      app: { getPath: () => temp },
+      agentWorktreeSeq: 0,
+      remoteMountForWorkspace: () => null,
+      remoteMountForSession: () => null,
+      S: () => ({}),
+      discoverProjectDirs: () => [],
+      sanitizeName: (s) => String(s).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 48),
+    }
+  );
+  const ctx = await runtime.createAgentWorktree({ workspace: root }, 'Programador 1');
+  t.after(() => {
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', ctx.worktreeRoot], { cwd: root });
+      execFileSync('git', ['worktree', 'prune'], { cwd: root });
+    } catch (e) {}
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(temp, { recursive: true, force: true });
+  });
+  assert.equal(fs.readFileSync(path.join(ctx.worktreeRoot, 'a.txt'), 'utf8').replace(/\r\n/g, '\n'), 'alteração local\n');
+  assert.equal(fs.readFileSync(path.join(ctx.worktreeRoot, 'segredo-local.txt'), 'utf8'), 'não grave isto em objeto Git\n');
+  assert.throws(() => execFileSync('git', ['cat-file', '-e', `${ctx.baseCommit}:segredo-local.txt`], { cwd: ctx.worktreeRoot, stdio: 'ignore' }));
+  fs.writeFileSync(path.join(ctx.worktreeRoot, 'a.txt'), 'edição do agente\n');
+  assert.deepEqual(await runtime.changedWorktreePaths(ctx), ['a.txt']);
 });
 
 const rateLimit = load(['normalizedRequestRps', 'retryAfterMs']);
