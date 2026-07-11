@@ -32,7 +32,7 @@ Um avatar 3D que vive no seu desktop — conversa, vê, fala, ouve, lembra…
 
 ---
 
-**Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com **~55 ferramentas**, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até **pastas remotas via SSH**), voz, visão e memória que você enxerga e controla.
+**Lumi** é uma companheira 3D persistente na sua área de trabalho: um avatar VRM sempre visível, arrastável e reativo, com um **harness de I.A. completo** integrado — chat multi-provedor, agente com **65 ferramentas**, multi-agentes paralelos, editor de código estilo VS Code com git, Live Server, navegador, Docker e terminal PTY embutidos (até **pastas remotas via SSH**), voz, visão e memória que você enxerga e controla.
 
 Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. Já vem **montadinha**: a avatar **Cerberia** e as animações estão no repositório (troque por qualquer `.vrm` quando quiser). As chaves de I.A. são suas (**BYOK** — *bring your own key*; provedores grátis e proxies locais sem chave também funcionam).
 
@@ -170,7 +170,7 @@ Plugue servidores MCP externos (GitHub, bancos, o que quiser) — as ferramentas
 - **🌐 Navegador embutido**: acesse o `localhost` dos seus dev servers (Vite, Node…) numa aba — com 🎯 apontar e um badge de **erros do console** que manda tudo pra Lumi corrigir.
 - **🐳 Docker integrado**: aba com containers ao vivo (iniciar/parar/logs/shell direto no terminal), barra **docker-compose** (up/down/logs) — e ela *sabe* se Docker/WSL estão disponíveis na máquina.
 - **Perfis de terminal** (▾): PowerShell, CMD, Git Bash, distros **WSL**, venv Python do projeto e seus hosts **SSH** do `~/.ssh/config`. E o **✦ corrigir**: manda a saída do terminal pro chat com um clique.
-- **📡 Pasta remota (SSH)**: monte um diretório do seu servidor via SSHFS e o workspace inteiro — editor, git, busca, **e a própria Lumi** — trabalha nele como se fosse local (estilo Remote-SSH).
+- **📡 Pasta remota (SSH)**: monte um diretório do servidor via SSHFS e o workspace inteiro trabalha nele. Comandos, testes, linters, formatadores, Git e terminais da Lumi são roteados automaticamente para o host e a pasta remota; execução local continua disponível como opção explícita.
 - **🧰 Tarefas**: os scripts do `package.json`/`Makefile` viram menu de 1 clique; **🌍 expor porta** cria um túnel público (cloudflared/ngrok) com URL na hora.
 - **🐙 GitHub** (com o `gh` CLI): status do CI da branch, PRs abertos e **✦PR** — ela escreve título e descrição olhando seus commits e cria o Pull Request.
 - **Seleção → Lumi**: clique direito em qualquer trecho de código — *enviar*, *explicar* ou *refatorar* com ela, direto no chat lateral.

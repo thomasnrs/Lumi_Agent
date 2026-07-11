@@ -335,6 +335,24 @@ test('lock por workspace serializa mutações concorrentes sem bloquear chaves d
   assert.equal(tails.size, 0);
 });
 
+test('numeração de agentes e checkpoints não vazam entre conversas paralelas', () => {
+  let active = { agentSeq: {} };
+  const isolated = load(['nextAgentLabel', 'checkpointUndoBatch'], { S: () => active });
+  assert.equal(isolated.nextAgentLabel('Programador'), 'Programador 1');
+  active = { agentSeq: {} };
+  assert.equal(isolated.nextAgentLabel('Programador'), 'Programador 1');
+
+  const all = [
+    { id: 'a1', sessionId: 'a' },
+    { id: 'b1', sessionId: 'b' },
+    { id: 'a2', sessionId: 'a' },
+    { id: 'b2', sessionId: 'b' },
+  ];
+  const batch = isolated.checkpointUndoBatch(all, 'a1');
+  assert.deepEqual(Array.from(batch.undo, (x) => x.id), ['a2', 'a1']);
+  assert.deepEqual(Array.from(batch.remaining, (x) => x.id), ['b1', 'b2']);
+});
+
 const parallel = load(['READONLY_TOOLS', 'PARALLEL_READ_TOOLS', 'executeToolCallsOrdered']);
 test('toolsets cobrem todo o registro e paralelismo contém apenas leituras', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
@@ -627,12 +645,12 @@ test('configuração por chat aceita só campos do motor e sobrepõe o padrão s
 
 test('mounts SSH ficam isolados por owner e o fallback global é explícito', () => {
   const winWorkspace = new Map([[404, path.resolve('C:\\local')]]);
-  const ssh = load(['remoteMounts', 'remoteOwnerKey', 'remoteMountForOwner', 'isRemoteWorkspace', 'serverCtx'], {
-    winWorkspace,
-    IS_LINUX: false,
-  });
-  ssh.remoteMounts.set('global', { ownerId: null, host: 'global', workspace: path.resolve('Z:\\') });
-  ssh.remoteMounts.set('101', { ownerId: 101, host: 'janela-a', workspace: path.resolve('Y:\\') });
+  const ssh = load(
+    ['remoteMounts', 'remoteOwnerKey', 'remoteMountForOwner', 'remoteMountForWorkspace', 'remoteMountForSession', 'posixShellQuote', 'remoteWorkingDirectory', 'remoteCwdArgument', 'remotePathForLocal', 'remoteExecutableName', 'remoteShellCommand', 'isRemoteWorkspace', 'serverCtx'],
+    { winWorkspace, IS_LINUX: false, S: () => ({}) }
+  );
+  ssh.remoteMounts.set('global', { ownerId: null, host: 'global', workspace: path.resolve('Z:\\'), remotePath: '/srv/global' });
+  ssh.remoteMounts.set('101', { ownerId: 101, host: 'janela-a', workspace: path.resolve('Y:\\'), remotePath: '/srv/app' });
   ssh.remoteMounts.set('202', { ownerId: 202, host: 'janela-b', workspace: path.resolve('X:\\') });
 
   assert.equal(ssh.remoteOwnerKey(null), 'global');
@@ -641,6 +659,13 @@ test('mounts SSH ficam isolados por owner e o fallback global é explícito', ()
   assert.equal(ssh.remoteMountForOwner(202, false).host, 'janela-b');
   assert.equal(ssh.remoteMountForOwner(303, false), null);
   assert.equal(ssh.remoteMountForOwner(303, true).host, 'global');
+  assert.equal(ssh.remoteMountForWorkspace(path.resolve('Y:\\')).host, 'janela-a');
+  assert.equal(ssh.remoteMountForSession({ workspaceOwner: 101, workspace: path.resolve('Y:\\') }).host, 'janela-a');
+  assert.equal(ssh.remoteWorkingDirectory(ssh.remoteMountForOwner(101, false), 'frontend'), '/srv/app/frontend');
+  assert.equal(ssh.remoteCwdArgument(ssh.remoteMountForOwner(101, false), path.resolve('Y:\\frontend')), 'frontend');
+  assert.equal(ssh.remotePathForLocal(ssh.remoteMountForOwner(101, false), path.resolve('Y:\\src\\main.js')), '/srv/app/src/main.js');
+  assert.equal(ssh.remoteExecutableName('Y:\\node_modules\\.bin\\eslint.cmd'), './node_modules/.bin/eslint');
+  assert.equal(ssh.remoteShellCommand(ssh.remoteMountForOwner(101, false), 'npm test', 'frontend'), "cd -- '/srv/app/frontend' && npm test");
   assert.equal(ssh.isRemoteWorkspace(path.resolve('Y:\\')), true);
   assert.equal(ssh.isRemoteWorkspace(path.resolve('W:\\')), false);
   assert.equal(ssh.serverCtx({ sender: { id: 101 } }).host, 'janela-a');
@@ -648,8 +673,50 @@ test('mounts SSH ficam isolados por owner e o fallback global é explícito', ()
   assert.equal(ssh.serverCtx({ sender: { id: 505 } }).host, 'global'); // janela sem binding segue o slot global legado
 });
 
+test('executor de workspace envia comandos ao SSH em vez do shell local', async () => {
+  const calls = [];
+  const remote = { host: 'meu-vps', remotePath: '/srv/app' };
+  const runner = load(['execWorkspaceCommand'], {
+    S: () => ({}),
+    remoteMountForSession: () => remote,
+    remoteShellCommand: (_remote, command) => "cd -- '/srv/app' && " + command,
+    remoteWorkingDirectory: () => '/srv/app',
+    remoteCwdArgument: (_remote, cwd) => cwd,
+    resolveExe: () => 'ssh',
+    execFileAsync: async (bin, args, opts) => {
+      calls.push({ bin, args, opts });
+      return { stdout: 'ok', stderr: '' };
+    },
+    execAsync: async () => {
+      throw new Error('não deveria executar localmente');
+    },
+    resolvePath: () => 'local',
+  });
+  const result = await runner.execWorkspaceCommand('npm test', { timeout: 1234 });
+  assert.equal(result.remote, 'meu-vps');
+  assert.equal(calls[0].bin, 'ssh');
+  assert.equal(calls[0].args.at(-2), 'meu-vps');
+  assert.equal(calls[0].args.at(-1), "cd -- '/srv/app' && npm test");
+});
+
+const terminalScope = load(['terminalVisibleToSession']);
+test('terminais ficam visíveis apenas para a sessão dona', () => {
+  assert.equal(terminalScope.terminalVisibleToSession({ owner: 10 }, { workspaceOwner: 10 }), true);
+  assert.equal(terminalScope.terminalVisibleToSession({ owner: 11 }, { workspaceOwner: 10 }), false);
+  assert.equal(terminalScope.terminalVisibleToSession({ owner: null }, { workspaceOwner: null }), true);
+});
+
+test('arquivo ativo do editor é isolado por janela/workspace', () => {
+  const editors = load(['activeEditorFile', 'activeEditorFiles', 'activeEditorForSession'], { S: () => ({}) });
+  editors.activeEditorFiles.set(10, 'front/src/App.tsx');
+  editors.activeEditorFiles.set(20, 'back/server.py');
+  assert.equal(editors.activeEditorForSession({ workspaceOwner: 10 }), 'front/src/App.tsx');
+  assert.equal(editors.activeEditorForSession({ workspaceOwner: 20 }), 'back/server.py');
+  assert.equal(editors.activeEditorForSession({ workspaceOwner: 30 }), null);
+});
+
 // ---------- parsers de diagnóstico ----------
-const parse = load(['_relTo', 'parseTsc', 'parseColonList', 'parseEslintJson']);
+const parse = load(['_relTo', 'parseTsc', 'parseColonList', 'parseEslintJson'], { remoteMountForSession: () => null, S: () => ({}) });
 
 test('parseTsc extrai arquivo/linha/mensagem', () => {
   const out = 'src/x.ts(12,3): error TS2304: Cannot find name foo\noutra linha';

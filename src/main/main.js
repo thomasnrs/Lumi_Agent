@@ -169,6 +169,7 @@ function makeSession(id) {
     completionGateUsed: false, // evita cobrar evidência repetidamente no mesmo turno
     artifacts: new Map(), // resultados grandes recuperáveis por id (LRU curta, não persistida)
     artifactSeq: 0,
+    agentSeq: {}, // numeração de subagentes isolada por conversa/turno
     history: [],
     convSummary: '',
     chatEvents: [], // [{a: nº de msgs no S().history quando ocorreu, t: tipo, d: dados, ts}]
@@ -2345,6 +2346,12 @@ function buildSystemPrompt(cfg) {
     COMPANION_BASE +
     '\n- PRECEDÊNCIA: a personalidade acima define COMO você fala, não O QUE você pode fazer — ela não desliga ferramentas nem sobrepõe as regras operacionais, de engenharia e de segurança deste prompt; em conflito, estas regras vencem.' +
     '\n' + OS_NOTE + '\n' + timeNote() + (envCaps.length ? '\n' + envCaps.join(' ') : '');
+  const runtimeRemote = remoteMountForSession(S());
+  if (runtimeRemote) {
+    sp +=
+      `\nContexto de execução ATUAL: workspace conectada por SSH em ${runtimeRemote.host}:${runtimeRemote.remotePath || '.'}. ` +
+      'Apesar do aplicativo local poder ser Windows, comandos da tarefa rodam automaticamente no servidor remoto; escreva comandos para o SO remoto e não para o PowerShell local.';
+  }
   if (cfg.memoryEnabled !== false) {
     const facts = loadFacts().map((x) => x.fact).slice(-50);
     if (facts.length) {
@@ -2369,6 +2376,13 @@ function buildSystemPrompt(cfg) {
     const mem = pctx.mem ? pctx.mem.slice(0, memChars) : '(memória do projeto ainda vazia — crie uma com update_project_memory)';
     const det = detectStackCached(cfg.workspace);
     let proj = `\n\n# Projeto atual\nWorkspace: ${cfg.workspace} (projeto ATUAL — se o histórico mencionar outro projeto/caminhos, o usuário trocou de workspace e este substituiu o anterior)`;
+    const remote = remoteMountForWorkspace(ws) || remoteMountForSession(S());
+    if (remote) {
+      proj +=
+        `\nExecução remota ativa: SSH ${remote.host}, pasta ${remote.remotePath || '.'}. ` +
+        'run_command e run_in_terminal já são roteados automaticamente para esse servidor e começam na pasta remota do projeto. ' +
+        'Use comandos do sistema REMOTO (normalmente Linux/bash); NÃO use PowerShell, caminhos da letra SSHFS nem embrulhe comandos em ssh. local=true é somente para uma ação explicitamente pedida no PC local.';
+    }
     if (det.stack) proj += `\nStack detectada: ${det.stack}`;
     if (det.verify) proj += `\nComando sugerido para VERIFICAR suas mudanças: \`${det.verify}\` (rode com run_command e leia a saída antes de dizer que terminou).`;
     const projectMap = projectMapText(det);
@@ -3068,17 +3082,12 @@ async function formatFileIfEnabled(cfg, abs) {
   if (!cfg || !cfg.formatOnSave || !abs || !cfg.workspace) return;
   const ws = cfg.workspace;
   const ext = path.extname(abs).toLowerCase();
-  const win = process.platform === 'win32';
   const PRETTIER = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.jsonc', '.css', '.scss', '.less', '.html', '.vue', '.svelte', '.md', '.mdx', '.yaml', '.yml', '.graphql'];
   let bin = null;
   let args = null;
   if (PRETTIER.includes(ext)) {
-    const local = path.join(ws, 'node_modules', '.bin', 'prettier' + (win ? '.cmd' : ''));
-    try {
-      if (!fs.existsSync(local)) return; // só formata se o PROJETO tem prettier (não força npx lento)
-    } catch (e) {
-      return;
-    }
+    const local = _localBin(ws, 'prettier');
+    if (!local) return; // só formata se o PROJETO tem prettier (não força npx lento)
     bin = local;
     args = ['--write', abs];
   } else if (ext === '.py') {
@@ -3092,7 +3101,11 @@ async function formatFileIfEnabled(cfg, abs) {
     args = [abs];
   } else return;
   try {
-    await execFileAsync(bin, args, { cwd: ws, timeout: 15000, windowsHide: true });
+    const remote = remoteMountForWorkspace(ws) || remoteMountForSession(S());
+    if (remote) {
+      const cmd = [remoteExecutableName(bin), ...args.map((arg) => remotePathForLocal(remote, arg))].map(posixShellQuote).join(' ');
+      await execWorkspaceCommand(cmd, { cwd: ws, remote, timeout: 15000 });
+    } else await execFileAsync(bin, args, { cwd: ws, timeout: 15000, windowsHide: true });
   } catch (e) {
     /* formatter ausente/erro → silencioso, não atrapalha a edição */
   }
@@ -3100,15 +3113,26 @@ async function formatFileIfEnabled(cfg, abs) {
 
 // ---- DIAGNÓSTICOS: roda o linter/type-checker do projeto e devolve problemas estruturados ----
 function _localBin(ws, name) {
-  const b = path.join(ws, 'node_modules', '.bin', name + (process.platform === 'win32' ? '.cmd' : ''));
-  try {
-    return fs.existsSync(b) ? b : null;
-  } catch (e) {
-    return null;
+  const suffixes = (remoteMountForWorkspace(ws) || remoteMountForSession(S())) ? ['', '.cmd'] : [process.platform === 'win32' ? '.cmd' : ''];
+  for (const suffix of suffixes) {
+    const b = path.join(ws, 'node_modules', '.bin', name + suffix);
+    try {
+      if (fs.existsSync(b)) return b;
+    } catch (e) {
+      /* tenta a próxima variante */
+    }
   }
+  return null;
 }
 function _relTo(ws, f) {
   try {
+    const remote = remoteMountForWorkspace(ws) || remoteMountForSession(S());
+    if (remote) {
+      const value = String(f || '').replace(/\\/g, '/');
+      const remoteRoot = String(remote.remotePath || '.').replace(/\\/g, '/').replace(/\/$/, '');
+      if (remoteRoot !== '.' && (value === remoteRoot || value.startsWith(remoteRoot + '/')))
+        return value.slice(remoteRoot.length).replace(/^\//, '');
+    }
     const abs = path.isAbsolute(f) ? f : path.join(ws, f);
     return path.relative(ws, abs).replace(/\\/g, '/');
   } catch (e) {
@@ -3156,10 +3180,19 @@ function parseColonList(ws, out, source) {
 }
 async function runChecker(bin, args, ws) {
   try {
+    const remote = remoteMountForWorkspace(ws) || remoteMountForSession(S());
+    if (remote) {
+      const cmd = [remoteExecutableName(bin), ...(args || []).map((arg) => remotePathForLocal(remote, arg))]
+        .map(posixShellQuote)
+        .join(' ');
+      const result = await execWorkspaceCommand(cmd, { cwd: ws, remote, timeout: 90000, maxBuffer: 24 * 1024 * 1024 });
+      return { out: result.stdout || '', err: result.stderr || '', remote: result.remote };
+    }
     const { stdout, stderr } = await execFileAsync(bin, args, { cwd: ws, timeout: 90000, windowsHide: true, maxBuffer: 24 * 1024 * 1024 });
     return { out: stdout || '', err: stderr || '' };
   } catch (e) {
-    return { out: (e && e.stdout) || '', err: (e && e.stderr) || '', code: e && e.code, missing: e && e.code === 'ENOENT' };
+    const combined = String((e && e.stderr) || '') + String((e && e.message) || '');
+    return { out: (e && e.stdout) || '', err: (e && e.stderr) || '', code: e && e.code, missing: (e && e.code === 'ENOENT') || /command not found|not recognized/i.test(combined) };
   }
 }
 async function checkProject(cfg) {
@@ -3759,7 +3792,16 @@ function createTerminal(opts) {
   const title = o.title || path.basename(shell, '.exe');
   logd('term:create', { shell, args: profArgs, cwd, pty: !!nodePty });
   // owner = webContents da janela que criou (terminais POR JANELA); null = da Lumi/global (todas veem)
-  const rec = { p: null, pty: false, title, buf: '', ai: !!o.ai, owner: o.owner != null ? o.owner : null };
+  const rec = {
+    p: null,
+    pty: false,
+    title,
+    buf: '',
+    ai: !!o.ai,
+    owner: o.owner != null ? o.owner : null,
+    remoteHost: o.remoteHost || '',
+    remotePath: o.remotePath || '',
+  };
   const push = (d) => {
     rec.buf = (rec.buf + d).slice(-200000); // final do scrollback (replay da UI + leitura da IA)
     // BATCH 16ms: build despejando MB/s virava um IPC por chunk × janelas × frames — e cada
@@ -3831,6 +3873,11 @@ function stripAnsi(s) {
     .replace(/\x1b[=>()][0-9A-Z]?/g, '')
     .replace(/\r/g, '');
 }
+function terminalVisibleToSession(rec, session) {
+  if (!rec) return false;
+  const owner = session && session.workspaceOwner != null ? session.workspaceOwner : null;
+  return rec.owner === owner;
+}
 
 const termOwnersHooked = new Set(); // janelas com terminais: ao fechar, mata os dela (sem órfãos invisíveis)
 ipcMain.handle('term:create', (e, opts) => {
@@ -3840,6 +3887,20 @@ ipcMain.handle('term:create', (e, opts) => {
     e.sender.once('destroyed', () => {
       termOwnersHooked.delete(wcId);
       for (const [, r] of terminals) if (r.owner === wcId) termKill(r);
+    });
+  }
+  const remote = remoteMountForOwner(wcId, false);
+  if (remote && !(opts && opts.shell)) {
+    const remoteDir = remoteWorkingDirectory(remote, remoteCwdArgument(remote, opts && opts.cwd));
+    return createTerminal({
+      ...(opts || {}),
+      shell: 'ssh',
+      args: ['-t', remote.host, 'cd -- ' + posixShellQuote(remoteDir) + ' && exec ${SHELL:-bash} -l'],
+      cwd: require('os').homedir(),
+      title: 'SSH: ' + remote.host,
+      owner: wcId,
+      remoteHost: remote.host,
+      remotePath: remoteDir,
     });
   }
   return createTerminal({ ...(opts || {}), cwd: (opts && opts.cwd) || winWorkspace.get(wcId) || undefined, owner: wcId });
@@ -4419,6 +4480,79 @@ function remoteOwnerKey(ownerId) {
 function remoteMountForOwner(ownerId, fallbackGlobal) {
   return remoteMounts.get(remoteOwnerKey(ownerId)) || (fallbackGlobal ? remoteMounts.get('global') : null) || null;
 }
+function remoteMountForWorkspace(workspace) {
+  if (!workspace) return null;
+  const resolved = path.resolve(workspace);
+  for (const remote of remoteMounts.values())
+    if (path.resolve(remote.workspace || remote.mountPoint) === resolved) return remote;
+  return null;
+}
+function remoteMountForSession(session) {
+  const sess = session || S();
+  const workspace = sess && sess.workspace ? path.resolve(sess.workspace) : '';
+  if (sess && sess.workspaceOwner != null) {
+    const owned = remoteMountForOwner(sess.workspaceOwner, false);
+    if (owned && (!workspace || path.resolve(owned.workspace || owned.mountPoint) === workspace)) return owned;
+  }
+  if (workspace) return remoteMountForWorkspace(workspace);
+  return null;
+}
+function posixShellQuote(value) {
+  return "'" + String(value == null ? '' : value).replace(/'/g, "'\\''") + "'";
+}
+function remoteWorkingDirectory(remote, cwd) {
+  const base = String((remote && remote.remotePath) || '.').replace(/\\/g, '/');
+  const requested = String(cwd || '').trim().replace(/\\/g, '/');
+  if (!requested) return base || '.';
+  if (requested.startsWith('/')) return path.posix.normalize(requested);
+  return path.posix.normalize(path.posix.join(base || '.', requested));
+}
+function remoteCwdArgument(remote, cwd) {
+  if (!cwd || !remote) return cwd || '';
+  const localRoot = path.resolve(remote.workspace || remote.mountPoint || '.');
+  const candidate = path.resolve(String(cwd));
+  const rel = path.relative(localRoot, candidate);
+  if (!rel) return '';
+  if (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)) return rel.replace(/\\/g, '/');
+  return cwd;
+}
+function remotePathForLocal(remote, value) {
+  if (!remote || !value) return value;
+  const localRoot = path.resolve(remote.workspace || remote.mountPoint || '.');
+  const candidate = path.resolve(String(value));
+  const rel = path.relative(localRoot, candidate);
+  if (!rel) return remoteWorkingDirectory(remote, '');
+  if (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)) return remoteWorkingDirectory(remote, rel.replace(/\\/g, '/'));
+  return value;
+}
+function remoteExecutableName(bin) {
+  const normalized = String(bin || '').replace(/\\/g, '/');
+  const marker = '/node_modules/.bin/';
+  const at = normalized.toLowerCase().lastIndexOf(marker);
+  if (at >= 0) return './node_modules/.bin/' + path.posix.basename(normalized).replace(/\.(?:cmd|exe)$/i, '');
+  return path.posix.basename(normalized).replace(/\.(?:cmd|exe)$/i, '');
+}
+function remoteShellCommand(remote, command, cwd) {
+  return 'cd -- ' + posixShellQuote(remoteWorkingDirectory(remote, remoteCwdArgument(remote, cwd))) + ' && ' + String(command || '');
+}
+async function execWorkspaceCommand(command, options) {
+  const opts = options || {};
+  const remote = opts.local ? null : opts.remote || remoteMountForSession(S());
+  const timeout = opts.timeout || 20000;
+  const maxBuffer = opts.maxBuffer || 1024 * 1024;
+  if (remote) {
+    const remoteCommand = remoteShellCommand(remote, command, opts.cwd);
+    const result = await execFileAsync(
+      resolveExe('ssh'),
+      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', remote.host, remoteCommand],
+      { timeout, maxBuffer, windowsHide: true }
+    );
+    return { ...result, remote: remote.host, cwd: remoteWorkingDirectory(remote, remoteCwdArgument(remote, opts.cwd)) };
+  }
+  const cwd = opts.cwd || resolvePath('.');
+  const result = await execAsync(String(command), { cwd, timeout, maxBuffer, windowsHide: true });
+  return { ...result, cwd };
+}
 function isRemoteWorkspace(root) {
   if (!root) return false;
   const resolved = path.resolve(root);
@@ -4645,9 +4779,19 @@ async function doSshMount(host, remotePath, opts) {
       // shell SSH no servidor de brinde, já no path montado (criado no MAIN pra ser rastreado/morto)
       const rp = (remotePath || '').trim();
       const sshArgs = rp && rp !== '.' ? ['-t', host, 'cd "' + rp.replace(/"/g, '\\"') + '" && exec ${SHELL:-bash} -l'] : [host];
-      const st = createTerminal({ shell: 'ssh', args: sshArgs, title: 'SSH: ' + host, owner: ownerId });
+      const st = createTerminal({ shell: 'ssh', args: sshArgs, title: 'SSH: ' + host, owner: ownerId, remoteHost: host, remotePath: rp || '.' });
       if (st && st.id) terms.push(st.id);
-      const remote = { ownerId, host, mountPoint: mp, workspace: wsPath, prevWorkspace: prev, hadBinding, terms };
+      const remote = {
+        ownerId,
+        host,
+        remotePath: rp || '.',
+        mountPoint: mp,
+        workspace: wsPath,
+        prevWorkspace: prev,
+        hadBinding,
+        terms,
+        shellTerminalId: st && st.id ? st.id : '',
+      };
       pendingRemoteMountPoints.delete(mp);
       remoteMounts.set(ownerKey, remote);
       if (ownerId != null) {
@@ -4844,6 +4988,7 @@ const TOOLS = {
       name: 'run_in_terminal',
       description:
         'Roda um comando LONGO/contínuo (dev server, watch) num terminal INTEGRADO visível, sem bloquear. ' +
+        'Quando a workspace está conectada por SSH, abre/reutiliza automaticamente um terminal NO SERVIDOR e entra na pasta remota do projeto. ' +
         'REUTILIZE terminais: passe terminalId de um terminal seu que esteja LIVRE (sem servidor rodando) em vez de abrir outro. ' +
         'Sem terminalId, abre um novo (mantenho no máx. 2 abertos — o mais antigo é fechado). ' +
         'Feche com kill_terminal quando não precisar mais. Para comandos rápidos que terminam sozinhos, use run_command.',
@@ -4853,31 +4998,60 @@ const TOOLS = {
           command: { type: 'string', description: 'comando a executar no terminal' },
           cwd: { type: 'string', description: 'pasta de trabalho (relativa ao workspace; vazio = workspace)' },
           terminalId: { type: 'string', description: 'id de um terminal já aberto para reutilizar (ex.: t1)' },
+          local: { type: 'boolean', description: 'true força execução no PC local mesmo quando a workspace é SSH (raramente necessário)' },
         },
         required: ['command'],
       },
     },
-    run: async ({ command, cwd, terminalId }) => {
+    run: async ({ command, cwd, terminalId, local }) => {
+      const remote = local ? null : remoteMountForSession(S());
+      const owner = S().workspaceOwner != null ? S().workspaceOwner : null;
       // reutiliza um terminal existente (não digite num terminal com servidor rodando!)
       if (terminalId) {
         const t = terminals.get(String(terminalId));
         if (t) {
-          termWrite(t, String(command) + (t.pty ? '\r' : '\n'));
-          return { ok: true, terminalId: String(terminalId), reused: true, note: 'comando enviado ao terminal existente; use read_terminal para ver a saída' };
+          if (!terminalVisibleToSession(t, S())) return { error: 'terminal pertence a outra janela/workspace' };
+          if (remote && t.remoteHost !== remote.host)
+            return { error: `o terminal ${terminalId} não pertence ao SSH ${remote.host}; use o terminal SSH correto ou omita terminalId` };
+          const sent = remote ? remoteShellCommand(remote, command, cwd) : String(command);
+          termWrite(t, sent + (t.pty ? '\r' : '\n'));
+          return { ok: true, terminalId: String(terminalId), reused: true, remote: remote ? remote.host : undefined, note: 'comando enviado ao terminal existente; use read_terminal para ver a saída' };
         }
       }
       // política anti-bagunça: no máx. 2 terminais abertos pela IA — fecha o mais antigo
       let closedNote = '';
-      const aiTerms = [...terminals.entries()].filter(([, r]) => r.ai);
+      const aiTerms = [...terminals.entries()].filter(([, r]) => r.ai && r.owner === owner);
       if (aiTerms.length >= 2) {
         const [oldId, oldRec] = aiTerms[0];
         termKill(oldRec);
         closedNote = ' (fechei o terminal mais antigo ' + oldId + ' pra não acumular)';
       }
-      const dir = cwd ? resolvePath(cwd) : undefined;
-      const r = createTerminal({ command, cwd: dir, title: String(command).slice(0, 24), ai: true });
+      let r;
+      if (remote) {
+        const remoteCommand = remoteShellCommand(remote, command, cwd);
+        r = createTerminal({
+          shell: 'ssh',
+          args: ['-tt', remote.host, remoteCommand],
+          cwd: require('os').homedir(),
+          title: 'SSH: ' + remote.host + ' · ' + String(command).slice(0, 18),
+          ai: true,
+          owner,
+          remoteHost: remote.host,
+          remotePath: remoteWorkingDirectory(remote, cwd),
+        });
+      } else {
+        const dir = cwd ? resolvePath(cwd) : undefined;
+        r = createTerminal({ command, cwd: dir, title: String(command).slice(0, 24), ai: true, owner });
+      }
       if (r.error) return r;
-      return { ok: true, terminalId: r.id, pid: r.pid, note: 'rodando no terminal integrado; use read_terminal({terminalId}) para acompanhar' + closedNote };
+      return {
+        ok: true,
+        terminalId: r.id,
+        pid: r.pid,
+        remote: remote ? remote.host : undefined,
+        cwd: remote ? remoteWorkingDirectory(remote, cwd) : cwd || '.',
+        note: 'rodando no terminal integrado' + (remote ? ' do SSH ' + remote.host : '') + '; use read_terminal({terminalId}) para acompanhar' + closedNote,
+      };
     },
   },
   read_terminal: {
@@ -4898,6 +5072,7 @@ const TOOLS = {
     run: async ({ terminalId, chars }) => {
       const t = terminals.get(String(terminalId));
       if (!t) return { error: 'terminal não encontrado: ' + terminalId + '. Abertos: ' + [...terminals.keys()].join(', ') };
+      if (!terminalVisibleToSession(t, S())) return { error: 'terminal pertence a outra janela/workspace' };
       return { output: stripAnsi(t.buf).slice(-(Math.min(Number(chars) || 4000, 16000))) };
     },
   },
@@ -4909,7 +5084,11 @@ const TOOLS = {
       description: 'Lista os terminais integrados abertos (id, pid, título).',
       parameters: { type: 'object', properties: {} },
     },
-    run: async () => ({ terminals: [...terminals.entries()].map(([id, r]) => ({ id, pid: r.p.pid, title: r.title })) }),
+    run: async () => ({
+      terminals: [...terminals.entries()]
+        .filter(([, r]) => terminalVisibleToSession(r, S()))
+        .map(([id, r]) => ({ id, pid: r.p.pid, title: r.title, remote: r.remoteHost || undefined, cwd: r.remotePath || undefined })),
+    }),
   },
   kill_terminal: {
     category: 'exec',
@@ -4922,6 +5101,7 @@ const TOOLS = {
     run: async ({ terminalId }) => {
       const t = terminals.get(String(terminalId));
       if (!t) return { error: 'terminal não encontrado: ' + terminalId };
+      if (!terminalVisibleToSession(t, S())) return { error: 'terminal pertence a outra janela/workspace' };
       termKill(t);
       return { ok: true };
     },
@@ -5804,11 +5984,26 @@ const TOOLS = {
         cmd = cmd + ' ' + filter;
       }
       try {
-        const { stdout, stderr } = await execAsync(cmd, { cwd: workdir, timeout: 180000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
-        return { ok: true, command: cmd, cwd: path.relative(cfg.workspace, workdir).replace(/\\/g, '/') || '.', output: tailStr(((stdout || '') + (stderr || '')).trim(), 6000) };
+        const result = await execWorkspaceCommand(cmd, { cwd: workdir, timeout: 180000, maxBuffer: 16 * 1024 * 1024 });
+        return {
+          ok: true,
+          command: cmd,
+          cwd: result.cwd || path.relative(cfg.workspace, workdir).replace(/\\/g, '/') || '.',
+          remote: result.remote,
+          output: tailStr(((result.stdout || '') + (result.stderr || '')).trim(), 6000),
+        };
       } catch (e) {
         const out = (((e && e.stdout) || '') + ((e && e.stderr) || '')).trim() || String((e && e.message) || e);
-        return { ok: false, command: cmd, cwd: path.relative(cfg.workspace, workdir).replace(/\\/g, '/') || '.', exitCode: e && e.code, output: tailStr(out, 8000), note: 'testes falharam (ou o comando errou) — veja a saída' };
+        const remote = remoteMountForSession(S());
+        return {
+          ok: false,
+          command: cmd,
+          cwd: remote ? remoteWorkingDirectory(remote, remoteCwdArgument(remote, workdir)) : path.relative(cfg.workspace, workdir).replace(/\\/g, '/') || '.',
+          remote: remote ? remote.host : undefined,
+          exitCode: e && e.code,
+          output: tailStr(out, 8000),
+          note: 'testes falharam (ou o comando errou) — veja a saída',
+        };
       }
     },
   },
@@ -5889,7 +6084,8 @@ const TOOLS = {
       const files = [...p.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((mm) => mm[1].trim()).filter((f) => f && f !== '/dev/null');
       const precious = files.find((f) => isPreciousFile(cfg, path.join(cfg.workspace, f)));
       if (precious) return { error: 'arquivo protegido (guardrails) no patch: "' + precious + '" não pode ser alterado.', blocked: true };
-      const tmp = path.join(app.getPath('userData'), 'lumi-patch-' + Date.now() + '.diff');
+      // Em SSH, o git roda no servidor e precisa enxergar o patch pelo mount.
+      const tmp = path.join(remoteMountForWorkspace(cfg.workspace) ? cfg.workspace : app.getPath('userData'), '.lumi-patch-' + Date.now() + '.diff');
       try {
         fs.writeFileSync(tmp, p.endsWith('\n') ? p : p + '\n');
         try {
@@ -6372,22 +6568,34 @@ const TOOLS = {
     summary: (a) => `executar o comando: ${a.command}`,
     schema: {
       name: 'run_command',
-      description: 'Executa um comando no terminal do sistema (PowerShell/cmd no Windows) e retorna a saída.',
-      parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] },
+      description:
+        'Executa um comando rápido e retorna a saída. Em workspace SSH, roda AUTOMATICAMENTE no servidor remoto e na pasta remota do projeto — não embrulhe em ssh nem use PowerShell. Use local=true somente quando precisar explicitamente do PC local.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string' },
+          cwd: { type: 'string', description: 'subpasta relativa ao workspace remoto/local' },
+          local: { type: 'boolean', description: 'true força o PC local mesmo numa workspace SSH' },
+        },
+        required: ['command'],
+      },
     },
-    run: async ({ command }) => {
+    run: async ({ command, cwd, local }) => {
       const blocked = dangerousCommand(command);
       if (blocked) return { error: blocked, blocked: true };
+      const remote = local ? null : remoteMountForSession(S());
       try {
-        const { stdout, stderr } = await execAsync(String(command), {
-          cwd: loadConfig().workspace || undefined, // roda na pasta da sessão ativa
-          timeout: 20000,
-          maxBuffer: 1024 * 1024,
-          windowsHide: true,
-        });
-        return { stdout: truncate(stdout, 24000), stderr: truncate(stderr, 8000) };
+        const localCwd = cwd ? resolvePath(cwd) : resolvePath('.');
+        const result = await execWorkspaceCommand(command, { cwd: localCwd, local: !!local, timeout: 20000, maxBuffer: 1024 * 1024 });
+        return { stdout: truncate(result.stdout, 24000), stderr: truncate(result.stderr, 8000), remote: result.remote, cwd: result.cwd };
       } catch (e) {
-        return { error: e.message, stdout: truncate(e.stdout, 16000), stderr: truncate(e.stderr, 8000) };
+        return {
+          error: e.message,
+          stdout: truncate(e.stdout, 16000),
+          stderr: truncate(e.stderr, 8000),
+          remote: remote ? remote.host : undefined,
+          cwd: remote ? remoteWorkingDirectory(remote, remoteCwdArgument(remote, cwd)) : cwd || '.',
+        };
       }
     },
   },
@@ -6911,8 +7119,9 @@ function toolSchemas(opts) {
 // (sessionizado: agora vive em makeSession/S())
 // (claudeQuery agora vive na Session — Claude Code roda em PARALELO, um por sessão)
 const WRITE_TOOLS = ['write_file', 'edit_file', 'append_file', 'make_dir', 'delete_file', 'apply_patch']; // apply_patch conta: auto-verify/self-review/checkpoint
-const WORKSPACE_MUTATION_TOOLS = new Set([
-  ...WRITE_TOOLS, 'update_project_memory', 'generate_project_doc', 'run_command', 'run_in_terminal', 'db_query',
+// Exclusivas: mutações e verificações que precisam enxergar um snapshot estável.
+const WORKSPACE_EXCLUSIVE_TOOLS = new Set([
+  ...WRITE_TOOLS, 'update_project_memory', 'generate_project_doc', 'run_command', 'run_in_terminal', 'run_tests', 'get_problems', 'git_status', 'git_diff', 'db_query',
 ]);
 const workspaceMutationTails = new Map();
 async function withKeyedLock(tails, key, fn) {
@@ -6931,7 +7140,7 @@ async function withKeyedLock(tails, key, fn) {
   }
 }
 function withWorkspaceMutationLock(name, fn) {
-  if (!WORKSPACE_MUTATION_TOOLS.has(name)) return fn();
+  if (!WORKSPACE_EXCLUSIVE_TOOLS.has(name)) return fn();
   const workspace = path.resolve(S().workspace || loadConfig().workspace || process.cwd()).toLowerCase();
   return withKeyedLock(workspaceMutationTails, workspace, fn);
 }
@@ -6990,7 +7199,7 @@ function readToolArtifact(id, offset, chars) {
 
 // ---- CHECKPOINTS: antes de cada edição, guarda o conteúdo original → "↩ desfazer" por turno ----
 // (sessionizado: agora vive em makeSession/S())
-let checkpoints = []; // pilha dos últimos turnos com edições (memória da sessão, máx 10)
+let checkpoints = []; // checkpoints de todas as conversas; retenção limitada por sessionId
 let cpSeq = 0;
 const CHECKPOINT_TURN_BYTES = 4 * 1024 * 1024;
 function snapshotForCheckpoint(rel) {
@@ -7024,16 +7233,26 @@ function captureForCheckpoint(name, a) {
   if (!['write_file', 'edit_file', 'append_file', 'delete_file'].includes(name)) return;
   snapshotForCheckpoint(a && a.path);
 }
-ipcMain.handle('checkpoint:undo', (_e, id) => {
-  const idx = checkpoints.findIndex((c) => c.id === id);
-  if (idx < 0) return { error: 'ponto de restauração não encontrado (desfazer vale só na sessão atual)' };
+function checkpointUndoBatch(list, id) {
+  const all = Array.isArray(list) ? list : [];
+  const target = all.find((c) => c.id === id);
+  if (!target) return null;
+  const stack = all.filter((c) => c.sessionId === target.sessionId);
+  const idx = stack.findIndex((c) => c.id === id);
+  const undo = stack.slice(idx).reverse();
+  const undoIds = new Set(undo.map((c) => c.id));
+  return { target, undo, remaining: all.filter((c) => !undoIds.has(c.id)) };
+}
+ipcMain.handle('checkpoint:undo', (e, id) => inSenderChat(e, () => {
+  const batch = checkpointUndoBatch(checkpoints, id);
+  if (!batch) return { error: 'ponto de restauração não encontrado (desfazer vale só na sessão atual)' };
+  checkpoints = batch.remaining; // preserva checkpoints de outras conversas
   const restored = new Set();
-  // desfaz do mais novo até o pedido (pilha) — o estado final é o de ANTES daquele turno
-  while (checkpoints.length > idx) {
-    const cp = checkpoints.pop();
+  // desfaz do mais novo até o pedido, mas somente dentro da mesma conversa/workspace
+  for (const cp of batch.undo) {
     for (const [rel, content] of cp.files) {
       try {
-        const abs = resolvePath(rel);
+        const abs = path.isAbsolute(rel) ? rel : path.join(cp.workspace || loadConfig().workspace || process.cwd(), rel);
         if (content === null) {
           try {
             fs.unlinkSync(abs);
@@ -7053,7 +7272,7 @@ ipcMain.handle('checkpoint:undo', (_e, id) => {
   broadcast('workspace:changed');
   broadcast('chat:note', { text: '↩ mudanças desfeitas — ' + restored.size + ' arquivo(s) restaurado(s)' });
   return { ok: true, restored: restored.size };
-});
+}));
 async function runTool(name, args) {
   const a = args || {};
   let strategyKey = '';
@@ -7182,10 +7401,11 @@ async function maybeAutoVerify(cfg, messages) {
   broadcast('chat:tool', { name: 'run_command', args: { command: cmd }, agent: '🔁 auto-verificação' });
   let r;
   try {
-    const { stdout, stderr } = await execAsync(cmd, { cwd: cfg.workspace, timeout: 180000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
-    r = { ok: true, output: truncate((stdout || '') + (stderr || ''), 4000) };
+    const result = await execWorkspaceCommand(cmd, { cwd: cfg.workspace, timeout: 180000, maxBuffer: 4 * 1024 * 1024 });
+    r = { ok: true, output: truncate((result.stdout || '') + (result.stderr || ''), 4000), remote: result.remote, cwd: result.cwd };
   } catch (e) {
-    r = { ok: false, output: truncate((e.stdout || '') + '\n' + (e.stderr || '') + '\n' + (e.message || ''), 8000) };
+    const remote = remoteMountForSession(S());
+    r = { ok: false, output: truncate((e.stdout || '') + '\n' + (e.stderr || '') + '\n' + (e.message || ''), 8000), remote: remote ? remote.host : undefined };
   }
   broadcast('tool:animation', r.ok ? 'happy' : 'sad'); // avatar comemora/lamenta a verificação
   broadcast('chat:tool-result', { name: 'run_command', args: { command: cmd }, result: { ok: r.ok, output: r.output }, agent: '🔁 auto-verificação' });
@@ -7357,10 +7577,10 @@ async function openaiTurn(cfg, messages, tools, onToken, onThink) {
 // Executa um SUBAGENTE (perfil) numa conversa isolada e devolve o texto final.
 // Subagentes NÃO podem delegar (evita recursão) e só usam as ferramentas do perfil.
 // Numeração por instância de agente (Programador 1, Programador 2...). Zera a cada turno.
-let agentSeq = {};
 function nextAgentLabel(name) {
-  agentSeq[name] = (agentSeq[name] || 0) + 1;
-  return `${name} ${agentSeq[name]}`;
+  if (!S().agentSeq) S().agentSeq = {};
+  S().agentSeq[name] = (S().agentSeq[name] || 0) + 1;
+  return `${name} ${S().agentSeq[name]}`;
 }
 
 // ============================================================
@@ -7624,7 +7844,7 @@ async function executeToolCallsOrdered(calls, execute, parallelNames, concurrenc
 }
 
 async function runAgent(cfg) {
-  agentSeq = {}; // zera a numeração dos subagentes a cada turno (Programador 1, 2...)
+  S().agentSeq = {}; // zera só nesta conversa (turnos paralelos não misturam Programador 1, 2...)
   S().editedSinceTurn = false; // reseta o rastreio de edições (verificação automática)
   const onToken = (t) => broadcast('chat:token', t);
   const onThink = (t) => broadcast('chat:thinking', t);
@@ -9557,6 +9777,7 @@ ipcMain.handle('ws:bind', (e, folder) => {
     e.sender.once('destroyed', () => {
       workspaceOwnerHooks.delete(id);
       workspaceWindows.delete(id);
+      activeEditorFiles.delete(id);
       unwatchFolder(winWorkspace.get(id) || '', id);
       winWorkspace.delete(id);
     });
@@ -10393,6 +10614,17 @@ ipcMain.handle('workspace:gitstatus', async (e) => {
 //  CONTROLE DE FONTES (painel git do workspace, estilo VS Code)
 // ============================================================
 function gitRun(cfg, args, opts) {
+  const remote = remoteMountForWorkspace(cfg.workspace);
+  if (remote) {
+    const remoteArgs = (args || []).map((arg) => (path.isAbsolute(String(arg)) ? remotePathForLocal(remote, arg) : arg));
+    const command = ['git', ...remoteArgs].map(posixShellQuote).join(' ');
+    return execWorkspaceCommand(command, {
+      cwd: cfg.workspace,
+      remote,
+      timeout: (opts && opts.timeout) || 20000,
+      maxBuffer: (opts && opts.maxBuffer) || 16 * 1024 * 1024,
+    });
+  }
   return execFileAsync('git', args, {
     cwd: cfg.workspace,
     timeout: 20000,
@@ -11566,11 +11798,22 @@ ipcMain.handle('config:set', (_e, cfg) => {
 
 // arquivo ativo no editor (workspace.html avisa) — o chat anexa às mensagens quando o chip está ligado
 let activeEditorFile = null;
+const activeEditorFiles = new Map(); // webContents.id -> arquivo ativo daquela workspace
 let recentWorkspaceFiles = []; // imports externos recentes; sinalizados no próximo prompt Claude Code
-ipcMain.on('editor:active', (_e, rel) => {
-  activeEditorFile = rel || null;
-  broadcast('editor:active', activeEditorFile);
+ipcMain.on('editor:active', (e, rel) => {
+  const value = rel || null;
+  if (e && e.sender && workspaceWindows.has(e.sender.id)) {
+    activeEditorFiles.set(e.sender.id, value);
+    sendToWc(e.sender.id, 'editor:active', value);
+  } else {
+    activeEditorFile = value;
+    broadcast('editor:active', value);
+  }
 });
+function activeEditorForSession(session) {
+  const sess = session || S();
+  return sess && sess.workspaceOwner != null ? activeEditorFiles.get(sess.workspaceOwner) || null : activeEditorFile;
+}
 
 // revela o arquivo no Explorer/Finder do sistema (menu Arquivo do editor)
 ipcMain.on('workspace:reveal', (e, rel) => {
@@ -12864,7 +13107,8 @@ ipcMain.handle('chat:improve-prompt', async (_e, text) => {
   const t = String(text || '').slice(0, 8000);
   if (!t.trim()) return { error: 'escreva algo primeiro' };
   // contexto leve do projeto ajuda a especificar sem inventar
-  const ws = cfg.workspace ? ' O usuário está num projeto (' + path.basename(cfg.workspace) + (activeEditorFile ? ', arquivo ativo: ' + activeEditorFile : '') + ') — pode referenciar isso se o pedido for de código.' : '';
+  const activeFile = activeEditorForSession(S());
+  const ws = cfg.workspace ? ' O usuário está num projeto (' + path.basename(cfg.workspace) + (activeFile ? ', arquivo ativo: ' + activeFile : '') + ') — pode referenciar isso se o pedido for de código.' : '';
   try {
     const out = await llmComplete(cfg, [
       {
@@ -13033,8 +13277,9 @@ async function handleChatSend(_e, payload) {
   const useExternalCodeEngine = useClaudeCode || useGlmCode || useCodex;
   // ARQUIVO ATIVO do editor: vira menção automática (chip do chat liga/desliga)
   let raw2 = raw;
-  if (cfg.includeActiveTab !== false && activeEditorFile && !raw.includes('@' + activeEditorFile)) {
-    raw2 = useExternalCodeEngine ? raw + `\n\nArquivo ativo no editor: ${activeEditorFile}` : raw + '\n@' + activeEditorFile;
+  const activeFile = activeEditorFiles.get(_e.sender.id) || (!workspaceWindows.has(_e.sender.id) ? activeEditorFile : null);
+  if (cfg.includeActiveTab !== false && activeFile && !raw.includes('@' + activeFile)) {
+    raw2 = useExternalCodeEngine ? raw + `\n\nArquivo ativo no editor: ${activeFile}` : raw + '\n@' + activeFile;
   }
   const text = useExternalCodeEngine ? raw2 : (await expandMentions(raw2)).text;
   // chave de API e opcional (proxies locais podem nao exigir)
@@ -13074,7 +13319,14 @@ async function runChatTurn(cfg, popUserOnError) {
   S().running = true;
   sendToAll('chats:changed');
   S().abort = new AbortController();
-  S().cp = { id: 'cp' + ++cpSeq, ts: Date.now(), files: new Map(), bytes: 0 }; // checkpoint deste turno
+  S().cp = {
+    id: 'cp' + ++cpSeq,
+    sessionId: S().id || currentChatId || 'foreground',
+    workspace: loadConfig().workspace || process.cwd(),
+    ts: Date.now(),
+    files: new Map(),
+    bytes: 0,
+  }; // checkpoint deste turno
   beginTurnLog();
   S().taskContract = taskContractFor((S().currentTurnLog && S().currentTurnLog.goal) || '', cfg);
   S().activeToolsets = new Set(S().taskContract.toolsets);
@@ -13179,7 +13431,12 @@ async function runChatTurn(cfg, popUserOnError) {
     // fecha o checkpoint do turno: se editou arquivos, vira um ponto de restauração
     if (S().cp && S().cp.files.size) {
       checkpoints.push(S().cp);
-      if (checkpoints.length > 10) checkpoints.shift();
+      const sameSession = checkpoints.filter((cp) => cp.sessionId === S().cp.sessionId);
+      if (sameSession.length > 10) {
+        const remove = new Set(sameSession.slice(0, sameSession.length - 10).map((cp) => cp.id));
+        checkpoints = checkpoints.filter((cp) => !remove.has(cp.id));
+      }
+      if (checkpoints.length > 60) checkpoints = checkpoints.slice(-60);
       broadcast('chat:checkpoint', { id: S().cp.id, count: S().cp.files.size, files: [...S().cp.files.keys()] });
     }
     S().cp = null;
