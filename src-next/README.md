@@ -8,12 +8,20 @@ Esta é a implementação futura e modular da Lumi. Ela está intencionalmente f
 - Fora do entrypoint, bundle, instalador e scripts de release.
 - Não deve ser importada por nenhum arquivo em `src/`.
 - Fundação inicial em desenvolvimento; domínios ainda não migrados.
+- Baseline atual inventariado: IPC, ferramentas, persistência e providers/motores.
 
 ## Execução durante a migração
 
 Somente testes isolados podem executar código desta árvore:
 
 ```powershell
+node --test src-next/tests/*.test.js
+```
+
+Para atualizar os snapshots depois de uma mudança legítima no monólito:
+
+```powershell
+node src-next/scripts/inventory.js
 node --test src-next/tests/*.test.js
 ```
 

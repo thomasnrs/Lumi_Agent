@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "src/main/main.js",
+    "lines": 15101,
+    "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+  },
+  "summary": {
+    "tools": 65,
+    "toolsets": 12
+  },
+  "duplicates": [],
+  "tools": [
+    {
+      "name": "append_file",
+      "line": 6546
+    },
+    {
+      "name": "apply_patch",
+      "line": 6107
+    },
+    {
+      "name": "ask_user",
+      "line": 6815
+    },
+    {
+      "name": "cancel_reminder",
+      "line": 6909
+    },
+    {
+      "name": "cancel_scheduled_task",
+      "line": 6497
+    },
+    {
+      "name": "click",
+      "line": 5427
+    },
+    {
+      "name": "connect_remote",
+      "line": 5151
+    },
+    {
+      "name": "db_query",
+      "line": 6429
+    },
+    {
+      "name": "db_schema",
+      "line": 6410
+    },
+    {
+      "name": "delegate_to_agent",
+      "line": 6969
+    },
+    {
+      "name": "delete_file",
+      "line": 6588
+    },
+    {
+      "name": "edit_file",
+      "line": 5702
+    },
+    {
+      "name": "env_info",
+      "line": 6344
+    },
+    {
+      "name": "fetch_url",
+      "line": 6653
+    },
+    {
+      "name": "find_in_code",
+      "line": 5239
+    },
+    {
+      "name": "find_usages",
+      "line": 6309
+    },
+    {
+      "name": "focus_window",
+      "line": 5501
+    },
+    {
+      "name": "generate_image",
+      "line": 6639
+    },
+    {
+      "name": "generate_project_doc",
+      "line": 6171
+    },
+    {
+      "name": "get_datetime",
+      "line": 5146
+    },
+    {
+      "name": "get_problems",
+      "line": 6148
+    },
+    {
+      "name": "git_diff",
+      "line": 5932
+    },
+    {
+      "name": "git_log",
+      "line": 5955
+    },
+    {
+      "name": "git_status",
+      "line": 5890
+    },
+    {
+      "name": "grep_files",
+      "line": 5764
+    },
+    {
+      "name": "http_request",
+      "line": 6693
+    },
+    {
+      "name": "kill_terminal",
+      "line": 5130
+    },
+    {
+      "name": "list_dir",
+      "line": 5610
+    },
+    {
+      "name": "list_reminders",
+      "line": 6903
+    },
+    {
+      "name": "list_scheduled_tasks",
+      "line": 6490
+    },
+    {
+      "name": "list_ssh_hosts",
+      "line": 5185
+    },
+    {
+      "name": "list_terminals",
+      "line": 5116
+    },
+    {
+      "name": "load_toolset",
+      "line": 6944
+    },
+    {
+      "name": "locate_stack",
+      "line": 6047
+    },
+    {
+      "name": "make_dir",
+      "line": 6575
+    },
+    {
+      "name": "move_mouse",
+      "line": 5411
+    },
+    {
+      "name": "open_url",
+      "line": 5595
+    },
+    {
+      "name": "outline",
+      "line": 6276
+    },
+    {
+      "name": "play_animation",
+      "line": 5352
+    },
+    {
+      "name": "press_keys",
+      "line": 5482
+    },
+    {
+      "name": "project_overview",
+      "line": 5190
+    },
+    {
+      "name": "read_artifact",
+      "line": 6925
+    },
+    {
+      "name": "read_clipboard",
+      "line": 5326
+    },
+    {
+      "name": "read_file",
+      "line": 5623
+    },
+    {
+      "name": "read_project_memory",
+      "line": 5530
+    },
+    {
+      "name": "read_terminal",
+      "line": 5094
+    },
+    {
+      "name": "recall_facts",
+      "line": 5379
+    },
+    {
+      "name": "remember_fact",
+      "line": 5365
+    },
+    {
+      "name": "run_command",
+      "line": 6603
+    },
+    {
+      "name": "run_in_terminal",
+      "line": 5021
+    },
+    {
+      "name": "run_tests",
+      "line": 5984
+    },
+    {
+      "name": "schedule_task",
+      "line": 6461
+    },
+    {
+      "name": "screen_info",
+      "line": 5403
+    },
+    {
+      "name": "scroll",
+      "line": 5450
+    },
+    {
+      "name": "see_page",
+      "line": 6734
+    },
+    {
+      "name": "see_screen",
+      "line": 5384
+    },
+    {
+      "name": "set_reminder",
+      "line": 6869
+    },
+    {
+      "name": "system_logs",
+      "line": 6244
+    },
+    {
+      "name": "type_text",
+      "line": 5467
+    },
+    {
+      "name": "update_plan",
+      "line": 6838
+    },
+    {
+      "name": "update_project_memory",
+      "line": 5548
+    },
+    {
+      "name": "view_image",
+      "line": 6781
+    },
+    {
+      "name": "web_search",
+      "line": 6800
+    },
+    {
+      "name": "write_clipboard",
+      "line": 5339
+    },
+    {
+      "name": "write_file",
+      "line": 6508
+    }
+  ],
+  "toolsets": [
+    {
+      "name": "agents",
+      "line": 7031
+    },
+    {
+      "name": "code_read",
+      "line": 7014
+    },
+    {
+      "name": "code_write",
+      "line": 7019
+    },
+    {
+      "name": "computer",
+      "line": 7025
+    },
+    {
+      "name": "data",
+      "line": 7027
+    },
+    {
+      "name": "mcp",
+      "line": 7032
+    },
+    {
+      "name": "media",
+      "line": 7028
+    },
+    {
+      "name": "reminders",
+      "line": 7029
+    },
+    {
+      "name": "remote",
+      "line": 7030
+    },
+    {
+      "name": "system",
+      "line": 7026
+    },
+    {
+      "name": "terminal",
+      "line": 7023
+    },
+    {
+      "name": "web",
+      "line": 7024
+    }
+  ]
+}

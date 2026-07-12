@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "src/main/main.js",
+    "lines": 15101,
+    "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+  },
+  "protocols": [
+    "openai-compatible",
+    "anthropic",
+    "opencode-routing"
+  ],
+  "detectedTurnFunctions": [
+    {
+      "name": "anthropicTurn",
+      "line": 1057
+    },
+    {
+      "name": "responsesTurn",
+      "line": 1246
+    },
+    {
+      "name": "geminiTurn",
+      "line": 1385
+    },
+    {
+      "name": "openaiTurn",
+      "line": 7884
+    },
+    {
+      "name": "runChatTurn",
+      "line": 14045
+    }
+  ],
+  "specialRoutes": [
+    {
+      "id": "nvidia-nim",
+      "detected": true
+    },
+    {
+      "id": "hugging-face-inference",
+      "detected": true
+    },
+    {
+      "id": "opencode",
+      "detected": true
+    }
+  ],
+  "engines": [
+    {
+      "id": "claude-code",
+      "kind": "code-engine"
+    },
+    {
+      "id": "codex",
+      "kind": "code-engine"
+    },
+    {
+      "id": "glm-code",
+      "kind": "code-engine"
+    }
+  ]
+}

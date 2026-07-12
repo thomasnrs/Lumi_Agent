@@ -1,0 +1,1828 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "main": {
+      "path": "src/main/main.js",
+      "lines": 15101,
+      "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+    },
+    "preload": {
+      "path": "src/main/preload.js",
+      "lines": 298,
+      "sha256": "433d689a9d4a800dd9b08dd56f17557baaaaf2940d480b26e11b00be6231a26c"
+    }
+  },
+  "summary": {
+    "mainRegistrations": 180,
+    "uniqueMainChannels": 180,
+    "preloadCalls": 180,
+    "uniquePreloadChannels": 180
+  },
+  "duplicates": [],
+  "preloadWithoutMainRegistration": [],
+  "mainWithoutPreloadCall": [],
+  "registrations": [
+    {
+      "channel": "agents:defaults",
+      "registration": "handle",
+      "line": 12488
+    },
+    {
+      "channel": "anim:preview",
+      "registration": "on",
+      "line": 10911
+    },
+    {
+      "channel": "anim:stop",
+      "registration": "on",
+      "line": 10912
+    },
+    {
+      "channel": "avatar-scale-by",
+      "registration": "on",
+      "line": 10885
+    },
+    {
+      "channel": "avatar-scale-set",
+      "registration": "on",
+      "line": 10884
+    },
+    {
+      "channel": "chat:ask-answer",
+      "registration": "on",
+      "line": 4991
+    },
+    {
+      "channel": "chat:bind",
+      "registration": "handle",
+      "line": 13806
+    },
+    {
+      "channel": "chat:config:get",
+      "registration": "handle",
+      "line": 13843
+    },
+    {
+      "channel": "chat:config:set",
+      "registration": "handle",
+      "line": 13844
+    },
+    {
+      "channel": "chat:fork",
+      "registration": "handle",
+      "line": 13829
+    },
+    {
+      "channel": "chat:history",
+      "registration": "handle",
+      "line": 13812
+    },
+    {
+      "channel": "chat:improve-prompt",
+      "registration": "handle",
+      "line": 13781
+    },
+    {
+      "channel": "chat:open-window",
+      "registration": "on",
+      "line": 12361
+    },
+    {
+      "channel": "chat:perm-answer",
+      "registration": "on",
+      "line": 2568
+    },
+    {
+      "channel": "chat:regen",
+      "registration": "on",
+      "line": 14182
+    },
+    {
+      "channel": "chat:reset",
+      "registration": "on",
+      "line": 13826
+    },
+    {
+      "channel": "chat:send",
+      "registration": "on",
+      "line": 13980
+    },
+    {
+      "channel": "chat:stop",
+      "registration": "on",
+      "line": 14211
+    },
+    {
+      "channel": "chats:current",
+      "registration": "handle",
+      "line": 13833
+    },
+    {
+      "channel": "chats:delete",
+      "registration": "handle",
+      "line": 13857
+    },
+    {
+      "channel": "chats:list",
+      "registration": "handle",
+      "line": 13832
+    },
+    {
+      "channel": "chats:new",
+      "registration": "handle",
+      "line": 13845
+    },
+    {
+      "channel": "chats:open-window",
+      "registration": "on",
+      "line": 12363
+    },
+    {
+      "channel": "chats:rename",
+      "registration": "handle",
+      "line": 13853
+    },
+    {
+      "channel": "chats:switch",
+      "registration": "handle",
+      "line": 13849
+    },
+    {
+      "channel": "checkpoint:undo",
+      "registration": "handle",
+      "line": 7656
+    },
+    {
+      "channel": "claude-code:capabilities",
+      "registration": "handle",
+      "line": 13222
+    },
+    {
+      "channel": "claude-code:login",
+      "registration": "handle",
+      "line": 12837
+    },
+    {
+      "channel": "claude-code:logout",
+      "registration": "handle",
+      "line": 12844
+    },
+    {
+      "channel": "claude-code:status",
+      "registration": "handle",
+      "line": 12835
+    },
+    {
+      "channel": "codex:login",
+      "registration": "handle",
+      "line": 12873
+    },
+    {
+      "channel": "codex:logout",
+      "registration": "handle",
+      "line": 12880
+    },
+    {
+      "channel": "codex:models",
+      "registration": "handle",
+      "line": 12866
+    },
+    {
+      "channel": "codex:status",
+      "registration": "handle",
+      "line": 12865
+    },
+    {
+      "channel": "config:get",
+      "registration": "handle",
+      "line": 12421
+    },
+    {
+      "channel": "config:set",
+      "registration": "handle",
+      "line": 12426
+    },
+    {
+      "channel": "ctx:click",
+      "registration": "on",
+      "line": 10540
+    },
+    {
+      "channel": "ctx:close",
+      "registration": "on",
+      "line": 10552
+    },
+    {
+      "channel": "ctx:size",
+      "registration": "on",
+      "line": 10521
+    },
+    {
+      "channel": "db:ai-sql",
+      "registration": "handle",
+      "line": 11850
+    },
+    {
+      "channel": "db:connect",
+      "registration": "handle",
+      "line": 11701
+    },
+    {
+      "channel": "db:detect",
+      "registration": "handle",
+      "line": 11689
+    },
+    {
+      "channel": "db:disconnect",
+      "registration": "handle",
+      "line": 11733
+    },
+    {
+      "channel": "db:query",
+      "registration": "handle",
+      "line": 11807
+    },
+    {
+      "channel": "db:tables",
+      "registration": "handle",
+      "line": 11806
+    },
+    {
+      "channel": "design:install",
+      "registration": "handle",
+      "line": 12264
+    },
+    {
+      "channel": "design:list",
+      "registration": "handle",
+      "line": 12252
+    },
+    {
+      "channel": "design:status",
+      "registration": "handle",
+      "line": 12263
+    },
+    {
+      "channel": "diag:check",
+      "registration": "handle",
+      "line": 10378
+    },
+    {
+      "channel": "diag:system",
+      "registration": "handle",
+      "line": 10379
+    },
+    {
+      "channel": "docker:action",
+      "registration": "handle",
+      "line": 4896
+    },
+    {
+      "channel": "docker:compose-file",
+      "registration": "handle",
+      "line": 4029
+    },
+    {
+      "channel": "docker:list",
+      "registration": "handle",
+      "line": 4004
+    },
+    {
+      "channel": "editor:active",
+      "registration": "on",
+      "line": 12451
+    },
+    {
+      "channel": "env:list",
+      "registration": "handle",
+      "line": 11618
+    },
+    {
+      "channel": "env:read",
+      "registration": "handle",
+      "line": 11619
+    },
+    {
+      "channel": "env:save",
+      "registration": "handle",
+      "line": 11630
+    },
+    {
+      "channel": "facts:add",
+      "registration": "handle",
+      "line": 12312
+    },
+    {
+      "channel": "facts:clear",
+      "registration": "handle",
+      "line": 12302
+    },
+    {
+      "channel": "facts:delete",
+      "registration": "handle",
+      "line": 12326
+    },
+    {
+      "channel": "facts:list",
+      "registration": "handle",
+      "line": 12311
+    },
+    {
+      "channel": "facts:set",
+      "registration": "handle",
+      "line": 12320
+    },
+    {
+      "channel": "foot-pixel",
+      "registration": "on",
+      "line": 10906
+    },
+    {
+      "channel": "gallery:list",
+      "registration": "handle",
+      "line": 10918
+    },
+    {
+      "channel": "gallery:open",
+      "registration": "on",
+      "line": 10930
+    },
+    {
+      "channel": "get-hook-status",
+      "registration": "handle",
+      "line": 10902
+    },
+    {
+      "channel": "get-unity-idle",
+      "registration": "handle",
+      "line": 12368
+    },
+    {
+      "channel": "get-vrm-path",
+      "registration": "handle",
+      "line": 10914
+    },
+    {
+      "channel": "get-vrma-paths",
+      "registration": "handle",
+      "line": 10915
+    },
+    {
+      "channel": "get-window-bounds",
+      "registration": "handle",
+      "line": 12394
+    },
+    {
+      "channel": "get-window-pos",
+      "registration": "handle",
+      "line": 12398
+    },
+    {
+      "channel": "get-work-area",
+      "registration": "handle",
+      "line": 12380
+    },
+    {
+      "channel": "gh:check",
+      "registration": "handle",
+      "line": 4097
+    },
+    {
+      "channel": "gh:ci",
+      "registration": "handle",
+      "line": 4121
+    },
+    {
+      "channel": "gh:pr-create",
+      "registration": "handle",
+      "line": 4136
+    },
+    {
+      "channel": "gh:prs",
+      "registration": "handle",
+      "line": 4107
+    },
+    {
+      "channel": "git:ai-message",
+      "registration": "handle",
+      "line": 11336
+    },
+    {
+      "channel": "git:ai-review",
+      "registration": "handle",
+      "line": 11370
+    },
+    {
+      "channel": "git:blame",
+      "registration": "handle",
+      "line": 11559
+    },
+    {
+      "channel": "git:branches",
+      "registration": "handle",
+      "line": 11447
+    },
+    {
+      "channel": "git:checkout",
+      "registration": "handle",
+      "line": 11458
+    },
+    {
+      "channel": "git:commit",
+      "registration": "handle",
+      "line": 11322
+    },
+    {
+      "channel": "git:conflicts",
+      "registration": "handle",
+      "line": 11533
+    },
+    {
+      "channel": "git:discard",
+      "registration": "handle",
+      "line": 11301
+    },
+    {
+      "channel": "git:head-file",
+      "registration": "handle",
+      "line": 11266
+    },
+    {
+      "channel": "git:line-status",
+      "registration": "handle",
+      "line": 11423
+    },
+    {
+      "channel": "git:log",
+      "registration": "handle",
+      "line": 11395
+    },
+    {
+      "channel": "git:panel-status",
+      "registration": "handle",
+      "line": 11226
+    },
+    {
+      "channel": "git:pull",
+      "registration": "handle",
+      "line": 11491
+    },
+    {
+      "channel": "git:push",
+      "registration": "handle",
+      "line": 11469
+    },
+    {
+      "channel": "git:resolve",
+      "registration": "handle",
+      "line": 11543
+    },
+    {
+      "channel": "git:show-commit",
+      "registration": "handle",
+      "line": 11411
+    },
+    {
+      "channel": "git:stage",
+      "registration": "handle",
+      "line": 11277
+    },
+    {
+      "channel": "git:stash",
+      "registration": "handle",
+      "line": 11516
+    },
+    {
+      "channel": "git:stash-list",
+      "registration": "handle",
+      "line": 11503
+    },
+    {
+      "channel": "git:unstage",
+      "registration": "handle",
+      "line": 11288
+    },
+    {
+      "channel": "glm-code:status",
+      "registration": "handle",
+      "line": 12836
+    },
+    {
+      "channel": "hover-interactive",
+      "registration": "on",
+      "line": 10819
+    },
+    {
+      "channel": "image:generate",
+      "registration": "handle",
+      "line": 10933
+    },
+    {
+      "channel": "live:start",
+      "registration": "handle",
+      "line": 12016
+    },
+    {
+      "channel": "live:stop",
+      "registration": "handle",
+      "line": 12044
+    },
+    {
+      "channel": "mcp:connect",
+      "registration": "handle",
+      "line": 10936
+    },
+    {
+      "channel": "mcp:status",
+      "registration": "handle",
+      "line": 10940
+    },
+    {
+      "channel": "mem:data",
+      "registration": "on",
+      "line": 10826
+    },
+    {
+      "channel": "memory:open",
+      "registration": "on",
+      "line": 12332
+    },
+    {
+      "channel": "models:catalog",
+      "registration": "handle",
+      "line": 12562
+    },
+    {
+      "channel": "models:favorite",
+      "registration": "handle",
+      "line": 12635
+    },
+    {
+      "channel": "models:get",
+      "registration": "handle",
+      "line": 12537
+    },
+    {
+      "channel": "models:list",
+      "registration": "handle",
+      "line": 12534
+    },
+    {
+      "channel": "models:refresh",
+      "registration": "handle",
+      "line": 12601
+    },
+    {
+      "channel": "models:select",
+      "registration": "handle",
+      "line": 12620
+    },
+    {
+      "channel": "open-external-url",
+      "registration": "on",
+      "line": 11580
+    },
+    {
+      "channel": "over-body",
+      "registration": "on",
+      "line": 10903
+    },
+    {
+      "channel": "page-set-opacity",
+      "registration": "on",
+      "line": 10896
+    },
+    {
+      "channel": "performance:snapshot",
+      "registration": "handle",
+      "line": 10858
+    },
+    {
+      "channel": "pick-folder",
+      "registration": "handle",
+      "line": 10943
+    },
+    {
+      "channel": "ports:kill",
+      "registration": "handle",
+      "line": 4977
+    },
+    {
+      "channel": "ports:list",
+      "registration": "handle",
+      "line": 4976
+    },
+    {
+      "channel": "ports:open",
+      "registration": "on",
+      "line": 4986
+    },
+    {
+      "channel": "presets:delete",
+      "registration": "handle",
+      "line": 12526
+    },
+    {
+      "channel": "presets:list",
+      "registration": "handle",
+      "line": 12504
+    },
+    {
+      "channel": "presets:load",
+      "registration": "handle",
+      "line": 12525
+    },
+    {
+      "channel": "presets:save",
+      "registration": "handle",
+      "line": 12505
+    },
+    {
+      "channel": "project-tasks:list",
+      "registration": "handle",
+      "line": 4044
+    },
+    {
+      "channel": "rest:send",
+      "registration": "handle",
+      "line": 4384
+    },
+    {
+      "channel": "server:action",
+      "registration": "handle",
+      "line": 4463
+    },
+    {
+      "channel": "server:context",
+      "registration": "handle",
+      "line": 4418
+    },
+    {
+      "channel": "server:logs",
+      "registration": "handle",
+      "line": 4475
+    },
+    {
+      "channel": "server:services",
+      "registration": "handle",
+      "line": 4448
+    },
+    {
+      "channel": "server:stats",
+      "registration": "handle",
+      "line": 4419
+    },
+    {
+      "channel": "set-window-pos",
+      "registration": "on",
+      "line": 12399
+    },
+    {
+      "channel": "settings:open-window",
+      "registration": "on",
+      "line": 10230
+    },
+    {
+      "channel": "show-context-menu",
+      "registration": "on",
+      "line": 10816
+    },
+    {
+      "channel": "ssh:available",
+      "registration": "handle",
+      "line": 4252
+    },
+    {
+      "channel": "ssh:ensure-key",
+      "registration": "handle",
+      "line": 4277
+    },
+    {
+      "channel": "ssh:hosts",
+      "registration": "handle",
+      "line": 4220
+    },
+    {
+      "channel": "ssh:install-cmd",
+      "registration": "handle",
+      "line": 4255
+    },
+    {
+      "channel": "ssh:listdir",
+      "registration": "handle",
+      "line": 4486
+    },
+    {
+      "channel": "ssh:mount",
+      "registration": "handle",
+      "line": 4880
+    },
+    {
+      "channel": "ssh:recents",
+      "registration": "handle",
+      "line": 4884
+    },
+    {
+      "channel": "ssh:status",
+      "registration": "handle",
+      "line": 4885
+    },
+    {
+      "channel": "ssh:unmount",
+      "registration": "handle",
+      "line": 4889
+    },
+    {
+      "channel": "stt:transcribe",
+      "registration": "handle",
+      "line": 12654
+    },
+    {
+      "channel": "tasks:delete",
+      "registration": "handle",
+      "line": 14596
+    },
+    {
+      "channel": "tasks:list",
+      "registration": "handle",
+      "line": 14583
+    },
+    {
+      "channel": "tasks:run-now",
+      "registration": "handle",
+      "line": 14601
+    },
+    {
+      "channel": "tasks:save",
+      "registration": "handle",
+      "line": 14584
+    },
+    {
+      "channel": "term:buffer",
+      "registration": "handle",
+      "line": 4931
+    },
+    {
+      "channel": "term:create",
+      "registration": "handle",
+      "line": 3920
+    },
+    {
+      "channel": "term:input",
+      "registration": "on",
+      "line": 4908
+    },
+    {
+      "channel": "term:kill",
+      "registration": "on",
+      "line": 4922
+    },
+    {
+      "channel": "term:list",
+      "registration": "handle",
+      "line": 4926
+    },
+    {
+      "channel": "term:profiles",
+      "registration": "handle",
+      "line": 3947
+    },
+    {
+      "channel": "term:resize",
+      "registration": "on",
+      "line": 4912
+    },
+    {
+      "channel": "theme-set",
+      "registration": "on",
+      "line": 10888
+    },
+    {
+      "channel": "tts:speak",
+      "registration": "handle",
+      "line": 12649
+    },
+    {
+      "channel": "tunnel:check",
+      "registration": "handle",
+      "line": 4076
+    },
+    {
+      "channel": "usage:today",
+      "registration": "handle",
+      "line": 8078
+    },
+    {
+      "channel": "window:control",
+      "registration": "handle",
+      "line": 12400
+    },
+    {
+      "channel": "wizard:install-vrm",
+      "registration": "handle",
+      "line": 12340
+    },
+    {
+      "channel": "wizard:vrms",
+      "registration": "handle",
+      "line": 12335
+    },
+    {
+      "channel": "workspace:children",
+      "registration": "handle",
+      "line": 11090
+    },
+    {
+      "channel": "workspace:create",
+      "registration": "handle",
+      "line": 12080
+    },
+    {
+      "channel": "workspace:delete",
+      "registration": "handle",
+      "line": 12098
+    },
+    {
+      "channel": "workspace:fulltree",
+      "registration": "handle",
+      "line": 11084
+    },
+    {
+      "channel": "workspace:get-memory",
+      "registration": "handle",
+      "line": 12284
+    },
+    {
+      "channel": "workspace:gitinfo",
+      "registration": "handle",
+      "line": 11163
+    },
+    {
+      "channel": "workspace:gitstatus",
+      "registration": "handle",
+      "line": 11176
+    },
+    {
+      "channel": "workspace:import-file",
+      "registration": "handle",
+      "line": 12063
+    },
+    {
+      "channel": "workspace:move",
+      "registration": "handle",
+      "line": 12127
+    },
+    {
+      "channel": "workspace:open-window",
+      "registration": "handle",
+      "line": 10371
+    },
+    {
+      "channel": "workspace:read",
+      "registration": "handle",
+      "line": 10989
+    },
+    {
+      "channel": "workspace:read-image",
+      "registration": "handle",
+      "line": 11000
+    },
+    {
+      "channel": "workspace:rename",
+      "registration": "handle",
+      "line": 12110
+    },
+    {
+      "channel": "workspace:reveal",
+      "registration": "on",
+      "line": 12481
+    },
+    {
+      "channel": "workspace:search",
+      "registration": "handle",
+      "line": 11098
+    },
+    {
+      "channel": "workspace:set-memory",
+      "registration": "handle",
+      "line": 12293
+    },
+    {
+      "channel": "workspace:tree",
+      "registration": "handle",
+      "line": 10982
+    },
+    {
+      "channel": "workspace:write",
+      "registration": "handle",
+      "line": 11018
+    },
+    {
+      "channel": "ws:bind",
+      "registration": "handle",
+      "line": 10346
+    }
+  ],
+  "preloadCalls": [
+    {
+      "channel": "agents:defaults",
+      "transport": "invoke",
+      "line": 230
+    },
+    {
+      "channel": "anim:preview",
+      "transport": "send",
+      "line": 204
+    },
+    {
+      "channel": "anim:stop",
+      "transport": "send",
+      "line": 205
+    },
+    {
+      "channel": "avatar-scale-by",
+      "transport": "send",
+      "line": 174
+    },
+    {
+      "channel": "avatar-scale-set",
+      "transport": "send",
+      "line": 173
+    },
+    {
+      "channel": "chat:ask-answer",
+      "transport": "send",
+      "line": 294
+    },
+    {
+      "channel": "chat:bind",
+      "transport": "invoke",
+      "line": 155
+    },
+    {
+      "channel": "chat:config:get",
+      "transport": "invoke",
+      "line": 265
+    },
+    {
+      "channel": "chat:config:set",
+      "transport": "invoke",
+      "line": 266
+    },
+    {
+      "channel": "chat:fork",
+      "transport": "invoke",
+      "line": 255
+    },
+    {
+      "channel": "chat:history",
+      "transport": "invoke",
+      "line": 270
+    },
+    {
+      "channel": "chat:improve-prompt",
+      "transport": "invoke",
+      "line": 156
+    },
+    {
+      "channel": "chat:open-window",
+      "transport": "send",
+      "line": 153
+    },
+    {
+      "channel": "chat:perm-answer",
+      "transport": "send",
+      "line": 291
+    },
+    {
+      "channel": "chat:regen",
+      "transport": "send",
+      "line": 252
+    },
+    {
+      "channel": "chat:reset",
+      "transport": "send",
+      "line": 254
+    },
+    {
+      "channel": "chat:send",
+      "transport": "send",
+      "line": 250
+    },
+    {
+      "channel": "chat:stop",
+      "transport": "send",
+      "line": 251
+    },
+    {
+      "channel": "chats:current",
+      "transport": "invoke",
+      "line": 260
+    },
+    {
+      "channel": "chats:delete",
+      "transport": "invoke",
+      "line": 264
+    },
+    {
+      "channel": "chats:list",
+      "transport": "invoke",
+      "line": 259
+    },
+    {
+      "channel": "chats:new",
+      "transport": "invoke",
+      "line": 261
+    },
+    {
+      "channel": "chats:open-window",
+      "transport": "send",
+      "line": 154
+    },
+    {
+      "channel": "chats:rename",
+      "transport": "invoke",
+      "line": 263
+    },
+    {
+      "channel": "chats:switch",
+      "transport": "invoke",
+      "line": 262
+    },
+    {
+      "channel": "checkpoint:undo",
+      "transport": "invoke",
+      "line": 288
+    },
+    {
+      "channel": "claude-code:capabilities",
+      "transport": "invoke",
+      "line": 217
+    },
+    {
+      "channel": "claude-code:login",
+      "transport": "invoke",
+      "line": 215
+    },
+    {
+      "channel": "claude-code:logout",
+      "transport": "invoke",
+      "line": 216
+    },
+    {
+      "channel": "claude-code:status",
+      "transport": "invoke",
+      "line": 214
+    },
+    {
+      "channel": "codex:login",
+      "transport": "invoke",
+      "line": 220
+    },
+    {
+      "channel": "codex:logout",
+      "transport": "invoke",
+      "line": 221
+    },
+    {
+      "channel": "codex:models",
+      "transport": "invoke",
+      "line": 222
+    },
+    {
+      "channel": "codex:status",
+      "transport": "invoke",
+      "line": 219
+    },
+    {
+      "channel": "config:get",
+      "transport": "invoke",
+      "line": 210
+    },
+    {
+      "channel": "config:set",
+      "transport": "invoke",
+      "line": 211
+    },
+    {
+      "channel": "ctx:click",
+      "transport": "send",
+      "line": 187
+    },
+    {
+      "channel": "ctx:close",
+      "transport": "send",
+      "line": 188
+    },
+    {
+      "channel": "ctx:size",
+      "transport": "send",
+      "line": 186
+    },
+    {
+      "channel": "db:ai-sql",
+      "transport": "invoke",
+      "line": 133
+    },
+    {
+      "channel": "db:connect",
+      "transport": "invoke",
+      "line": 129
+    },
+    {
+      "channel": "db:detect",
+      "transport": "invoke",
+      "line": 128
+    },
+    {
+      "channel": "db:disconnect",
+      "transport": "invoke",
+      "line": 130
+    },
+    {
+      "channel": "db:query",
+      "transport": "invoke",
+      "line": 132
+    },
+    {
+      "channel": "db:tables",
+      "transport": "invoke",
+      "line": 131
+    },
+    {
+      "channel": "design:install",
+      "transport": "invoke",
+      "line": 31
+    },
+    {
+      "channel": "design:list",
+      "transport": "invoke",
+      "line": 29
+    },
+    {
+      "channel": "design:status",
+      "transport": "invoke",
+      "line": 30
+    },
+    {
+      "channel": "diag:check",
+      "transport": "invoke",
+      "line": 36
+    },
+    {
+      "channel": "diag:system",
+      "transport": "invoke",
+      "line": 37
+    },
+    {
+      "channel": "docker:action",
+      "transport": "invoke",
+      "line": 95
+    },
+    {
+      "channel": "docker:compose-file",
+      "transport": "invoke",
+      "line": 96
+    },
+    {
+      "channel": "docker:list",
+      "transport": "invoke",
+      "line": 94
+    },
+    {
+      "channel": "editor:active",
+      "transport": "send",
+      "line": 53
+    },
+    {
+      "channel": "env:list",
+      "transport": "invoke",
+      "line": 123
+    },
+    {
+      "channel": "env:read",
+      "transport": "invoke",
+      "line": 124
+    },
+    {
+      "channel": "env:save",
+      "transport": "invoke",
+      "line": 125
+    },
+    {
+      "channel": "facts:add",
+      "transport": "invoke",
+      "line": 149
+    },
+    {
+      "channel": "facts:clear",
+      "transport": "invoke",
+      "line": 147
+    },
+    {
+      "channel": "facts:delete",
+      "transport": "invoke",
+      "line": 151
+    },
+    {
+      "channel": "facts:list",
+      "transport": "invoke",
+      "line": 148
+    },
+    {
+      "channel": "facts:set",
+      "transport": "invoke",
+      "line": 150
+    },
+    {
+      "channel": "foot-pixel",
+      "transport": "send",
+      "line": 199
+    },
+    {
+      "channel": "gallery:list",
+      "transport": "invoke",
+      "line": 21
+    },
+    {
+      "channel": "gallery:open",
+      "transport": "send",
+      "line": 22
+    },
+    {
+      "channel": "get-hook-status",
+      "transport": "invoke",
+      "line": 197
+    },
+    {
+      "channel": "get-unity-idle",
+      "transport": "invoke",
+      "line": 18
+    },
+    {
+      "channel": "get-vrm-path",
+      "transport": "invoke",
+      "line": 15
+    },
+    {
+      "channel": "get-vrma-paths",
+      "transport": "invoke",
+      "line": 16
+    },
+    {
+      "channel": "get-window-bounds",
+      "transport": "invoke",
+      "line": 167
+    },
+    {
+      "channel": "get-window-pos",
+      "transport": "invoke",
+      "line": 166
+    },
+    {
+      "channel": "get-work-area",
+      "transport": "invoke",
+      "line": 17
+    },
+    {
+      "channel": "gh:check",
+      "transport": "invoke",
+      "line": 99
+    },
+    {
+      "channel": "gh:ci",
+      "transport": "invoke",
+      "line": 101
+    },
+    {
+      "channel": "gh:pr-create",
+      "transport": "invoke",
+      "line": 102
+    },
+    {
+      "channel": "gh:prs",
+      "transport": "invoke",
+      "line": 100
+    },
+    {
+      "channel": "git:ai-message",
+      "transport": "invoke",
+      "line": 67
+    },
+    {
+      "channel": "git:ai-review",
+      "transport": "invoke",
+      "line": 68
+    },
+    {
+      "channel": "git:blame",
+      "transport": "invoke",
+      "line": 80
+    },
+    {
+      "channel": "git:branches",
+      "transport": "invoke",
+      "line": 72
+    },
+    {
+      "channel": "git:checkout",
+      "transport": "invoke",
+      "line": 73
+    },
+    {
+      "channel": "git:commit",
+      "transport": "invoke",
+      "line": 66
+    },
+    {
+      "channel": "git:conflicts",
+      "transport": "invoke",
+      "line": 78
+    },
+    {
+      "channel": "git:discard",
+      "transport": "invoke",
+      "line": 65
+    },
+    {
+      "channel": "git:head-file",
+      "transport": "invoke",
+      "line": 62
+    },
+    {
+      "channel": "git:line-status",
+      "transport": "invoke",
+      "line": 71
+    },
+    {
+      "channel": "git:log",
+      "transport": "invoke",
+      "line": 69
+    },
+    {
+      "channel": "git:panel-status",
+      "transport": "invoke",
+      "line": 61
+    },
+    {
+      "channel": "git:pull",
+      "transport": "invoke",
+      "line": 75
+    },
+    {
+      "channel": "git:push",
+      "transport": "invoke",
+      "line": 74
+    },
+    {
+      "channel": "git:resolve",
+      "transport": "invoke",
+      "line": 79
+    },
+    {
+      "channel": "git:show-commit",
+      "transport": "invoke",
+      "line": 70
+    },
+    {
+      "channel": "git:stage",
+      "transport": "invoke",
+      "line": 63
+    },
+    {
+      "channel": "git:stash",
+      "transport": "invoke",
+      "line": 77
+    },
+    {
+      "channel": "git:stash-list",
+      "transport": "invoke",
+      "line": 76
+    },
+    {
+      "channel": "git:unstage",
+      "transport": "invoke",
+      "line": 64
+    },
+    {
+      "channel": "glm-code:status",
+      "transport": "invoke",
+      "line": 218
+    },
+    {
+      "channel": "hover-interactive",
+      "transport": "send",
+      "line": 193
+    },
+    {
+      "channel": "image:generate",
+      "transport": "invoke",
+      "line": 23
+    },
+    {
+      "channel": "live:start",
+      "transport": "invoke",
+      "line": 84
+    },
+    {
+      "channel": "live:stop",
+      "transport": "invoke",
+      "line": 85
+    },
+    {
+      "channel": "mcp:connect",
+      "transport": "invoke",
+      "line": 225
+    },
+    {
+      "channel": "mcp:status",
+      "transport": "invoke",
+      "line": 226
+    },
+    {
+      "channel": "mem:data",
+      "transport": "send",
+      "line": 164
+    },
+    {
+      "channel": "memory:open",
+      "transport": "send",
+      "line": 152
+    },
+    {
+      "channel": "models:catalog",
+      "transport": "invoke",
+      "line": 242
+    },
+    {
+      "channel": "models:favorite",
+      "transport": "invoke",
+      "line": 245
+    },
+    {
+      "channel": "models:get",
+      "transport": "invoke",
+      "line": 240
+    },
+    {
+      "channel": "models:list",
+      "transport": "invoke",
+      "line": 239
+    },
+    {
+      "channel": "models:refresh",
+      "transport": "invoke",
+      "line": 243
+    },
+    {
+      "channel": "models:select",
+      "transport": "invoke",
+      "line": 244
+    },
+    {
+      "channel": "open-external-url",
+      "transport": "send",
+      "line": 81
+    },
+    {
+      "channel": "over-body",
+      "transport": "send",
+      "line": 198
+    },
+    {
+      "channel": "page-set-opacity",
+      "transport": "send",
+      "line": 176
+    },
+    {
+      "channel": "performance:snapshot",
+      "transport": "invoke",
+      "line": 165
+    },
+    {
+      "channel": "pick-folder",
+      "transport": "invoke",
+      "line": 26
+    },
+    {
+      "channel": "ports:kill",
+      "transport": "invoke",
+      "line": 143
+    },
+    {
+      "channel": "ports:list",
+      "transport": "invoke",
+      "line": 142
+    },
+    {
+      "channel": "ports:open",
+      "transport": "send",
+      "line": 144
+    },
+    {
+      "channel": "presets:delete",
+      "transport": "invoke",
+      "line": 236
+    },
+    {
+      "channel": "presets:list",
+      "transport": "invoke",
+      "line": 233
+    },
+    {
+      "channel": "presets:load",
+      "transport": "invoke",
+      "line": 235
+    },
+    {
+      "channel": "presets:save",
+      "transport": "invoke",
+      "line": 234
+    },
+    {
+      "channel": "project-tasks:list",
+      "transport": "invoke",
+      "line": 97
+    },
+    {
+      "channel": "rest:send",
+      "transport": "invoke",
+      "line": 113
+    },
+    {
+      "channel": "server:action",
+      "transport": "invoke",
+      "line": 119
+    },
+    {
+      "channel": "server:context",
+      "transport": "invoke",
+      "line": 116
+    },
+    {
+      "channel": "server:logs",
+      "transport": "invoke",
+      "line": 120
+    },
+    {
+      "channel": "server:services",
+      "transport": "invoke",
+      "line": 118
+    },
+    {
+      "channel": "server:stats",
+      "transport": "invoke",
+      "line": 117
+    },
+    {
+      "channel": "set-window-pos",
+      "transport": "send",
+      "line": 168
+    },
+    {
+      "channel": "settings:open-window",
+      "transport": "send",
+      "line": 213
+    },
+    {
+      "channel": "show-context-menu",
+      "transport": "send",
+      "line": 183
+    },
+    {
+      "channel": "ssh:available",
+      "transport": "invoke",
+      "line": 104
+    },
+    {
+      "channel": "ssh:ensure-key",
+      "transport": "invoke",
+      "line": 106
+    },
+    {
+      "channel": "ssh:hosts",
+      "transport": "invoke",
+      "line": 103
+    },
+    {
+      "channel": "ssh:install-cmd",
+      "transport": "invoke",
+      "line": 105
+    },
+    {
+      "channel": "ssh:listdir",
+      "transport": "invoke",
+      "line": 107
+    },
+    {
+      "channel": "ssh:mount",
+      "transport": "invoke",
+      "line": 134
+    },
+    {
+      "channel": "ssh:recents",
+      "transport": "invoke",
+      "line": 108
+    },
+    {
+      "channel": "ssh:status",
+      "transport": "invoke",
+      "line": 109
+    },
+    {
+      "channel": "ssh:unmount",
+      "transport": "invoke",
+      "line": 135
+    },
+    {
+      "channel": "stt:transcribe",
+      "transport": "invoke",
+      "line": 247
+    },
+    {
+      "channel": "tasks:delete",
+      "transport": "invoke",
+      "line": 41
+    },
+    {
+      "channel": "tasks:list",
+      "transport": "invoke",
+      "line": 39
+    },
+    {
+      "channel": "tasks:run-now",
+      "transport": "invoke",
+      "line": 42
+    },
+    {
+      "channel": "tasks:save",
+      "transport": "invoke",
+      "line": 40
+    },
+    {
+      "channel": "term:buffer",
+      "transport": "invoke",
+      "line": 136
+    },
+    {
+      "channel": "term:create",
+      "transport": "invoke",
+      "line": 88
+    },
+    {
+      "channel": "term:input",
+      "transport": "send",
+      "line": 89
+    },
+    {
+      "channel": "term:kill",
+      "transport": "send",
+      "line": 91
+    },
+    {
+      "channel": "term:list",
+      "transport": "invoke",
+      "line": 92
+    },
+    {
+      "channel": "term:profiles",
+      "transport": "invoke",
+      "line": 93
+    },
+    {
+      "channel": "term:resize",
+      "transport": "send",
+      "line": 90
+    },
+    {
+      "channel": "theme-set",
+      "transport": "send",
+      "line": 179
+    },
+    {
+      "channel": "tts:speak",
+      "transport": "invoke",
+      "line": 246
+    },
+    {
+      "channel": "tunnel:check",
+      "transport": "invoke",
+      "line": 98
+    },
+    {
+      "channel": "usage:today",
+      "transport": "invoke",
+      "line": 276
+    },
+    {
+      "channel": "window:control",
+      "transport": "invoke",
+      "line": 169
+    },
+    {
+      "channel": "wizard:install-vrm",
+      "transport": "invoke",
+      "line": 160
+    },
+    {
+      "channel": "wizard:vrms",
+      "transport": "invoke",
+      "line": 159
+    },
+    {
+      "channel": "workspace:children",
+      "transport": "invoke",
+      "line": 43
+    },
+    {
+      "channel": "workspace:create",
+      "transport": "invoke",
+      "line": 46
+    },
+    {
+      "channel": "workspace:delete",
+      "transport": "invoke",
+      "line": 48
+    },
+    {
+      "channel": "workspace:fulltree",
+      "transport": "invoke",
+      "line": 33
+    },
+    {
+      "channel": "workspace:get-memory",
+      "transport": "invoke",
+      "line": 27
+    },
+    {
+      "channel": "workspace:gitinfo",
+      "transport": "invoke",
+      "line": 58
+    },
+    {
+      "channel": "workspace:gitstatus",
+      "transport": "invoke",
+      "line": 57
+    },
+    {
+      "channel": "workspace:import-file",
+      "transport": "invoke",
+      "line": 47
+    },
+    {
+      "channel": "workspace:move",
+      "transport": "invoke",
+      "line": 50
+    },
+    {
+      "channel": "workspace:open-window",
+      "transport": "invoke",
+      "line": 35
+    },
+    {
+      "channel": "workspace:read",
+      "transport": "invoke",
+      "line": 44
+    },
+    {
+      "channel": "workspace:read-image",
+      "transport": "invoke",
+      "line": 45
+    },
+    {
+      "channel": "workspace:rename",
+      "transport": "invoke",
+      "line": 49
+    },
+    {
+      "channel": "workspace:reveal",
+      "transport": "send",
+      "line": 55
+    },
+    {
+      "channel": "workspace:search",
+      "transport": "invoke",
+      "line": 56
+    },
+    {
+      "channel": "workspace:set-memory",
+      "transport": "invoke",
+      "line": 28
+    },
+    {
+      "channel": "workspace:tree",
+      "transport": "invoke",
+      "line": 32
+    },
+    {
+      "channel": "workspace:write",
+      "transport": "invoke",
+      "line": 145
+    },
+    {
+      "channel": "ws:bind",
+      "transport": "invoke",
+      "line": 34
+    }
+  ]
+}

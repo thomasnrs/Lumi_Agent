@@ -12,6 +12,8 @@
 | metrics | Timings, event-loop lag, CPU e memória |
 | scheduler | Timers canceláveis e clock injetável |
 
+Estado da fundação já implementada isoladamente: lifecycle, container, event bus, erros normalizados, redaction, logger estruturado e scheduler por owner. Métricas, schemas e adapters de persistência ainda estão pendentes.
+
 ## Domínios do main
 
 | Domínio | Conteúdo-alvo |
