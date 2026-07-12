@@ -9,6 +9,8 @@ Esta é a implementação futura e modular da Lumi. Ela está intencionalmente f
 - Não deve ser importada por nenhum arquivo em `src/`.
 - Fundação inicial em desenvolvimento; domínios ainda não migrados.
 - Baseline atual inventariado: IPC, ferramentas, persistência e providers/motores.
+- Core isolado cobre lifecycle, DI, eventos, erros, logs, timers, IDs, métricas e schemas.
+- Persistência JSON atômica e configuração versionada foram iniciadas, ainda sem formatos reais conectados.
 
 ## Execução durante a migração
 

@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "src/main/main.js",
+    "lines": 15101,
+    "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+  },
+  "summary": {
+    "topLevelFields": 81
+  },
+  "duplicates": [],
+  "fields": [
+    {
+      "name": "acrylic",
+      "line": 410
+    },
+    {
+      "name": "agents",
+      "line": 469
+    },
+    {
+      "name": "agentsEnabled",
+      "line": 468
+    },
+    {
+      "name": "apiKey",
+      "line": 391
+    },
+    {
+      "name": "architectMode",
+      "line": 416
+    },
+    {
+      "name": "audioInput",
+      "line": 547
+    },
+    {
+      "name": "audioOutput",
+      "line": 548
+    },
+    {
+      "name": "autoVerify",
+      "line": 433
+    },
+    {
+      "name": "avatarScale",
+      "line": 406
+    },
+    {
+      "name": "baseUrl",
+      "line": 390
+    },
+    {
+      "name": "claudeCodeEffort",
+      "line": 420
+    },
+    {
+      "name": "claudeCodeModel",
+      "line": 418
+    },
+    {
+      "name": "claudeCodePermissionMode",
+      "line": 419
+    },
+    {
+      "name": "claudeCodePrompt",
+      "line": 421
+    },
+    {
+      "name": "codeBudgetPct",
+      "line": 462
+    },
+    {
+      "name": "codeEngine",
+      "line": 417
+    },
+    {
+      "name": "codexEffort",
+      "line": 429
+    },
+    {
+      "name": "codexModel",
+      "line": 427
+    },
+    {
+      "name": "codexPermissionMode",
+      "line": 428
+    },
+    {
+      "name": "codexPrompt",
+      "line": 430
+    },
+    {
+      "name": "compactAtPct",
+      "line": 459
+    },
+    {
+      "name": "contextWindow",
+      "line": 458
+    },
+    {
+      "name": "fallbackModel",
+      "line": 445
+    },
+    {
+      "name": "favorites",
+      "line": 413
+    },
+    {
+      "name": "formatOnSave",
+      "line": 436
+    },
+    {
+      "name": "gfxActiveFps",
+      "line": 404
+    },
+    {
+      "name": "gfxIdleFps",
+      "line": 403
+    },
+    {
+      "name": "gfxQuality",
+      "line": 401
+    },
+    {
+      "name": "gfxReducedEffects",
+      "line": 405
+    },
+    {
+      "name": "gfxRenderScale",
+      "line": 402
+    },
+    {
+      "name": "glmCodeApiKey",
+      "line": 422
+    },
+    {
+      "name": "glmCodeEffort",
+      "line": 425
+    },
+    {
+      "name": "glmCodeModel",
+      "line": 423
+    },
+    {
+      "name": "glmCodePermissionMode",
+      "line": 424
+    },
+    {
+      "name": "glmCodePrompt",
+      "line": 426
+    },
+    {
+      "name": "imageApiKey",
+      "line": 440
+    },
+    {
+      "name": "imageBaseUrl",
+      "line": 439
+    },
+    {
+      "name": "imageModel",
+      "line": 438
+    },
+    {
+      "name": "includeActiveTab",
+      "line": 463
+    },
+    {
+      "name": "logSentinel",
+      "line": 456
+    },
+    {
+      "name": "maxSteps",
+      "line": 457
+    },
+    {
+      "name": "mcpServers",
+      "line": 466
+    },
+    {
+      "name": "memoryEnabled",
+      "line": 415
+    },
+    {
+      "name": "model",
+      "line": 392
+    },
+    {
+      "name": "modelsCache",
+      "line": 412
+    },
+    {
+      "name": "pageOpacity",
+      "line": 407
+    },
+    {
+      "name": "perms",
+      "line": 465
+    },
+    {
+      "name": "preciousFiles",
+      "line": 435
+    },
+    {
+      "name": "proactivity",
+      "line": 453
+    },
+    {
+      "name": "provider",
+      "line": 389
+    },
+    {
+      "name": "reactApps",
+      "line": 454
+    },
+    {
+      "name": "recentLiteralTokens",
+      "line": 461
+    },
+    {
+      "name": "requestRps",
+      "line": 394
+    },
+    {
+      "name": "responseReserveTokens",
+      "line": 460
+    },
+    {
+      "name": "searchApiKey",
+      "line": 443
+    },
+    {
+      "name": "searchProvider",
+      "line": 442
+    },
+    {
+      "name": "searxUrl",
+      "line": 444
+    },
+    {
+      "name": "selectedVrm",
+      "line": 432
+    },
+    {
+      "name": "selfReview",
+      "line": 437
+    },
+    {
+      "name": "sounds",
+      "line": 411
+    },
+    {
+      "name": "sttApiKey",
+      "line": 544
+    },
+    {
+      "name": "sttBaseUrl",
+      "line": 545
+    },
+    {
+      "name": "sttModel",
+      "line": 546
+    },
+    {
+      "name": "sttProvider",
+      "line": 543
+    },
+    {
+      "name": "systemPrompt",
+      "line": 549
+    },
+    {
+      "name": "taskApiKey",
+      "line": 451
+    },
+    {
+      "name": "taskBaseUrl",
+      "line": 450
+    },
+    {
+      "name": "taskModel",
+      "line": 452
+    },
+    {
+      "name": "taskProvider",
+      "line": 449
+    },
+    {
+      "name": "temperature",
+      "line": 393
+    },
+    {
+      "name": "theme",
+      "line": 409
+    },
+    {
+      "name": "toolsEnabled",
+      "line": 414
+    },
+    {
+      "name": "ttsApiKey",
+      "line": 397
+    },
+    {
+      "name": "ttsBaseUrl",
+      "line": 400
+    },
+    {
+      "name": "ttsModel",
+      "line": 399
+    },
+    {
+      "name": "ttsProvider",
+      "line": 396
+    },
+    {
+      "name": "ttsVoice",
+      "line": 398
+    },
+    {
+      "name": "verifyCommand",
+      "line": 434
+    },
+    {
+      "name": "watchServer",
+      "line": 455
+    },
+    {
+      "name": "winBounds",
+      "line": 408
+    },
+    {
+      "name": "workspace",
+      "line": 431
+    }
+  ]
+}

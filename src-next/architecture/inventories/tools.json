@@ -13,263 +13,328 @@
   "tools": [
     {
       "name": "append_file",
-      "line": 6546
+      "line": 6546,
+      "category": "write"
     },
     {
       "name": "apply_patch",
-      "line": 6107
+      "line": 6107,
+      "category": "write"
     },
     {
       "name": "ask_user",
-      "line": 6815
+      "line": 6815,
+      "category": null
     },
     {
       "name": "cancel_reminder",
-      "line": 6909
+      "line": 6909,
+      "category": null
     },
     {
       "name": "cancel_scheduled_task",
-      "line": 6497
+      "line": 6497,
+      "category": "exec"
     },
     {
       "name": "click",
-      "line": 5427
+      "line": 5427,
+      "category": "control"
     },
     {
       "name": "connect_remote",
-      "line": 5151
+      "line": 5151,
+      "category": "exec"
     },
     {
       "name": "db_query",
-      "line": 6429
+      "line": 6429,
+      "category": "read"
     },
     {
       "name": "db_schema",
-      "line": 6410
+      "line": 6410,
+      "category": "read"
     },
     {
       "name": "delegate_to_agent",
-      "line": 6969
+      "line": 6969,
+      "category": null
     },
     {
       "name": "delete_file",
-      "line": 6588
+      "line": 6588,
+      "category": "delete"
     },
     {
       "name": "edit_file",
-      "line": 5702
+      "line": 5702,
+      "category": "write"
     },
     {
       "name": "env_info",
-      "line": 6344
+      "line": 6344,
+      "category": "read"
     },
     {
       "name": "fetch_url",
-      "line": 6653
+      "line": 6653,
+      "category": "network"
     },
     {
       "name": "find_in_code",
-      "line": 5239
+      "line": 5239,
+      "category": null
     },
     {
       "name": "find_usages",
-      "line": 6309
+      "line": 6309,
+      "category": "read"
     },
     {
       "name": "focus_window",
-      "line": 5501
+      "line": 5501,
+      "category": "control"
     },
     {
       "name": "generate_image",
-      "line": 6639
+      "line": 6639,
+      "category": null
     },
     {
       "name": "generate_project_doc",
-      "line": 6171
+      "line": 6171,
+      "category": "write"
     },
     {
       "name": "get_datetime",
-      "line": 5146
+      "line": 5146,
+      "category": null
     },
     {
       "name": "get_problems",
-      "line": 6148
+      "line": 6148,
+      "category": "read"
     },
     {
       "name": "git_diff",
-      "line": 5932
+      "line": 5932,
+      "category": "read"
     },
     {
       "name": "git_log",
-      "line": 5955
+      "line": 5955,
+      "category": "read"
     },
     {
       "name": "git_status",
-      "line": 5890
+      "line": 5890,
+      "category": "read"
     },
     {
       "name": "grep_files",
-      "line": 5764
+      "line": 5764,
+      "category": "read"
     },
     {
       "name": "http_request",
-      "line": 6693
+      "line": 6693,
+      "category": "network"
     },
     {
       "name": "kill_terminal",
-      "line": 5130
+      "line": 5130,
+      "category": "exec"
     },
     {
       "name": "list_dir",
-      "line": 5610
+      "line": 5610,
+      "category": "read"
     },
     {
       "name": "list_reminders",
-      "line": 6903
+      "line": 6903,
+      "category": null
     },
     {
       "name": "list_scheduled_tasks",
-      "line": 6490
+      "line": 6490,
+      "category": null
     },
     {
       "name": "list_ssh_hosts",
-      "line": 5185
+      "line": 5185,
+      "category": null
     },
     {
       "name": "list_terminals",
-      "line": 5116
+      "line": 5116,
+      "category": null
     },
     {
       "name": "load_toolset",
-      "line": 6944
+      "line": 6944,
+      "category": null
     },
     {
       "name": "locate_stack",
-      "line": 6047
+      "line": 6047,
+      "category": "read"
     },
     {
       "name": "make_dir",
-      "line": 6575
+      "line": 6575,
+      "category": "write"
     },
     {
       "name": "move_mouse",
-      "line": 5411
+      "line": 5411,
+      "category": "control"
     },
     {
       "name": "open_url",
-      "line": 5595
+      "line": 5595,
+      "category": "open"
     },
     {
       "name": "outline",
-      "line": 6276
+      "line": 6276,
+      "category": "read"
     },
     {
       "name": "play_animation",
-      "line": 5352
+      "line": 5352,
+      "category": null
     },
     {
       "name": "press_keys",
-      "line": 5482
+      "line": 5482,
+      "category": "control"
     },
     {
       "name": "project_overview",
-      "line": 5190
+      "line": 5190,
+      "category": null
     },
     {
       "name": "read_artifact",
-      "line": 6925
+      "line": 6925,
+      "category": null
     },
     {
       "name": "read_clipboard",
-      "line": 5326
+      "line": 5326,
+      "category": "screen"
     },
     {
       "name": "read_file",
-      "line": 5623
+      "line": 5623,
+      "category": "read"
     },
     {
       "name": "read_project_memory",
-      "line": 5530
+      "line": 5530,
+      "category": "read"
     },
     {
       "name": "read_terminal",
-      "line": 5094
+      "line": 5094,
+      "category": null
     },
     {
       "name": "recall_facts",
-      "line": 5379
+      "line": 5379,
+      "category": null
     },
     {
       "name": "remember_fact",
-      "line": 5365
+      "line": 5365,
+      "category": null
     },
     {
       "name": "run_command",
-      "line": 6603
+      "line": 6603,
+      "category": "exec"
     },
     {
       "name": "run_in_terminal",
-      "line": 5021
+      "line": 5021,
+      "category": "exec"
     },
     {
       "name": "run_tests",
-      "line": 5984
+      "line": 5984,
+      "category": "exec"
     },
     {
       "name": "schedule_task",
-      "line": 6461
+      "line": 6461,
+      "category": "exec"
     },
     {
       "name": "screen_info",
-      "line": 5403
+      "line": 5403,
+      "category": null
     },
     {
       "name": "scroll",
-      "line": 5450
+      "line": 5450,
+      "category": "control"
     },
     {
       "name": "see_page",
-      "line": 6734
+      "line": 6734,
+      "category": "network"
     },
     {
       "name": "see_screen",
-      "line": 5384
+      "line": 5384,
+      "category": "screen"
     },
     {
       "name": "set_reminder",
-      "line": 6869
+      "line": 6869,
+      "category": null
     },
     {
       "name": "system_logs",
-      "line": 6244
+      "line": 6244,
+      "category": "exec"
     },
     {
       "name": "type_text",
-      "line": 5467
+      "line": 5467,
+      "category": "control"
     },
     {
       "name": "update_plan",
-      "line": 6838
+      "line": 6838,
+      "category": null
     },
     {
       "name": "update_project_memory",
-      "line": 5548
+      "line": 5548,
+      "category": "write"
     },
     {
       "name": "view_image",
-      "line": 6781
+      "line": 6781,
+      "category": "read"
     },
     {
       "name": "web_search",
-      "line": 6800
+      "line": 6800,
+      "category": "network"
     },
     {
       "name": "write_clipboard",
-      "line": 5339
+      "line": 5339,
+      "category": "control"
     },
     {
       "name": "write_file",
-      "line": 6508
+      "line": 6508,
+      "category": "write"
     }
   ],
   "toolsets": [

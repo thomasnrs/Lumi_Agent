@@ -10,6 +10,7 @@ Baseline atual:
 - 65 ferramentas nativas.
 - 12 toolsets.
 - 13 fábricas de paths persistidos detectadas.
+- Campos top-level da configuração padrão, com linhas de origem.
 - 5 funções de turno/roteamento detectadas.
 - 3 motores CLI: Claude Code, Codex e GLM Code.
 
@@ -18,6 +19,7 @@ Arquivos:
 - `ipc.json`: canais, transporte, linhas e divergências preload/main.
 - `tools.json`: ferramentas e toolsets.
 - `persistence.json`: fábricas de paths e expressões atuais.
+- `config.json`: campos top-level de `DEFAULT_CONFIG`.
 - `providers.json`: protocolos, turn functions, rotas especiais e motores CLI.
 
 Regeneração:

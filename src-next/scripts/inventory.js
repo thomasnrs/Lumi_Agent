@@ -90,10 +90,19 @@ function inventory() {
   };
 
   const toolsRegion = objectRegion(main, 'const TOOLS = {', '// ---- MCP');
-  const tools = matches(toolsRegion.text, /^  ([a-zA-Z][\w]*):\s*\{/gm, (match, localLine) => ({
-    name: match[1],
-    line: lineAt(main, toolsRegion.offset) + localLine - 1,
-  })).sort((a, b) => a.name.localeCompare(b.name));
+  const toolStarts = [];
+  let toolMatch;
+  const toolPattern = /^  ([a-zA-Z][\w]*):\s*\{/gm;
+  while ((toolMatch = toolPattern.exec(toolsRegion.text))) toolStarts.push({ name: toolMatch[1], index: toolMatch.index });
+  const tools = toolStarts.map((entry, index) => {
+    const block = toolsRegion.text.slice(entry.index, toolStarts[index + 1] ? toolStarts[index + 1].index : toolsRegion.text.length);
+    const categoryMatch = /\n\s+category:\s*(?:'([^']+)'|"([^"]+)"|(null))/.exec(block);
+    return {
+      name: entry.name,
+      line: lineAt(main, toolsRegion.offset + entry.index),
+      category: categoryMatch ? categoryMatch[1] || categoryMatch[2] || null : 'dynamic-or-unspecified',
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
   const toolsetsRegion = objectRegion(main, 'const TOOLSETS = {', 'const TOOLSET_NAMES');
   const toolsets = matches(toolsetsRegion.text, /^  ([a-zA-Z][\w]*):/gm, (match, localLine) => ({
     name: match[1],
@@ -119,6 +128,19 @@ function inventory() {
     pathFactories: pathFunctions,
   };
 
+  const configRegion = objectRegion(main, 'const DEFAULT_CONFIG = {', 'function configPath()');
+  const configFields = matches(configRegion.text, /^  ([a-zA-Z][\w]*):/gm, (match, localLine) => ({
+    name: match[1],
+    line: lineAt(main, configRegion.offset) + localLine - 1,
+  })).sort((a, b) => a.name.localeCompare(b.name));
+  const config = {
+    schemaVersion: 1,
+    source: source.main,
+    summary: { topLevelFields: configFields.length },
+    duplicates: duplicates(configFields, 'name'),
+    fields: configFields,
+  };
+
   const turns = matches(main, /async function\s+([a-zA-Z][\w]*Turn)\s*\(/g, (match, line) => ({ name: match[1], line }));
   const engines = [
     { id: 'claude-code', marker: "ipcMain.handle('claude-code:status'" },
@@ -142,7 +164,8 @@ function inventory() {
   writeJson('tools.json', toolInventory);
   writeJson('persistence.json', persistence);
   writeJson('providers.json', providers);
-  return { ipc: ipc.summary, tools: toolInventory.summary, persistence: persistence.summary, providers: { turns: turns.length, engines: engines.length } };
+  writeJson('config.json', config);
+  return { ipc: ipc.summary, tools: toolInventory.summary, persistence: persistence.summary, config: config.summary, providers: { turns: turns.length, engines: engines.length } };
 }
 
 if (require.main === module) console.log(JSON.stringify(inventory(), null, 2));
