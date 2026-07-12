@@ -60,6 +60,23 @@
         color: var(--text);
       }
       #main { flex: 1; display: flex; min-height: 0; }
+      #designOverlay {
+        position: fixed;
+        inset: 34px 0 0;
+        z-index: 145;
+        background: #090a0f;
+        opacity: 1;
+        transform: none;
+        transition: opacity 220ms ease, transform 260ms cubic-bezier(.16,1,.3,1);
+      }
+      #designOverlay[hidden] { display: none; }
+      #designOverlay.closing { opacity: 0; transform: translateY(8px); pointer-events: none; }
+      #designFrame { display: block; width: 100%; height: 100%; border: 0; background: #090a0f; }
+      #designBtn.on {
+        background: color-mix(in srgb, #9175ff 22%, transparent);
+        border-color: color-mix(in srgb, #9175ff 64%, var(--border));
+        color: var(--text);
+      }
       #side {
         width: 250px; flex: 0 0 auto; display: flex; flex-direction: column;
         background: var(--surface-2); border-right: 1px solid var(--border);
@@ -803,6 +820,7 @@
       <span class="path" id="curpath">Nenhum arquivo aberto</span>
       <button id="liveBtn" title="Live Server — preview ao vivo com recarga automática"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>Live</button>
       <button id="webBtn" title="Navegador embutido — acesse o localhost dos seus dev servers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>Web</button>
+      <button id="designBtn" title="Sistemas visuais — criar DESIGN.md para este projeto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20h1.5a2.5 2.5 0 0 0 0-5H12a2 2 0 0 1 0-4h2a8 8 0 0 0 0-16Z"/></svg>Design</button>
       <button id="toggleTerm" title="Terminal (Ctrl+`)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>Terminal</button>
       <button id="toggleChat" class="on" title="Mostrar/ocultar o chat da Lumi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>Chat</button>
       <button id="save" title="Salvar (Ctrl+S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>Salvar</button>
@@ -990,6 +1008,7 @@
       <div id="chatresize" title="Arraste para redimensionar"></div>
       <div id="chatpane"><iframe id="chatframe" src="chat.html" title="Chat da Lumi"></iframe></div>
     </div>
+    <div id="designOverlay" hidden><iframe id="designFrame" title="Biblioteca de sistemas visuais"></iframe></div>
     <div id="statusbar"><span id="sbLeft">Lumi Workspace</span><span id="connBusy" hidden><span class="cspin"></span><span id="connBusyTxt"></span></span><span id="sbRight"></span></div>
 
     <!-- Ctrl+P: abrir arquivo rápido -->
@@ -3982,12 +4001,41 @@
       const chatresize = document.getElementById('chatresize');
       const chatframe = document.getElementById('chatframe');
       const toggleChat = document.getElementById('toggleChat');
+      const designOverlay = document.getElementById('designOverlay');
+      const designFrame = document.getElementById('designFrame');
+      const designBtn = document.getElementById('designBtn');
       toggleChat.onclick = () => {
         const show = chatpane.classList.contains('hidden');
         chatpane.classList.toggle('hidden', !show);
         chatresize.classList.toggle('hidden', !show);
         toggleChat.classList.toggle('on', show);
       };
+      function openDesignLibrary() {
+        designOverlay.classList.remove('closing');
+        designOverlay.hidden = false;
+        designBtn.classList.add('on');
+        if (!designFrame.getAttribute('src')) designFrame.src = 'designs.html?embedded=1';
+      }
+      function closeDesignLibrary() {
+        if (designOverlay.hidden) return;
+        designOverlay.classList.add('closing');
+        designBtn.classList.remove('on');
+        setTimeout(() => {
+          designOverlay.hidden = true;
+          designOverlay.classList.remove('closing');
+        }, 220);
+      }
+      designBtn.onclick = () => (designOverlay.hidden ? openDesignLibrary() : closeDesignLibrary());
+      window.addEventListener('message', (event) => {
+        const data = event.data || {};
+        if (!data.__lumiDesign) return;
+        if (data.__lumiDesign === 'close') closeDesignLibrary();
+        else if (data.__lumiDesign === 'installed') {
+          loadTree();
+          closeDesignLibrary();
+          setTimeout(() => openFile(data.path || 'DESIGN.md'), 230);
+        }
+      });
       // divisória arrastável (largura do chat). pointer-events:none no iframe durante o arraste
       // pra que o mousemove não seja "engolido" pelo conteúdo do iframe.
       (function () {
@@ -4324,6 +4372,7 @@
         plus: MNI('<path d="M5 12h14"/><path d="M12 5v14"/>'),
         db: MNI('<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>'),
         server: MNI('<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/>'),
+        palette: MNI('<circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20h1.5a2.5 2.5 0 0 0 0-5H12a2 2 0 0 1 0-4h2a8 8 0 0 0 0-16Z"/>'),
         gear: MNI('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2"/>'),
       };
 
@@ -4378,6 +4427,7 @@
               },
             },
             { label: 'Chat da Lumi', icon: MI.chat, fn: () => toggleChat.click() },
+            { label: 'Sistemas visuais (DESIGN.md)', icon: MI.palette, fn: openDesignLibrary },
             { label: 'Controle de fontes (git)', icon: GLYPH.git('currentColor'), hint: 'Ctrl+Shift+G', fn: () => setSideMode(sideMode === 'git' ? 'files' : 'git') },
             { label: 'Live Server (preview ao vivo)', icon: MI.plug, fn: () => liveBtn.click() },
             { label: 'Navegador (localhost)', icon: MI.reveal, fn: () => openBrowserTab('') },

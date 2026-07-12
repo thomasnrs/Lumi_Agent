@@ -990,12 +990,43 @@ test('readSystemLogs correlaciona evento do Windows com processo e launcher lemb
 const designLibrary = require('../src/modules/design-library');
 
 test('catálogo visual possui presets autorais válidos e ids únicos', () => {
-  assert.ok(designLibrary.catalog.length >= 14);
+  assert.ok(designLibrary.catalog.length >= 18);
   assert.deepEqual(designLibrary.validateCatalog(), []);
   const ids = designLibrary.catalog.map((preset) => preset.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(designLibrary.listPresets({ mode: 'dark' }).length >= 4);
   assert.ok(designLibrary.listPresets({ query: 'documentação' }).some((preset) => preset.id === 'schematic-indigo'));
+});
+
+test('DESIGN.md é reconhecido por preset e só ganha contexto completo em tarefas visuais', (t) => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-design-context-'));
+  t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(ws, 'DESIGN.md'), designLibrary.generateDesignMarkdown('olive-luxe'));
+  const context = load(['readDesignRules', 'uiTaskRelevant', 'designStatusFor'], {
+    fs,
+    path,
+    designLibrary,
+    readTextFileSmart: (fp) => ({ text: fs.readFileSync(fp, 'utf8') }),
+    compactText: (value, max) => String(value || '').replace(/\s+/g, ' ').slice(0, max),
+  });
+  assert.match(context.readDesignRules(ws), /Olive Luxe/);
+  assert.equal(context.designStatusFor({ workspace: ws }).preset, 'olive-luxe');
+  assert.equal(context.designStatusFor({ workspace: ws }).known, true);
+  assert.equal(context.uiTaskRelevant('corrija a autenticação da API', 'server.js'), false);
+  assert.equal(context.uiTaskRelevant('crie um dashboard responsivo', 'server.js'), true);
+  assert.equal(context.uiTaskRelevant('ajuste isso', 'src/app.css'), true);
+});
+
+test('workspace expõe a galeria sem transformar o módulo em dependência do renderer bundle', () => {
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'preload.js'), 'utf8');
+  const workspace = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'pages', 'workspace.html'), 'utf8');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'pages', 'designs.html'), 'utf8');
+  assert.match(preload, /designInstall:/);
+  assert.match(workspace, /id="designBtn"/);
+  assert.match(workspace, /id="designOverlay"/);
+  assert.match(page, /window\.api\.designList/);
+  assert.match(page, /window\.api\.designInstall/);
+  assert.ok(!fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'main.js'), 'utf8').includes('design-library'));
 });
 
 test('cada preset gera DESIGN.md completo e preview SVG autocontido', () => {

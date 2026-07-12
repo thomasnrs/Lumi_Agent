@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sistemas visuais — Lumi</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --atlas-bg: #090a0f;
+        --atlas-panel: #111319;
+        --atlas-panel-2: #171a22;
+        --atlas-line: #272b36;
+        --atlas-text: #f4f5f8;
+        --atlas-muted: #939ba9;
+        --atlas-violet: #9175ff;
+        --atlas-mint: #46dbb0;
+        --ease: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background:
+          radial-gradient(circle at 82% -8%, rgba(145, 117, 255, 0.17), transparent 30rem),
+          var(--atlas-bg);
+        color: var(--atlas-text);
+        font: 400 15px/1.55 Outfit, "Segoe UI", system-ui, sans-serif;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+        background-size: 32px 32px;
+        mask-image: linear-gradient(to bottom, #000 0, transparent 78%);
+      }
+      button, input { font: inherit; }
+      button { -webkit-app-region: no-drag; }
+      .shell { width: min(1520px, calc(100% - 36px)); margin: 0 auto; padding: 42px 0 88px; }
+      .topline { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+      .kicker {
+        display: flex; align-items: center; gap: 11px;
+        color: #b7aaff; font: 700 10px/1 ui-monospace, monospace;
+        text-transform: uppercase; letter-spacing: .17em;
+      }
+      .kicker::before { content: ""; width: 28px; height: 1px; background: currentColor; }
+      .close {
+        width: 38px; height: 38px; display: grid; place-items: center;
+        border: 1px solid var(--atlas-line); border-radius: 12px;
+        color: #b5bdca; background: rgba(17,19,25,.72); cursor: pointer;
+        transition: 180ms ease;
+      }
+      .close:hover { color: #fff; border-color: #575e70; background: #1b1e27; transform: rotate(3deg); }
+      .close svg { width: 17px; }
+      .hero { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(280px, .55fr); align-items: end; gap: 64px; padding: 38px 0 52px; }
+      h1 { max-width: 970px; margin: 0; font-size: clamp(44px, 6.8vw, 96px); line-height: .92; letter-spacing: -.065em; }
+      .intro { margin: 0 0 5px; color: var(--atlas-muted); font-size: 17px; max-width: 470px; }
+      .workspace-state {
+        display: flex; align-items: flex-start; gap: 11px; margin-top: 20px; padding: 13px 14px;
+        border: 1px solid var(--atlas-line); border-radius: 13px; background: rgba(20,22,29,.72);
+        color: #aab2bf; font-size: 12px;
+      }
+      .workspace-state .dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: #626b7b; box-shadow: 0 0 0 4px rgba(98,107,123,.1); }
+      .workspace-state.active .dot { background: var(--atlas-mint); box-shadow: 0 0 0 4px rgba(70,219,176,.1); }
+      .workspace-state strong { display: block; color: var(--atlas-text); font-size: 12px; }
+      .workspace-state span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+      .toolbar {
+        position: sticky; top: 12px; z-index: 20;
+        display: flex; align-items: center; gap: 10px; margin-bottom: 26px; padding: 10px;
+        border: 1px solid var(--atlas-line); border-radius: 18px;
+        background: rgba(13,15,20,.84); box-shadow: 0 20px 60px rgba(0,0,0,.28); backdrop-filter: blur(20px);
+      }
+      .search-wrap { position: relative; flex: 1; min-width: 180px; }
+      .search-wrap svg { position: absolute; left: 12px; top: 50%; width: 17px; transform: translateY(-50%); color: #717988; }
+      #search { width: 100%; height: 42px; padding: 0 12px 0 40px; border: 0; outline: 0; color: #fff; background: transparent; }
+      #search::placeholder { color: #6f7785; }
+      .filters { display: flex; gap: 5px; }
+      .filter {
+        min-height: 36px; padding: 0 13px; border: 1px solid transparent; border-radius: 10px;
+        color: #939ba9; background: transparent; cursor: pointer; transition: 180ms;
+      }
+      .filter:hover { color: #fff; background: #191c24; }
+      .filter.active { color: #fff; border-color: #4a416b; background: #272238; }
+      .count { min-width: 76px; padding-right: 8px; color: #727b89; text-align: right; font: 650 11px ui-monospace, monospace; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+      .card {
+        min-width: 0; overflow: hidden; border: 1px solid var(--atlas-line); border-radius: 22px;
+        background: linear-gradient(145deg, rgba(255,255,255,.032), transparent 34%), var(--atlas-panel);
+        transition: transform 260ms var(--ease), border-color 260ms, box-shadow 260ms;
+        animation: card-in 420ms var(--ease) both;
+      }
+      .card:hover { transform: translateY(-5px); border-color: #474d5c; box-shadow: 0 28px 78px rgba(0,0,0,.3); }
+      .card.is-active { border-color: rgba(70,219,176,.62); box-shadow: 0 0 0 1px rgba(70,219,176,.18), 0 26px 76px rgba(0,0,0,.25); }
+      .preview { position: relative; overflow: hidden; aspect-ratio: 16 / 10; border-bottom: 1px solid var(--atlas-line); background: #0b0c11; }
+      .preview svg { width: 100%; height: 100%; display: block; transition: transform 600ms var(--ease); }
+      .card:hover .preview svg { transform: scale(1.018); }
+      .active-badge {
+        position: absolute; top: 14px; left: 14px; display: none; align-items: center; gap: 7px;
+        padding: 7px 10px; border: 1px solid rgba(70,219,176,.32); border-radius: 999px;
+        color: #b7ffe9; background: rgba(10,36,29,.78); backdrop-filter: blur(10px);
+        font: 700 10px/1 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase;
+      }
+      .active-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--atlas-mint); }
+      .card.is-active .active-badge { display: flex; }
+      .copy { padding: 23px; }
+      .title-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+      .title-row h2 { margin: 0; font-size: 24px; letter-spacing: -.035em; }
+      .mode { padding: 7px 9px; border: 1px solid var(--atlas-line); border-radius: 999px; color: #aeb6c3; font: 700 10px/1 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .08em; }
+      .summary { min-height: 48px; margin: 12px 0 18px; color: var(--atlas-muted); }
+      .tags { display: flex; flex-wrap: wrap; gap: 7px; }
+      .tag { padding: 6px 8px; border: 1px solid var(--atlas-line); border-radius: 999px; color: #7f8897; font: 650 10px/1 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .055em; }
+      .palette { display: flex; align-items: center; margin-left: auto; padding-left: 10px; }
+      .swatch { width: 18px; height: 18px; margin-left: -5px; border: 2px solid var(--atlas-panel); border-radius: 50%; }
+      .apply {
+        display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px;
+        margin-top: 22px; padding: 0 14px; border: 1px solid #393e4b; border-radius: 12px;
+        color: #f2f3f6; background: #191c23; cursor: pointer; font-weight: 650; transition: 180ms;
+      }
+      .apply:hover { border-color: #715fd0; background: #231e34; }
+      .apply:active { transform: translateY(1px); }
+      .apply:disabled { opacity: .6; cursor: wait; }
+      .card.is-active .apply { border-color: rgba(70,219,176,.32); color: #c4ffec; background: rgba(28,78,63,.22); }
+      .apply svg { width: 17px; color: #ad9cff; }
+      .card.is-active .apply svg { color: var(--atlas-mint); }
+      .empty { display: none; grid-column: 1/-1; padding: 100px 20px; text-align: center; color: #7f8794; }
+      .loading { grid-column: 1/-1; display: grid; place-items: center; min-height: 360px; color: #858d9a; }
+      .spinner { width: 28px; height: 28px; margin-bottom: 14px; border: 2px solid #303541; border-top-color: var(--atlas-violet); border-radius: 50%; animation: spin .7s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+      @media (max-width: 880px) {
+        .shell { width: min(100% - 22px, 700px); padding-top: 28px; }
+        .hero { grid-template-columns: 1fr; gap: 24px; padding-top: 28px; }
+        .grid { grid-template-columns: 1fr; }
+        .toolbar { align-items: stretch; flex-direction: column; }
+        .filters { overflow-x: auto; }
+        .filter { flex: none; }
+        .count { display: none; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+      }
+    </style>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <div class="topline">
+        <div class="kicker">Lumi Design Library · opt-in</div>
+        <button id="close" class="close" type="button" title="Voltar para a workspace" aria-label="Fechar galeria">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 6-12 12M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <section class="hero">
+        <h1>Escolha uma direção.<br />A Lumi cuida da consistência.</h1>
+        <div>
+          <p class="intro">Cada escolha cria um <strong>DESIGN.md</strong> técnico na raiz do projeto. Humanos e agentes passam a trabalhar sobre a mesma linguagem visual.</p>
+          <div id="workspaceState" class="workspace-state"><span class="dot"></span><div><strong>Carregando workspace…</strong><span></span></div></div>
+        </div>
+      </section>
+      <div class="toolbar">
+        <label class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="search" type="search" placeholder="Buscar: fintech, editorial, dark, SaaS…" autocomplete="off" />
+        </label>
+        <div class="filters" aria-label="Filtrar por modo">
+          <button class="filter active" type="button" data-mode="all">Todos</button>
+          <button class="filter" type="button" data-mode="dark">Dark</button>
+          <button class="filter" type="button" data-mode="light">Light</button>
+        </div>
+        <span id="count" class="count"></span>
+      </div>
+      <section id="grid" class="grid" aria-live="polite"><div class="loading"><div><div class="spinner"></div>Preparando os sistemas…</div></div></section>
+    </main>
+    <script>
+      const grid = document.getElementById('grid');
+      const search = document.getElementById('search');
+      const count = document.getElementById('count');
+      const workspaceState = document.getElementById('workspaceState');
+      let presets = [];
+      let status = { exists: false, preset: '', workspace: '' };
+      let mode = 'all';
+
+      const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+      function closeGallery() {
+        if (window.parent !== window) window.parent.postMessage({ __lumiDesign: 'close' }, '*');
+        else window.close();
+      }
+      document.getElementById('close').onclick = closeGallery;
+      window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeGallery(); });
+
+      function renderStatus() {
+        const title = workspaceState.querySelector('strong');
+        const detail = workspaceState.querySelector('div span');
+        workspaceState.classList.toggle('active', !!status.exists);
+        if (!status.workspace) {
+          title.textContent = 'Nenhuma workspace aberta';
+          detail.textContent = 'Abra um projeto para instalar um sistema visual.';
+        } else if (status.exists) {
+          title.textContent = 'Sistema ativo: ' + (status.name || status.preset || 'DESIGN.md personalizado');
+          detail.textContent = status.workspace;
+        } else {
+          title.textContent = 'Projeto pronto para receber um sistema visual';
+          detail.textContent = status.workspace;
+        }
+      }
+
+      function render() {
+        const query = search.value.trim().toLowerCase();
+        const visible = presets.filter((preset) => {
+          const haystack = [preset.name, preset.summary, ...(preset.tags || []), ...(preset.suitableFor || [])].join(' ').toLowerCase();
+          return (mode === 'all' || preset.mode === mode) && (!query || haystack.includes(query));
+        });
+        count.textContent = visible.length + ' / ' + presets.length;
+        grid.innerHTML = '';
+        for (const [index, preset] of visible.entries()) {
+          const card = document.createElement('article');
+          card.className = 'card' + (status.preset === preset.id ? ' is-active' : '');
+          card.style.animationDelay = Math.min(index, 8) * 35 + 'ms';
+          card.innerHTML =
+            '<div class="preview"><span class="active-badge">Em uso</span>' + preset.previewSvg + '</div>' +
+            '<div class="copy"><div class="title-row"><h2>' + esc(preset.name) + '</h2><span class="mode">' + esc(preset.mode) + '</span></div>' +
+            '<p class="summary">' + esc(preset.summary) + '</p><div style="display:flex;align-items:center;gap:8px"><div class="tags">' +
+            preset.tags.slice(0, 4).map((tag) => '<span class="tag">' + esc(tag) + '</span>').join('') + '</div>' +
+            '<div class="palette">' + ['primary','secondary','surface'].map((key) => '<span class="swatch" title="' + key + ': ' + esc(preset.colors[key]) + '" style="background:' + esc(preset.colors[key]) + '"></span>').join('') + '</div></div>' +
+            '<button class="apply" type="button"><span>' + (status.preset === preset.id ? 'Reinstalar este sistema' : 'Usar este sistema') + '</span>' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 21h14"/></svg></button></div>';
+          card.querySelector('.apply').onclick = () => installPreset(preset, card.querySelector('.apply'));
+          grid.appendChild(card);
+        }
+        if (!visible.length) grid.innerHTML = '<div class="empty" style="display:block">Nenhum sistema combina com esta busca.</div>';
+      }
+
+      async function installPreset(preset, button) {
+        if (!status.workspace) return window.__lumiToast && window.__lumiToast('Abra uma workspace primeiro.', false);
+        let overwrite = false;
+        if (status.exists) {
+          const current = status.known ? status.name : 'um DESIGN.md personalizado';
+          overwrite = await window.__lumiConfirm(
+            'Este projeto já usa ' + current + '. A versão atual será preservada em um backup antes de instalar ' + preset.name + '.',
+            { title: 'Trocar sistema visual?', confirmText: 'Criar backup e trocar', cancelText: 'Manter atual', danger: false }
+          );
+          if (!overwrite) return;
+        }
+        button.disabled = true;
+        const old = button.querySelector('span').textContent;
+        button.querySelector('span').textContent = 'Criando DESIGN.md…';
+        try {
+          let result = await window.api.designInstall(preset.id, overwrite);
+          if (result && result.conflict && !overwrite) {
+            overwrite = await window.__lumiConfirm('Um DESIGN.md apareceu enquanto a galeria estava aberta. Posso criar um backup e continuar?', { title: 'Arquivo existente', confirmText: 'Backup e instalar', danger: false });
+            if (overwrite) result = await window.api.designInstall(preset.id, true);
+          }
+          if (!result || result.error || !result.ok) throw new Error((result && result.error) || 'não foi possível instalar o preset');
+          status = result.status || await window.api.designStatus();
+          renderStatus();
+          render();
+          window.__lumiToast && window.__lumiToast('✓ DESIGN.md criado com ' + preset.name);
+          if (window.parent !== window) window.parent.postMessage({ __lumiDesign: 'installed', path: 'DESIGN.md', status }, '*');
+        } catch (error) {
+          window.__lumiToast && window.__lumiToast(error.message || String(error), false);
+          button.disabled = false;
+          button.querySelector('span').textContent = old;
+        }
+      }
+
+      search.oninput = render;
+      document.querySelectorAll('.filter').forEach((button) => button.onclick = () => {
+        mode = button.dataset.mode;
+        document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button));
+        render();
+      });
+
+      async function load() {
+        try {
+          const data = await window.api.designList({});
+          presets = data.presets || [];
+          status = data.status || { workspace: data.workspace || '', exists: false, preset: '' };
+          renderStatus();
+          render();
+        } catch (error) {
+          grid.innerHTML = '<div class="empty" style="display:block">Não consegui carregar a biblioteca: ' + esc(error.message || error) + '</div>';
+        }
+      }
+      load();
+    </script>
+    <script>window.__lumiThemed = true;</script>
+    <script src="theme.js"></script>
+    <script src="_chrome.js"></script>
+  </body>
+</html>

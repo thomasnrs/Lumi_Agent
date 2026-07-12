@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('api', {
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
   getWorkspaceMemory: () => ipcRenderer.invoke('workspace:get-memory'),
   setWorkspaceMemory: (content) => ipcRenderer.invoke('workspace:set-memory', content),
+  designList: (filters) => ipcRenderer.invoke('design:list', filters || {}),
+  designStatus: () => ipcRenderer.invoke('design:status'),
+  designInstall: (id, overwrite) => ipcRenderer.invoke('design:install', { id, overwrite: overwrite === true }),
   getWorkspaceTree: () => ipcRenderer.invoke('workspace:tree'),
   getWorkspaceFullTree: () => ipcRenderer.invoke('workspace:fulltree'),
   wsBind: (folder) => ipcRenderer.invoke('ws:bind', folder), // prende a janela do editor a uma pasta

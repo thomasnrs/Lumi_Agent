@@ -11,6 +11,7 @@ const ICON_PATH = fs.existsSync(BRAND_ICON) ? BRAND_ICON : path.join(resBase(), 
 const url = require('url');
 const crypto = require('crypto');
 const WebSocket = require('ws');
+const designLibrary = require('../modules/design-library');
 const { exec, spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
@@ -1557,7 +1558,7 @@ function cachedProjCtx(cfg) {
     envKeys: [...new Set(projects.flatMap((p) => (p.envFiles || []).flatMap((f) => f.keys || [])))].slice(0, 80),
     hasVenv: projects.some((p) => p.hasVenv),
   };
-  const rec = { at: now, rules: readRepoRules(ws), mem, meta };
+  const rec = { at: now, rules: readRepoRules(ws), design: readDesignRules(ws), mem, meta };
   _projCtxCache.set(ws, rec);
   if (_projCtxCache.size > 6) _projCtxCache.delete(_projCtxCache.keys().next().value);
   return rec;
@@ -1583,6 +1584,28 @@ function readRepoRules(ws) {
     }
   }
   return parts.join('\n\n');
+}
+
+function readDesignRules(ws) {
+  try {
+    return fs.readFileSync(path.join(ws, 'DESIGN.md'), 'utf8').trim().slice(0, 24000);
+  } catch (e) {
+    return '';
+  }
+}
+
+function uiTaskRelevant(text, activePath) {
+  const request = String(text || '').toLowerCase();
+  const active = String(activePath || '').toLowerCase();
+  if (/\.(?:html?|css|scss|sass|less|jsx|tsx|vue|svelte|astro)$/.test(active)) return true;
+  return /\b(?:ui|ux|frontend|front-end|interface|layout|design|visual|estilo|tema|página|pagina|site|landing|dashboard|componente|component|css|tailwind|responsiv|tipografia|paleta|animaç|animac|formulário|formulario|navbar|sidebar|modal|botão|botao)/i.test(request);
+}
+
+function latestUserText() {
+  const message = [...S().history].reverse().find((item) => item && item.role === 'user');
+  if (!message) return '';
+  if (typeof message.content === 'string') return message.content;
+  return (message.content || []).filter((part) => part && part.type === 'text').map((part) => part.text || '').join('\n');
 }
 
 // Compactação INTERNA do turno: quando as mensagens do turno crescem demais, os
@@ -2399,6 +2422,16 @@ function buildSystemPrompt(cfg) {
     const rules = pctx.rules;
     if (rules) proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (fonte da verdade sobre stack/estrutura/como rodar/convenções; SIGA À RISCA, tem prioridade sobre o guia geral)\n${rules}`;
     else proj += '\n\nEste projeto ainda NÃO tem CLAUDE.md. Quando você já tiver entendido o projeto, ofereça gerar um com generate_project_doc (briefing estável melhora todas as sessões futuras).';
+    if (pctx.design) {
+      if (uiTaskRelevant(latestUserText(), activeEditorForSession(S()))) {
+        proj +=
+          '\n\n## DESIGN.md — fonte da verdade VISUAL deste projeto\n' +
+          'Esta tarefa envolve interface. Siga as regras abaixo para cor, tipografia, espaçamento, layout, componentes, movimento e acessibilidade. O pedido explícito do usuário continua tendo prioridade.\n' +
+          pctx.design.slice(0, 18000);
+      } else {
+        proj += '\n\nO projeto possui DESIGN.md. Em qualquer tarefa futura de UI/frontend, leia-o antes de criar ou alterar interface; não é necessário aplicá-lo a backend ou infraestrutura.';
+      }
+    }
     sp += '\n\n' + CODING_GUIDE + proj + `\n\n## Sua memória de trabalho (.lumi-memory.md — decisões+porquê, gotchas, tentativas falhas, preferências, pendências; complementa o briefing, NÃO o repete):\n${mem}`;
   }
   // MULTI-AGENTES: lista a equipe disponivel para delegacao
@@ -5169,7 +5202,7 @@ const TOOLS = {
       const tree = [];
       await walkWorkspace(cfg.workspace, cfg.workspace, tree, 0); // já ignora node_modules/.git/etc e tem deadline
       // arquivos-chave que dão o panorama (lê os que existirem, com teto de tamanho)
-      const keyNames = ['package.json', 'README.md', 'readme.md', 'pyproject.toml', 'requirements.txt', 'go.mod', 'Cargo.toml', 'composer.json', 'pom.xml', 'docker-compose.yml', 'Makefile', 'tsconfig.json', '.lumi-memory.md'];
+      const keyNames = ['package.json', 'README.md', 'readme.md', 'DESIGN.md', 'pyproject.toml', 'requirements.txt', 'go.mod', 'Cargo.toml', 'composer.json', 'pom.xml', 'docker-compose.yml', 'Makefile', 'tsconfig.json', '.lumi-memory.md'];
       const key = {};
       const projectDirs = new Set((det.projects || []).map((p) => p.path));
       projectDirs.add('.'); // README/compose/memória da raiz continuam úteis em monorepos sem manifesto raiz
@@ -8045,7 +8078,7 @@ function recordUsage(cfg, usage) {
 ipcMain.handle('usage:today', () => usageTotals());
 
 // Monta o system prompt do subagente: persona + projeto/workspace + contexto da conversa
-function subAgentSystemPrompt(cfg, agent) {
+function subAgentSystemPrompt(cfg, agent, task) {
   let sp = (agent.systemPrompt || 'Você é um assistente especializado.') + '\n' + OS_NOTE;
   // agente "de código"? (tem ferramentas de arquivo/comando) -> ganha o guia de engenharia
   const CODER_TOOLS = ['write_file', 'edit_file', 'append_file', 'read_file', 'grep_files', 'list_dir', 'make_dir', 'delete_file', 'run_command'];
@@ -8065,6 +8098,14 @@ function subAgentSystemPrompt(cfg, agent) {
     if (isCoder && det.guide) proj += `\n\n## Boas práticas desta stack (siga-as)\n${det.guide}`;
     if (isCoder && pctx.rules) {
       proj += `\n\n## Briefing do projeto — CLAUDE.md/regras do repositório (SIGA À RISCA)\n${pctx.rules}`;
+    }
+    if (pctx.design) {
+      const isDesigner = /design/i.test(String(agent.name || ''));
+      if (isDesigner || uiTaskRelevant(task, '')) {
+        proj += `\n\n## DESIGN.md — fonte da verdade visual (SIGA em toda alteração de interface)\n${pctx.design.slice(0, 18000)}`;
+      } else {
+        proj += '\n\nEste projeto possui DESIGN.md. Leia-o com read_file antes de qualquer alteração de UI/frontend.';
+      }
     }
     sp += proj + `\n\n## Memória de trabalho do projeto (.lumi-memory.md — decisões, gotchas, pendências; complementa o briefing, não o repete):\n${mem}`;
   }
@@ -8099,7 +8140,7 @@ async function runSubAgent(cfg, agent, task, label) {
   const who = label || agent.name; // rótulo da instância (ex.: "Programador 1")
   const sub = subAgentConfig(cfg, agent);
   const messages = [
-    { role: 'system', content: subAgentSystemPrompt(cfg, agent) },
+    { role: 'system', content: subAgentSystemPrompt(cfg, agent, task) },
     { role: 'user', content: task },
   ];
   // tools como array (mesmo vazio) = lista exata permitida; ausente/não-array = todas
@@ -12124,7 +12165,7 @@ function watchFolder(root, refKey) {
       if (/\.lumi-/.test(f) && !/\.lumi-memory\.md$/.test(f)) return;
       invalidateEnrichCache(root, f);
       if (
-        /(^|[\\/])(?:package\.json|(?:pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|package-lock\.json)|pyproject\.toml|requirements\.txt|setup\.(?:py|cfg)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|environment\.ya?ml|go\.mod|Cargo\.toml|composer\.json|pom\.xml|build\.gradle(?:\.kts)?|Gemfile|pubspec\.yaml|Package\.swift|mix\.exs|build\.sbt|deno\.jsonc?|CMakeLists\.txt|Makefile|Dockerfile|[^\\/]+\.(?:csproj|fsproj|sln)|\.env(?:\.[^\\/]+)?|CLAUDE\.md|AGENTS\.md|\.cursorrules|copilot-instructions\.md|\.lumi-memory\.md)$/i.test(f)
+        /(^|[\\/])(?:package\.json|(?:pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|package-lock\.json)|pyproject\.toml|requirements\.txt|setup\.(?:py|cfg)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|environment\.ya?ml|go\.mod|Cargo\.toml|composer\.json|pom\.xml|build\.gradle(?:\.kts)?|Gemfile|pubspec\.yaml|Package\.swift|mix\.exs|build\.sbt|deno\.jsonc?|CMakeLists\.txt|Makefile|Dockerfile|[^\\/]+\.(?:csproj|fsproj|sln)|\.env(?:\.[^\\/]+)?|CLAUDE\.md|AGENTS\.md|DESIGN\.md|\.cursorrules|copilot-instructions\.md|\.lumi-memory\.md)$/i.test(f)
       ) {
         invalidateProjCtx(root);
         invalidateStackCache(root);
@@ -12185,6 +12226,60 @@ function startWorkspaceWatcher() {
   const ws = loadConfig().workspace;
   if (ws) watchFolder(ws, 'global');
 }
+
+// ---- Lumi Design Library: módulo visual opt-in por workspace ----
+function designStatusFor(cfg) {
+  const workspace = cfg && cfg.workspace ? cfg.workspace : '';
+  if (!workspace) return { workspace: '', exists: false, preset: '', known: false };
+  const fp = path.join(workspace, 'DESIGN.md');
+  try {
+    const content = readTextFileSmart(fp).text;
+    const id = ((/^lumi_design_preset:\s*([^\s]+)\s*$/im.exec(content) || [])[1] || '').trim();
+    const preset = id ? designLibrary.getPreset(id) : null;
+    return {
+      workspace,
+      exists: true,
+      path: fp,
+      preset: id,
+      known: !!preset,
+      name: preset ? preset.name : id ? id : 'DESIGN.md personalizado',
+      preview: compactText(content.replace(/^---[\s\S]*?---\s*/m, ''), 320),
+    };
+  } catch (e) {
+    return { workspace, exists: false, path: fp, preset: '', known: false };
+  }
+}
+ipcMain.handle('design:list', (e, filters) => {
+  const cfg = wsCfg(e);
+  return {
+    workspace: cfg.workspace || '',
+    status: designStatusFor(cfg),
+    presets: designLibrary.listPresets(filters).map((preset) => ({
+      ...preset,
+      previewSvg: designLibrary.renderPreviewSvg(preset.id),
+    })),
+  };
+});
+ipcMain.handle('design:status', (e) => designStatusFor(wsCfg(e)));
+ipcMain.handle('design:install', (e, payload) => {
+  const cfg = wsCfg(e);
+  if (!cfg.workspace) return { error: 'Abra uma workspace antes de escolher um sistema visual.' };
+  try {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const result = designLibrary.installDesignPreset(cfg.workspace, p.id, {
+      overwrite: p.overwrite === true,
+      projectName: path.basename(cfg.workspace),
+    });
+    if (result.ok) {
+      invalidateProjCtx(cfg.workspace);
+      notifyWorkspaceMutation(cfg);
+      broadcast('chat:note', { text: `🎨 DESIGN.md criado com o preset ${result.preset}. A Lumi seguirá esse sistema nas próximas tarefas de interface.` });
+    }
+    return { ...result, status: designStatusFor(cfg) };
+  } catch (error) {
+    return { error: String((error && error.message) || error) };
+  }
+});
 
 ipcMain.handle('workspace:get-memory', (e) => {
   const cfg = wsCfg(e);
@@ -13105,6 +13200,9 @@ function buildClaudeCodePrompt(cfg) {
     } catch (e) {
       /* a memória nativa do Claude Code/CLAUDE.md continua disponível */
     }
+    if (readDesignRules(cfg.workspace)) {
+      parts.push('', '# Sistema visual do projeto', 'Existe um DESIGN.md na raiz. Antes de qualquer trabalho de UI/frontend, leia esse arquivo e trate-o como fonte da verdade visual. Não o aplique a tarefas sem relação com interface.');
+    }
   }
   const deterministic = ledgerPrompt(cfg);
   if (deterministic) parts.push('', '# Ledger técnico determinístico da Lumi', deterministic);
@@ -13556,6 +13654,9 @@ function buildCodexPrompt(cfg) {
       if (mem) parts.push('', '# Memória complementar da Lumi sobre este projeto', mem);
     } catch (e) {
       /* AGENTS.md e a memória nativa do Codex continuam disponíveis */
+    }
+    if (readDesignRules(cfg.workspace)) {
+      parts.push('', '# Sistema visual do projeto', 'Existe um DESIGN.md na raiz. Antes de qualquer trabalho de UI/frontend, leia esse arquivo e trate-o como fonte da verdade visual. Não o aplique a tarefas sem relação com interface.');
     }
   }
   const deterministic = ledgerPrompt(cfg);

@@ -1,22 +1,24 @@
 # Lumi Design Library
 
-Módulo interno e ainda não conectado à interface principal. Ele mantém presets visuais estruturados e transforma uma escolha em um `DESIGN.md` durável dentro da workspace.
+Módulo interno e opt-in que mantém presets visuais estruturados e transforma uma escolha em um `DESIGN.md` durável dentro da workspace.
 
 ## Estado atual
 
-- 14 presets autorais.
+- 18 presets autorais.
 - Busca por texto, modo e tags.
 - Geração determinística de `DESIGN.md`.
 - Preview SVG local, sem rede, imagem remota ou dependência externa.
 - Instalação segura na raiz da workspace.
 - Proteção contra sobrescrever um `DESIGN.md` existente sem confirmação.
 - Backup automático quando a sobrescrita é explicitamente autorizada.
+- Galeria integrada ao editor da workspace pelo botão **Design** e pelo menu **Exibir**.
+- Injeção contextual do `DESIGN.md` nos agentes apenas durante tarefas de interface.
 
-O módulo não é importado por `main.js`, não registra IPC, não aparece nas configurações e não altera prompts. A integração com a Lumi será feita em uma etapa posterior.
+Escolher um preset não altera arquivos da aplicação nem força um tema global: a ação cria somente o `DESIGN.md` do projeto. Tarefas de backend recebem no máximo um aviso curto sobre sua existência; tarefas visuais recebem as regras completas como fonte de verdade.
 
 ## Galeria de desenvolvimento
 
-Para navegar pelos presets antes da integração:
+Para navegar pelos presets fora da Lumi ou desenvolver novos estilos:
 
 ```powershell
 node src/modules/design-library/cli.js gallery
