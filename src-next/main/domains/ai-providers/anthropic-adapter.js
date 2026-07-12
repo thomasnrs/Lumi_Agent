@@ -2,7 +2,7 @@
 
 const { readSse } = require('../../adapters/network/sse');
 const { TurnAccumulator } = require('./turn-accumulator');
-const { requestModel } = require('./openai-adapter');
+const { requestModel } = require('./protocol');
 
 function convertToAnthropic(messages) {
   let system = '';

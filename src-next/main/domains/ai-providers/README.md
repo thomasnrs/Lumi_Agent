@@ -1,15 +1,14 @@
 # AI providers
 
-Contrato de saída comum: texto, tool calls fragmentadas, usage, duração e estado de aborto.
-
-Implementado isoladamente:
+Camada isolada de protocolos de rede do agente:
 
 - SSE incremental com chunks arbitrários e CRLF;
 - rate limiter por provider/base/chave hasheada;
-- `Retry-After` em segundos ou data HTTP, com teto;
-- um retry de 429 somente quando RPS explícito está ativo;
-- OpenAI-compatible Chat Completions;
-- Anthropic Messages, incluindo system, imagens, tool use/result e thinking;
-- separação de `<think>` mesmo quando tags chegam fragmentadas.
+- retry único de `429` quando RPS explícito está ativo;
+- contrato comum para texto, thinking, tool calls, usage e abort parcial;
+- OpenAI Chat Completions, Anthropic Messages, OpenAI Responses e Gemini GenerateContent;
+- roteamento OpenCode por família de modelo;
+- registry explícito de adapters e capabilities observadas;
+- continuidade nativa da Responses API preservada por `responseItems`.
 
-Pendente: Responses API, Gemini GenerateContent, roteamento OpenCode, descoberta de capabilities/modelos e fallback do runtime.
+Pendente antes de concluir o domínio: catálogo/cache de modelos, política de fallback, accounting de usage e fixtures de compatibilidade por provedor real. Esta pasta continua desconectada do runtime atual.
