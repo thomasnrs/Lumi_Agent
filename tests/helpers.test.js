@@ -1039,6 +1039,10 @@ test('cada preset gera DESIGN.md completo e preview SVG autocontido', () => {
     const svg = designLibrary.renderPreviewSvg(preset.id);
     assert.match(svg, /^<svg[^>]+xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
     assert.match(svg, new RegExp(`Preview do preset ${preset.name}`));
+    assert.match(svg, new RegExp(`data-lumi-design="${preset.id}"`));
+    assert.match(svg, new RegExp(`aria-labelledby="lumi-design-${preset.id}-title lumi-design-${preset.id}-desc"`));
+    assert.match(svg, new RegExp(`svg\\[data-lumi-design="${preset.id}"\\] \\.lumi-ds-hero`));
+    assert.ok(!/class="(?:hero|body|label|metric|button)(?:\s|")/.test(svg), `${preset.id} não deve vazar classes genéricas no documento`);
     assert.ok(svg.length > 1500, `${preset.id} deveria produzir um preview substancial`);
   }
 });

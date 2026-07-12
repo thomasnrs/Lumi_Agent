@@ -202,9 +202,9 @@ function previewScene(preset) {
   const card = (x, y, w, h, fill, extra) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${parseInt(preset.geometry.radius, 10) || 0}" fill="${fill}" stroke="${c.border}"${extra || ''}/>`;
   if (type === 'dashboard') {
     return `${card(44, 168, 872, 366, c.surface)}<rect x="44" y="168" width="174" height="366" rx="${parseInt(preset.geometry.radius, 10) || 0}" fill="${c.elevated}"/>
-      <circle cx="78" cy="207" r="10" fill="${c.primary}"/><text x="102" y="212" class="label">CONTROL</text>
+      <circle cx="78" cy="207" r="10" fill="${c.primary}"/><text x="102" y="212" class="lumi-ds-label">CONTROL</text>
       ${[0, 1, 2, 3].map((i) => `<rect x="72" y="${258 + i * 48}" width="112" height="8" rx="4" fill="${i === 0 ? c.primary : c.muted}" opacity="${i === 0 ? 1 : .38}"/>`).join('')}
-      <text x="252" y="216" class="label">PERFORMANCE OVERVIEW</text><text x="252" y="274" class="metric">84.2</text><text x="386" y="272" class="body">reliability score</text>
+      <text x="252" y="216" class="lumi-ds-label">PERFORMANCE OVERVIEW</text><text x="252" y="274" class="lumi-ds-metric">84.2</text><text x="386" y="272" class="lumi-ds-body">reliability score</text>
       ${card(252, 316, 190, 168, c.elevated)}${card(460, 316, 190, 168, c.elevated)}${card(668, 316, 214, 168, c.elevated)}
       <path d="M276 442 L304 414 L332 430 L362 368 L414 390" fill="none" stroke="${c.primary}" stroke-width="4"/>
       <circle cx="518" cy="394" r="42" fill="none" stroke="${c.border}" stroke-width="12"/><path d="M518 352 A42 42 0 0 1 558 406" fill="none" stroke="${c.secondary}" stroke-width="12" stroke-linecap="round"/>
@@ -213,64 +213,64 @@ function previewScene(preset) {
   if (type === 'editorial' || type === 'editorial-minimal') {
     return `${card(54, 184, 852, 344, c.surface)}
       <rect x="82" y="214" width="360" height="12" fill="${c.primary}" opacity=".9"/>
-      <text x="82" y="294" class="hero serif">${xml(preset.preview.headline)}</text>
-      <text x="82" y="342" class="body">A durable visual language for thoughtful digital products.</text>
+      <text x="82" y="294" class="lumi-ds-hero lumi-ds-serif">${xml(preset.preview.headline)}</text>
+      <text x="82" y="342" class="lumi-ds-body">A durable visual language for thoughtful digital products.</text>
       <line x1="82" y1="390" x2="878" y2="390" stroke="${c.border}"/>
-      <text x="82" y="434" class="label">01 — FOUNDATION</text><text x="382" y="434" class="label">02 — SYSTEM</text>
-      <rect x="698" y="420" width="180" height="62" rx="${type === 'editorial-minimal' ? 8 : 31}" fill="${c.primary}"/><text x="788" y="457" text-anchor="middle" class="button">Explore</text>`;
+      <text x="82" y="434" class="lumi-ds-label">01 — FOUNDATION</text><text x="382" y="434" class="lumi-ds-label">02 — SYSTEM</text>
+      <rect x="698" y="420" width="180" height="62" rx="${type === 'editorial-minimal' ? 8 : 31}" fill="${c.primary}"/><text x="788" y="457" text-anchor="middle" class="lumi-ds-button">Explore</text>`;
   }
   if (type === 'terminal') {
     return `${card(44, 174, 872, 358, c.surface)}<rect x="44" y="174" width="190" height="358" fill="${c.elevated}"/>
-      <text x="70" y="220" class="label">OPERATIONS</text>${[0, 1, 2, 3, 4].map((i) => `<rect x="70" y="${248 + i * 44}" width="130" height="8" fill="${i === 1 ? c.primary : c.muted}" opacity="${i === 1 ? 1 : .45}"/>`).join('')}
-      <text x="270" y="226" class="label">LIVE OVERVIEW</text><text x="270" y="282" class="metric">98.7%</text>
+      <text x="70" y="220" class="lumi-ds-label">OPERATIONS</text>${[0, 1, 2, 3, 4].map((i) => `<rect x="70" y="${248 + i * 44}" width="130" height="8" fill="${i === 1 ? c.primary : c.muted}" opacity="${i === 1 ? 1 : .45}"/>`).join('')}
+      <text x="270" y="226" class="lumi-ds-label">LIVE OVERVIEW</text><text x="270" y="282" class="lumi-ds-metric">98.7%</text>
       ${card(270, 318, 190, 164, c.elevated)}${card(480, 318, 190, 164, c.elevated)}${card(690, 318, 190, 164, c.elevated)}
       <path d="M290 438 L324 412 L358 424 L394 365 L438 388" fill="none" stroke="${c.primary}" stroke-width="5"/>`;
   }
   if (type === 'notebook') {
     return `<pattern id="rules" width="20" height="28" patternUnits="userSpaceOnUse"><line x1="0" y1="27" x2="20" y2="27" stroke="${c.border}" opacity=".55"/></pattern><rect x="54" y="174" width="852" height="358" rx="6" fill="${c.surface}"/><rect x="54" y="174" width="852" height="358" fill="url(#rules)"/><line x1="146" y1="174" x2="146" y2="532" stroke="${c.secondary}" stroke-width="2"/>
-      <text x="178" y="254" class="hero serif">${xml(preset.preview.headline)}</text><text x="178" y="310" class="body">Notes, tasks and ideas aligned to one calm rhythm.</text>
-      <rect x="178" y="358" width="24" height="24" fill="none" stroke="${c.primary}" stroke-width="2"/><path d="M184 370 l7 7 16 -19" fill="none" stroke="${c.primary}" stroke-width="3"/><text x="220" y="376" class="body">Turn observations into decisions</text>`;
+      <text x="178" y="254" class="lumi-ds-hero lumi-ds-serif">${xml(preset.preview.headline)}</text><text x="178" y="310" class="lumi-ds-body">Notes, tasks and ideas aligned to one calm rhythm.</text>
+      <rect x="178" y="358" width="24" height="24" fill="none" stroke="${c.primary}" stroke-width="2"/><path d="M184 370 l7 7 16 -19" fill="none" stroke="${c.primary}" stroke-width="3"/><text x="220" y="376" class="lumi-ds-body">Turn observations into decisions</text>`;
   }
   if (type === 'retro') {
     return `<rect x="44" y="166" width="872" height="374" fill="${c.canvas}"/>
-      <rect x="92" y="204" width="480" height="284" fill="${c.surface}" stroke="${c.text}" stroke-width="2"/><rect x="98" y="210" width="468" height="32" fill="${c.primary}"/><text x="112" y="232" class="button">PROJECT_EXPLORER.EXE</text>
-      <rect x="116" y="270" width="420" height="146" fill="${c.elevated}" stroke="${c.border}" stroke-width="2"/><text x="136" y="318" class="hero retro">${xml(preset.preview.headline)}</text>
+      <rect x="92" y="204" width="480" height="284" fill="${c.surface}" stroke="${c.text}" stroke-width="2"/><rect x="98" y="210" width="468" height="32" fill="${c.primary}"/><text x="112" y="232" class="lumi-ds-button">PROJECT_EXPLORER.EXE</text>
+      <rect x="116" y="270" width="420" height="146" fill="${c.elevated}" stroke="${c.border}" stroke-width="2"/><text x="136" y="318" class="lumi-ds-hero lumi-ds-retro">${xml(preset.preview.headline)}</text>
       <rect x="688" y="220" width="132" height="118" fill="${c.surface}" stroke="${c.text}" stroke-width="2"/><rect x="700" y="232" width="36" height="36" fill="${c.secondary}"/><rect x="748" y="232" width="36" height="36" fill="${c.primary}"/>`;
   }
   if (type === 'studio') {
     return `<defs><radialGradient id="g1"><stop offset="0" stop-color="${c.secondary}"/><stop offset="1" stop-color="${c.primary}"/></radialGradient></defs>
       <circle cx="744" cy="346" r="184" fill="url(#g1)" opacity=".9"/><circle cx="744" cy="346" r="104" fill="${c.canvas}" opacity=".72"/>
-      <text x="54" y="246" class="hero display">${xml(preset.preview.headline)}</text><text x="58" y="302" class="body">Selected work across identity, motion and digital culture.</text>
-      <rect x="58" y="354" width="194" height="52" rx="26" fill="${c.primary}"/><text x="155" y="386" text-anchor="middle" class="button">View projects</text>`;
+      <text x="54" y="246" class="lumi-ds-hero lumi-ds-display">${xml(preset.preview.headline)}</text><text x="58" y="302" class="lumi-ds-body">Selected work across identity, motion and digital culture.</text>
+      <rect x="58" y="354" width="194" height="52" rx="26" fill="${c.primary}"/><text x="155" y="386" text-anchor="middle" class="lumi-ds-button">View projects</text>`;
   }
   if (type === 'pixel') {
     return `<rect x="44" y="174" width="872" height="358" fill="${c.surface}" stroke="${c.border}" stroke-width="2"/>
       ${[0, 1, 2, 3, 4, 5].map((i) => `<rect x="${532 + i * 42}" y="${230 + (i % 3) * 38}" width="42" height="42" fill="${i % 2 ? c.primary : c.secondary}"/>`).join('')}
       <rect x="574" y="356" width="252" height="100" fill="${c.primary}"/><rect x="616" y="314" width="42" height="42" fill="${c.primary}"/>
-      <text x="82" y="272" class="hero pixel">${xml(preset.preview.headline)}</text><text x="82" y="342" class="body">Maps, lore and communities in one living atlas.</text>`;
+      <text x="82" y="272" class="lumi-ds-hero lumi-ds-pixel">${xml(preset.preview.headline)}</text><text x="82" y="342" class="lumi-ds-body">Maps, lore and communities in one living atlas.</text>`;
   }
   if (type === 'schematic') {
     return `<pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="${c.border}" opacity=".55"/></pattern><rect x="44" y="174" width="872" height="358" fill="url(#grid)"/>
-      <text x="70" y="238" class="hero display">${xml(preset.preview.headline)}</text>
+      <text x="70" y="238" class="lumi-ds-hero lumi-ds-display">${xml(preset.preview.headline)}</text>
       ${card(90, 308, 184, 92, c.surface)}${card(390, 278, 184, 92, c.surface)}${card(690, 334, 184, 92, c.surface)}
       <path d="M274 354 C330 354 330 324 390 324 M574 324 C634 324 634 380 690 380" fill="none" stroke="${c.primary}" stroke-width="3"/><circle cx="390" cy="324" r="6" fill="${c.primary}"/>`;
   }
   if (type === 'finance') {
     return `${card(44, 174, 872, 358, c.surface)}<rect x="44" y="174" width="872" height="86" rx="${parseInt(preset.geometry.radius, 10) || 0}" fill="${c.primary}"/>
-      <text x="72" y="226" class="button">${xml(preset.preview.headline)}</text><text x="888" y="226" text-anchor="end" class="button">Q3 / 2026</text>
-      <text x="72" y="318" class="label">PORTFOLIO IMPACT</text><text x="72" y="382" class="metric">+28%</text><text x="72" y="420" class="body">year over year</text>
+      <text x="72" y="226" class="lumi-ds-button">${xml(preset.preview.headline)}</text><text x="888" y="226" text-anchor="end" class="lumi-ds-button">Q3 / 2026</text>
+      <text x="72" y="318" class="lumi-ds-label">PORTFOLIO IMPACT</text><text x="72" y="382" class="lumi-ds-metric">+28%</text><text x="72" y="420" class="lumi-ds-body">year over year</text>
       ${[0, 1, 2, 3, 4, 5].map((i) => `<rect x="${380 + i * 72}" y="${452 - [58, 94, 72, 132, 108, 166][i]}" width="38" height="${[58, 94, 72, 132, 108, 166][i]}" rx="5" fill="${i === 5 ? c.secondary : c.primary}" opacity="${i === 5 ? 1 : .78}"/>`).join('')}
       <line x1="352" y1="452" x2="862" y2="452" stroke="${c.border}"/>`;
   }
   if (type === 'portfolio') {
-    return `<text x="44" y="268" class="hero mega">${xml(preset.preview.headline)}</text><line x1="44" y1="316" x2="916" y2="316" stroke="${c.text}"/>
-      <rect x="44" y="350" width="526" height="164" fill="${c.text}"/><rect x="592" y="350" width="324" height="164" fill="${c.secondary}"/><text x="612" y="482" class="label dark">PROJECT / 2026</text>`;
+    return `<text x="44" y="268" class="lumi-ds-hero lumi-ds-mega">${xml(preset.preview.headline)}</text><line x1="44" y1="316" x2="916" y2="316" stroke="${c.text}"/>
+      <rect x="44" y="350" width="526" height="164" fill="${c.text}"/><rect x="592" y="350" width="324" height="164" fill="${c.secondary}"/><text x="612" y="482" class="lumi-ds-label lumi-ds-dark">PROJECT / 2026</text>`;
   }
   const isDark = type === 'airy-dark';
   const bold = type === 'finance-bold';
   return `${bold ? `<rect x="44" y="174" width="872" height="358" rx="${parseInt(preset.geometry.radius, 10) || 0}" fill="${c.primary}"/>` : ''}
-    <text x="72" y="${bold ? 266 : 252}" class="hero ${bold ? 'mega' : 'display'}">${xml(preset.preview.headline)}</text>
-    <text x="74" y="${bold ? 326 : 310}" class="body">A coherent system for every screen and every state.</text>
+    <text x="72" y="${bold ? 266 : 252}" class="lumi-ds-hero ${bold ? 'lumi-ds-mega' : 'lumi-ds-display'}">${xml(preset.preview.headline)}</text>
+    <text x="74" y="${bold ? 326 : 310}" class="lumi-ds-body">A coherent system for every screen and every state.</text>
     ${card(74, 370, 246, 126, bold ? c.surface : c.elevated)}${card(338, 350, 246, 146, bold ? c.surface : c.elevated)}${card(602, 390, 246, 106, bold ? c.surface : c.elevated)}
     <circle cx="806" cy="224" r="72" fill="${isDark ? c.primary : c.secondary}" opacity=".28"/>`;
 }
@@ -280,20 +280,23 @@ function renderPreviewSvg(id) {
   if (!preset) throw new Error(`preset de design não encontrado: ${id}`);
   const c = Object.fromEntries(Object.entries(preset.colors).map(([key, value]) => [key, safeColor(value, '#888888')]));
   const normalized = { ...preset, colors: c };
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
-  <title id="title">Preview do preset ${xml(preset.name)}</title><desc id="desc">${xml(preset.summary)}</desc>
+  const scope = `lumi-design-${preset.id}`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" data-lumi-design="${xml(preset.id)}" aria-labelledby="${scope}-title ${scope}-desc">
+  <title id="${scope}-title">Preview do preset ${xml(preset.name)}</title><desc id="${scope}-desc">${xml(preset.summary)}</desc>
   <style>
-    .label{font:600 12px ${xml(preset.typography.mono)},ui-monospace,monospace;letter-spacing:.12em;fill:${c.muted}}
-    .label.dark{fill:${c.text}}.body{font:400 16px ${xml(preset.typography.body)},system-ui,sans-serif;fill:${c.muted}}
-    .hero{font:700 38px ${xml(preset.typography.display)},system-ui,sans-serif;letter-spacing:-.04em;fill:${c.text}}
-    .hero.mega{font-size:56px}.hero.pixel{font-size:28px;letter-spacing:-.02em}.hero.retro{font-size:27px}.hero.serif{font-weight:600}
-    .metric{font:700 54px ${xml(preset.typography.mono)},ui-monospace,monospace;fill:${c.text}}.button{font:700 13px ${xml(preset.typography.body)},system-ui,sans-serif;fill:${c.elevated}}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-label{display:inline;font:600 12px ${xml(preset.typography.mono)},ui-monospace,monospace;letter-spacing:.12em;fill:${c.muted}}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-label.lumi-ds-dark{fill:${c.text}}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-body{display:inline;font:400 16px ${xml(preset.typography.body)},system-ui,sans-serif;fill:${c.muted}}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-hero{display:inline;font:700 38px ${xml(preset.typography.display)},system-ui,sans-serif;letter-spacing:-.04em;fill:${c.text}}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-hero.lumi-ds-mega{font-size:56px}svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-hero.lumi-ds-pixel{font-size:28px;letter-spacing:-.02em}svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-hero.lumi-ds-retro{font-size:27px}svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-hero.lumi-ds-serif{font-weight:600}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-metric{display:inline;font:700 54px ${xml(preset.typography.mono)},ui-monospace,monospace;fill:${c.text}}
+    svg[data-lumi-design="${xml(preset.id)}"] .lumi-ds-button{display:inline;font:700 13px ${xml(preset.typography.body)},system-ui,sans-serif;fill:${c.elevated}}
   </style>
   <rect width="960" height="600" fill="${c.canvas}"/><circle cx="870" cy="40" r="210" fill="${c.primary}" opacity=".08"/>
-  <text x="44" y="62" class="label">${xml(preset.preview.eyebrow)}</text><text x="916" y="62" text-anchor="end" class="label">${xml(preset.name.toUpperCase())}</text>
+  <text x="44" y="62" class="lumi-ds-label">${xml(preset.preview.eyebrow)}</text><text x="916" y="62" text-anchor="end" class="lumi-ds-label">${xml(preset.name.toUpperCase())}</text>
   <line x1="44" y1="92" x2="916" y2="92" stroke="${c.border}"/>
   ${previewScene(normalized)}
-  <circle cx="54" cy="568" r="7" fill="${c.primary}"/><circle cx="76" cy="568" r="7" fill="${c.secondary}"/><text x="916" y="572" text-anchor="end" class="label">LUMI DESIGN LIBRARY</text>
+  <circle cx="54" cy="568" r="7" fill="${c.primary}"/><circle cx="76" cy="568" r="7" fill="${c.secondary}"/><text x="916" y="572" text-anchor="end" class="lumi-ds-label">LUMI DESIGN LIBRARY</text>
 </svg>`;
 }
 
