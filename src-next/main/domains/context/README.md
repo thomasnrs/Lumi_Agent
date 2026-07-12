@@ -11,11 +11,8 @@ Implementado isoladamente:
 - referências de artifacts recuperáveis;
 - projeções limitadas de ledger/worklog com redaction;
 - sumarização por porta injetada e realinhamento de anchors/eventos.
+- coleta cacheada e invalidável de regras, DESIGN.md e memória da workspace;
+- composição de prompt com precedência de persona, facts, summary, ledger, remoto, stack, subprojetos e agentes;
+- DESIGN.md completo somente em tarefas visuais.
 
-Ainda pendente antes do domínio completo:
-
-- composição do system prompt;
-- regras do repositório, DESIGN.md e memória de workspace;
-- detecção de stack/mapa de subprojetos;
-- active editor context;
-- integração com providers e runtime do agente.
+O domínio está implementado isoladamente. Detecção de stack, editor ativo, remote mount e provider são portas externas que serão conectadas apenas no composition root futuro.
