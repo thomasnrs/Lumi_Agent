@@ -18,6 +18,7 @@
     { "id": "config", "target": "main/domains/config", "status": "started", "sourceArea": "DEFAULT_CONFIG/loadConfig/saveConfig" },
     { "id": "persistence", "target": "main/adapters/filesystem/atomic-json-store.js", "status": "implemented-isolated", "sourceArea": "history/config/facts/reminders/usage files" },
     { "id": "chats", "target": "main/domains/chats", "status": "implemented-isolated", "sourceArea": "multi-chat state and persistence" },
+    { "id": "chat-sessions", "target": "main/domains/chats/session-manager.js", "status": "implemented-isolated", "sourceArea": "AsyncLocalStorage foreground/background session orchestration" },
     { "id": "memory", "target": "main/domains/memory", "status": "started", "sourceArea": "facts/project memory/worklog/artifacts" },
     { "id": "usage", "target": "main/domains/usage", "status": "implemented-isolated", "sourceArea": "daily provider token and cost accounting" },
     { "id": "scheduling", "target": "main/domains/scheduling", "status": "implemented-isolated", "sourceArea": "reminders and scheduled tasks" },

@@ -11,4 +11,6 @@ Garantias atuais:
 - paths derivados de IDs validados;
 - hash de artifacts validado e retenção por idade, quantidade e bytes.
 
-Ainda pendente: orchestration das sessões vivas, memória `.lumi-memory.md`, montagem de ledger/context, timers do aplicativo e migrations reais completas da configuração.
+Sessões vivas também possuem implementação isolada: foreground/background, AsyncLocalStorage, troca que preserva identidade, cancelamento antes de delete, limite de sessões ociosas e snapshot que separa estado durável do efêmero.
+
+Ainda pendente: memória `.lumi-memory.md`, montagem de ledger/context, timers do aplicativo e migrations reais completas da configuração.
