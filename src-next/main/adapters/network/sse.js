@@ -1,0 +1,3 @@
+'use strict';
+async function readSse(response,onData){if(!response||!response.body||typeof response.body.getReader!=='function')throw new Error('resposta sem stream SSE');const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';for(;;){const{done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index).replace(/\r$/,'').trim();buffer=buffer.slice(index+1);if(line.startsWith('data:'))onData(line.slice(5).trim())}}buffer+=decoder.decode();const tail=buffer.trim();if(tail.startsWith('data:'))onData(tail.slice(5).trim())}
+module.exports={readSse};
