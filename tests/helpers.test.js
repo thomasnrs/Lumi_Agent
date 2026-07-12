@@ -985,3 +985,53 @@ test('readSystemLogs correlaciona evento do Windows com processo e launcher lemb
   assert.ok(result.entries[0].launch.includes('game.exe'));
   assert.equal(result.entries[0].parent, 'steam.exe');
 });
+
+// ---------- biblioteca de DESIGN.md (módulo ainda desacoplado da Lumi) ----------
+const designLibrary = require('../src/modules/design-library');
+
+test('catálogo visual possui presets autorais válidos e ids únicos', () => {
+  assert.ok(designLibrary.catalog.length >= 14);
+  assert.deepEqual(designLibrary.validateCatalog(), []);
+  const ids = designLibrary.catalog.map((preset) => preset.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(designLibrary.listPresets({ mode: 'dark' }).length >= 4);
+  assert.ok(designLibrary.listPresets({ query: 'documentação' }).some((preset) => preset.id === 'schematic-indigo'));
+});
+
+test('cada preset gera DESIGN.md completo e preview SVG autocontido', () => {
+  for (const preset of designLibrary.catalog) {
+    const markdown = designLibrary.generateDesignMarkdown(preset.id, { projectName: 'Projeto teste' });
+    assert.match(markdown, new RegExp(`lumi_design_preset: ${preset.id}`));
+    assert.match(markdown, /## 2\. Tokens de cor/);
+    assert.match(markdown, /## 10\. Contrato para agentes de código/);
+    assert.ok(!markdown.includes('undefined'));
+    const svg = designLibrary.renderPreviewSvg(preset.id);
+    assert.match(svg, /^<svg[^>]+xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+    assert.match(svg, new RegExp(`Preview do preset ${preset.name}`));
+    assert.ok(svg.length > 1500, `${preset.id} deveria produzir um preview substancial`);
+  }
+});
+
+test('galeria de desenvolvimento é offline, filtrável e contém todos os presets', () => {
+  const html = designLibrary.renderGalleryHtml();
+  assert.match(html, /Lumi Design Atlas/);
+  assert.match(html, /class="search"/);
+  assert.match(html, /data-download="signal-noir"/);
+  assert.equal((html.match(/class="design-card"/g) || []).length, designLibrary.catalog.length);
+  assert.ok(!/<script[^>]+src=|<link[^>]+href=|fetch\s*\(/i.test(html));
+});
+
+test('instalação do preset protege DESIGN.md existente e cria backup ao sobrescrever', (t) => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'lumi-design-library-'));
+  t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
+  const target = path.join(ws, 'DESIGN.md');
+  fs.writeFileSync(target, '# Regras do usuário\n');
+  const conflict = designLibrary.installDesignPreset(ws, 'signal-noir');
+  assert.equal(conflict.conflict, true);
+  assert.equal(fs.readFileSync(target, 'utf8'), '# Regras do usuário\n');
+  const installed = designLibrary.installDesignPreset(ws, 'signal-noir', { overwrite: true, projectName: 'Nebula' });
+  assert.equal(installed.ok, true);
+  assert.ok(installed.backup && fs.existsSync(installed.backup));
+  assert.equal(fs.readFileSync(installed.backup, 'utf8'), '# Regras do usuário\n');
+  assert.match(fs.readFileSync(target, 'utf8'), /Projeto: \*\*Nebula\*\*/);
+});
