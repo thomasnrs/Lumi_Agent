@@ -63,3 +63,7 @@ Estado da fundação já implementada isoladamente: lifecycle, container, event 
 | avatar | Render 3D, animações e orçamento de FPS |
 | settings | Configuração, providers, agentes e gráficos |
 | auxiliary-pages | Memória, MCP, imagens, tarefas e wizard |
+
+## Progresso de persistência
+
+Já existem repositories isolados para facts, usage diário, reminders/tasks, chats multi-arquivo e artifacts content-addressed. O domínio `memory` continua parcial porque memória de workspace, diário e ledger serão concluídos junto do runtime de contexto.

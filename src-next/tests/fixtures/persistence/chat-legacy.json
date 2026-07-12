@@ -1,0 +1,15 @@
+{
+  "id": "clegacy1",
+  "title": "Conversa antiga",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-02T00:00:00.000Z",
+  "summary": "decisão importante",
+  "history": [{ "role": "user", "content": "Olá mundo" }],
+  "events": [],
+  "archive": [],
+  "worklog": [],
+  "ledger": [],
+  "claudeSessionId": "claude-1",
+  "codexThreadId": "codex-1",
+  "chatConfig": { "provider": "openai", "model": "teste" }
+}

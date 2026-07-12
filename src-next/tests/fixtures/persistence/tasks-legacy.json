@@ -1,0 +1,3 @@
+[
+  { "id": "tk4", "name": "Daily", "prompt": "faça", "schedule": "daily", "time": "09:00", "enabled": true, "nextRun": 50 }
+]

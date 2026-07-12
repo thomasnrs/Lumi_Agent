@@ -11,6 +11,7 @@ Esta é a implementação futura e modular da Lumi. Ela está intencionalmente f
 - Baseline atual inventariado: IPC, ferramentas, persistência e providers/motores.
 - Core isolado cobre lifecycle, DI, eventos, erros, logs, timers, IDs, métricas e schemas.
 - Persistência JSON atômica e configuração versionada foram iniciadas, ainda sem formatos reais conectados.
+- Repositories isolados já leem os formatos legacy de facts, usage, reminders, tasks e chats; artifacts possuem hash e retenção.
 
 ## Execução durante a migração
 
