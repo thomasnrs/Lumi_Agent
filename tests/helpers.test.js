@@ -986,15 +986,15 @@ test('readSystemLogs correlaciona evento do Windows com processo e launcher lemb
   assert.equal(result.entries[0].parent, 'steam.exe');
 });
 
-// ---------- biblioteca de DESIGN.md (módulo ainda desacoplado da Lumi) ----------
+// ---------- biblioteca integrada de DESIGN.md ----------
 const designLibrary = require('../src/modules/design-library');
 
 test('catálogo visual possui presets autorais válidos e ids únicos', () => {
-  assert.ok(designLibrary.catalog.length >= 18);
+  assert.ok(designLibrary.catalog.length >= 26);
   assert.deepEqual(designLibrary.validateCatalog(), []);
   const ids = designLibrary.catalog.map((preset) => preset.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.ok(designLibrary.listPresets({ mode: 'dark' }).length >= 4);
+  assert.ok(designLibrary.listPresets({ mode: 'dark' }).length >= 13);
   assert.ok(designLibrary.listPresets({ query: 'documentação' }).some((preset) => preset.id === 'schematic-indigo'));
 });
 

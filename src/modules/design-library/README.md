@@ -4,7 +4,7 @@ Módulo interno e opt-in que mantém presets visuais estruturados e transforma u
 
 ## Estado atual
 
-- 18 presets autorais.
+- 26 presets autorais: 13 dark e 13 light.
 - Busca por texto, modo e tags.
 - Geração determinística de `DESIGN.md`.
 - Preview SVG local, sem rede, imagem remota ou dependência externa.
