@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "runtimeConnected": false,
+  "cutoverAllowed": false,
+  "currentEntrypoint": "src/main/main.js",
+  "targetEntrypoint": "src-next/main/bootstrap/main.js",
+  "modules": [
+    { "id": "core.lifecycle", "target": "main/core/lifecycle.js", "status": "started", "sourceArea": "app/window/service lifecycle" },
+    { "id": "core.container", "target": "main/core/container.js", "status": "started", "sourceArea": "implicit globals and service construction" },
+    { "id": "core.event-bus", "target": "main/core/event-bus.js", "status": "started", "sourceArea": "broadcast and internal notifications" },
+    { "id": "config", "target": "main/domains/config", "status": "planned", "sourceArea": "DEFAULT_CONFIG/loadConfig/saveConfig" },
+    { "id": "persistence", "target": "main/domains/persistence", "status": "planned", "sourceArea": "history/config/facts/reminders/usage files" },
+    { "id": "chats", "target": "main/domains/chats", "status": "planned", "sourceArea": "multi-chat state and persistence" },
+    { "id": "memory", "target": "main/domains/memory", "status": "planned", "sourceArea": "facts/project memory/worklog/artifacts" },
+    { "id": "ai-providers", "target": "main/domains/ai-providers", "status": "planned", "sourceArea": "OpenAI/Anthropic/provider presets and streaming" },
+    { "id": "context", "target": "main/domains/context", "status": "planned", "sourceArea": "prompt building/compaction/context budgets" },
+    { "id": "agent-runtime", "target": "main/domains/agent-runtime", "status": "planned", "sourceArea": "runAgent/tools/steering/completion gates" },
+    { "id": "tools", "target": "main/domains/tools", "status": "planned", "sourceArea": "TOOLS/runTool/permissions/anti-loop" },
+    { "id": "subagents", "target": "main/domains/subagents", "status": "planned", "sourceArea": "delegation/parallelism/worktrees" },
+    { "id": "code-engines", "target": "main/domains/code-engines", "status": "planned", "sourceArea": "Claude Code/Codex engines" },
+    { "id": "workspace", "target": "main/domains/workspace", "status": "planned", "sourceArea": "workspace IPC/search/watchers/files" },
+    { "id": "git", "target": "main/domains/git", "status": "planned", "sourceArea": "Git panel and worktree operations" },
+    { "id": "terminal", "target": "main/domains/terminal", "status": "planned", "sourceArea": "PTY/processes/ports" },
+    { "id": "remote", "target": "main/domains/remote", "status": "planned", "sourceArea": "SSH/SSHFS/server context" },
+    { "id": "system-monitor", "target": "main/domains/system-monitor", "status": "planned", "sourceArea": "OS logs/process correlation/proactivity" },
+    { "id": "integrations", "target": "main/domains/integrations", "status": "planned", "sourceArea": "MCP/Docker/GitHub/DB/REST/live" },
+    { "id": "media-voice", "target": "main/domains/media-voice", "status": "planned", "sourceArea": "image/screen/TTS/STT/gallery" },
+    { "id": "windows-avatar", "target": "main/domains/windows-avatar", "status": "planned", "sourceArea": "BrowserWindow/avatar/tray/menus/input" },
+    { "id": "electron-shell", "target": "main/adapters/electron", "status": "planned", "sourceArea": "IPC/window/app bootstrap" },
+    { "id": "preload", "target": "preload", "status": "planned", "sourceArea": "src/main/preload.js" },
+    { "id": "renderer", "target": "renderer", "status": "planned", "sourceArea": "src/renderer" }
+  ]
+}
