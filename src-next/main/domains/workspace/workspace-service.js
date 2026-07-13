@@ -39,6 +39,7 @@ class WorkspaceService {
     this.fs = opts.filesystem;
     this.paths = new WorkspacePath(opts.root, this.fs);
     this.turnState = opts.turnState || new WorkspaceTurnState();
+    this.fastSearch = opts.fastSearch || null;
     this.onMutation = opts.onMutation || (() => {});
     this.isProtected = opts.isProtected || (() => false);
   }
@@ -114,6 +115,12 @@ class WorkspaceService {
     let regex = null;
     if (!opts.find && args.regex) { try { regex = new RegExp(query, 'i'); } catch (error) { return { error: `regex inválida: ${error.message}` }; } }
     const start = this.paths.resolve(opts.find ? '.' : args.path || '.');
+    if (this.fastSearch && typeof this.fastSearch.search === 'function') {
+      try {
+        const fast = await this.fastSearch.search({ root: this.paths.root, base: start, query, regex: !!args.regex, find: !!opts.find, signal: args.signal });
+        if (fast) return opts.find ? { query, files_matching_name: fast.files_matching_name || [], content_matches: fast.content_matches || [], engine: fast.engine || 'ripgrep', ...(fast.limited ? { truncated: 'busca limitada para proteger memória/tempo; refine a consulta' } : {}) } : { matches: fast.matches || [], total: (fast.matches || []).length, engine: fast.engine || 'ripgrep', ...(fast.limited ? { truncated: 'há mais resultados — refine o pattern ou limite o path' } : {}) };
+      } catch (_) { /* adapter é otimização; fallback limitado preserva disponibilidade */ }
+    }
     const matches = [], names = [], deadline = Date.now() + (opts.find ? 3500 : 6000);
     const caps = { files: opts.find ? 350 : 1200, bytes: opts.find ? 6 * 1024 * 1024 : 32 * 1024 * 1024, hits: opts.find ? 35 : 120 };
     let files = 0, bytes = 0, limited = false;

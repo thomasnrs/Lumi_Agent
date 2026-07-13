@@ -109,3 +109,12 @@ test('factory registra ferramentas do workspace no registry e passa pelo executo
   assert.ok(registry.schemas({ toolsets: new Set(['code_read', 'code_write']) }).length >= 8);
   await fs.rm(root, { recursive: true, force: true });
 });
+
+test('busca rápida injetada evita fallback e preserva o contrato do tool', async () => {
+  const { root, instance } = await service({ 'a.js': 'nunca deve ler' });
+  instance.fastSearch = { search: async (request) => ({ engine: 'ripgrep', files_matching_name: ['src/lumi.js'], content_matches: [{ file: 'src/lumi.js', line: 3, text: 'Lumi' }], request }) };
+  const result = await instance.findInCode({ query: 'Lumi' });
+  assert.equal(result.engine, 'ripgrep');
+  assert.deepEqual(result.files_matching_name, ['src/lumi.js']);
+  await fs.rm(root, { recursive: true, force: true });
+});
