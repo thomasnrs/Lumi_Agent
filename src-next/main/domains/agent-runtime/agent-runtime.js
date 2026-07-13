@@ -54,6 +54,18 @@ class AgentRuntime {
     const toolsets = opts.toolsets || contract.toolsets;
     let toolsSuppressed = config.toolsEnabled === false;
     let full = '', finished = false, steps = 0;
+    // Owner e mount são dados de execução explícitos: ferramentas de terminal/remoto
+    // não devem inferi-los de globais e acabar rodando no host errado.
+    const toolContext = {
+      workspace: opts.workspace,
+      chatId: opts.chatId,
+      workspaceOwner: opts.workspaceOwner,
+      remote: opts.remote,
+      signal: opts.signal,
+      ledger,
+      toolGuard,
+      session: opts.session,
+    };
 
     const inject = () => injectSteering(queue, messages, (message, metadata) => {
       if (opts.onMessage) opts.onMessage(message, { steering: true, metadata });
@@ -102,7 +114,7 @@ class AgentRuntime {
         const executed = await executeToolCallsOrdered(calls, async (call) => {
           const args = parseCallArguments(call.arguments);
           this.onEvent({ type: 'agent.tool', call, args });
-          const result = await this.toolExecutor.execute(call.name, args, { workspace: opts.workspace, chatId: opts.chatId, signal: opts.signal, ledger, toolGuard });
+          const result = await this.toolExecutor.execute(call.name, args, toolContext);
           ledger.record(call.name, args, result);
           return { call, result };
         }, { concurrency: config.parallelToolConcurrency || 4, parallelNames: opts.parallelToolNames });

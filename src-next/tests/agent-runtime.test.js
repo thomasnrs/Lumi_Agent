@@ -110,3 +110,15 @@ test('fallback escolhido permanece ativo nas próximas rodadas do mesmo turno', 
   assert.equal(output.effectiveConfig.model, 'reserva');
   assert.equal(output.effectiveConfig.fallbackModel, '');
 });
+
+test('runtime forwards explicit remote owner context to tools', async () => {
+  let context;
+  const h = harness([
+    { text: '', toolCalls: [{ id: 't1', name: 'run_command', arguments: '{"command":"pwd"}' }] },
+    { text: 'ok', toolCalls: [] },
+  ], { run_command: tool('run_command', async (_args, received) => { context = received; return { ok: true }; }, { exclusive: true }) });
+  await h.runtime.run({ config: {}, workspace: 'C:\\mount', chatId: 'chat-a', workspaceOwner: 44, remote: { host: 'dev' }, session: { id: 'session-a' }, getTools: () => h.registry.schemas({ allow: ['run_command'] }) });
+  assert.equal(context.workspaceOwner, 44);
+  assert.equal(context.remote.host, 'dev');
+  assert.equal(context.session.id, 'session-a');
+});
