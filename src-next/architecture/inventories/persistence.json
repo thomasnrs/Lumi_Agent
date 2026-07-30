@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "source": {
     "path": "src/main/main.js",
-    "lines": 15101,
-    "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+    "lines": 15263,
+    "sha256": "178b0aa44b9c15612007e2dedc1eb7409c0a363a938412b1514df6fc04de0877"
   },
   "summary": {
     "pathFactories": 13
@@ -11,67 +11,67 @@
   "pathFactories": [
     {
       "name": "artifactDiskPath",
-      "line": 7488,
+      "line": 7596,
       "expression": "key ? path.join(artifactsDir(), key + '.json') : ''"
     },
     {
       "name": "configPath",
-      "line": 557,
+      "line": 559,
       "expression": "path.join(app.getPath('userData'), 'config.json')"
     },
     {
       "name": "factsPath",
-      "line": 1466,
+      "line": 1468,
       "expression": "path.join(app.getPath('userData'), 'facts.json')"
     },
     {
       "name": "historyPath",
-      "line": 1481,
+      "line": 1563,
       "expression": "path.join(app.getPath('userData'), 'history.json')"
     },
     {
       "name": "presetsPath",
-      "line": 12491,
+      "line": 12645,
       "expression": "path.join(app.getPath('userData'), 'presets.json')"
     },
     {
       "name": "remindersPath",
-      "line": 14463,
+      "line": 14625,
       "expression": "path.join(app.getPath('userData'), 'reminders.json')"
     },
     {
       "name": "resolveEnvPath",
-      "line": 11598,
+      "line": 11738,
       "expression": "null"
     },
     {
       "name": "resolvePath",
-      "line": 1506,
+      "line": 1588,
       "expression": "path.isAbsolute(p || '.') ? p : path.join(base, p || '.')"
     },
     {
       "name": "safeWsPath",
-      "line": 10978,
+      "line": 11118,
       "expression": "fp.startsWith(path.resolve(cfg.workspace)) ? fp : null"
     },
     {
       "name": "summaryPath",
-      "line": 9168,
+      "line": 9300,
       "expression": "path.join(app.getPath('userData'), 'summary.txt')"
     },
     {
       "name": "tasksPath",
-      "line": 14493,
+      "line": 14655,
       "expression": "path.join(app.getPath('userData'), 'tasks.json')"
     },
     {
       "name": "usagePath",
-      "line": 8002,
+      "line": 8110,
       "expression": "path.join(app.getPath('userData'), 'usage.json')"
     },
     {
       "name": "workspaceMemoryPath",
-      "line": 1510,
+      "line": 1592,
       "expression": "path.join(cfg.workspace, '.lumi-memory.md')"
     }
   ]

@@ -66,7 +66,7 @@ Inspirada no *Desktop Mate* (Steam), construída do zero com a I.A. no centro. J
 | 🖥️ **Workspace estilo VS Code** | Editor Monaco com abas, **git completo** (diff, stage, commit, push/pull, branches, revisão pré-commit pela I.A.), **Live Server** e **navegador embutidos**, aba **Docker** (+compose), terminal **PTY real** com perfis (CMD, Git Bash, **WSL**, **SSH**, venv), menu de **Tarefas**, túnel público em 1 clique, **pastas remotas via SSH** (estilo Remote-SSH), Ctrl+P, busca global, chat lateral e ícones reais das stacks |
 | 🗣️ **Voz completa** | TTS grátis (Edge), Gemini (vozes expressivas), XTTS no seu servidor, ElevenLabs — com **lip-sync real**. STT Whisper-compatível pelo microfone |
 | 💚 **Companheira proativa** | Lembretes falados ("me lembra em 20min…"), saudações, boas-vindas na volta, cuidado com pausas, **noção de hora** (madrugada manhosa, "vai dormir não? 👀"), reação opcional ao app em foco (Windows e Linux), **datas especiais** (te dá parabéns 🎂) — com a personalidade dela |
-| 🔍 **Transparência total** | Página de **memória** mostra tudo que ela sabe de você (edite/apague fato por fato) e o **gastômetro** acumula o custo estimado do dia no rodapé do chat |
+| 🔍 **Transparência total** | Página de **memória** mostra tudo que ela sabe (edite/apague fato por fato e veja o **escopo** de cada um: geral ou daquele projeto) e o **gastômetro** acumula o custo estimado do dia no rodapé do chat |
 | 🎨 **Design refinado** | 9 temas prontos (incl. claros, AMOLED e Sakura 🌸) + editor de tema completo, design system compartilhado, vidro acrílico nativo (Win11), controles estilo macOS em Windows/Linux, menus com blur e fonte própria |
 | 🥔 **Modo econômico** | Presets gráficos de **Batata a Qualidade**, escala de renderização e FPS configuráveis, efeitos reduzidos e pausa inteligente do avatar quando oculto — feito para reduzir bastante o uso em PCs modestos |
 
@@ -135,7 +135,7 @@ A Lumi decide quando usar cada ferramenta. Tudo passa pelo **sistema de permiss�
 | `update_plan` | Checklist vivo no chat (`📋 Plano — 2/5`) que ela atualiza conforme trabalha |
 | `read_clipboard` / `write_clipboard` | Lê o que você copiou · deixa um texto pronto no seu Ctrl+V |
 | `set_reminder` / `list_reminders` / `cancel_reminder` | Lembretes falados na hora marcada (persistem ao reiniciar) |
-| `remember_fact` / `recall_facts` | Memória de longo prazo sobre você |
+| `remember_fact` / `recall_facts` | Memória de longo prazo **com escopo**: o que é sobre *você* vale em qualquer projeto; o que é *do projeto* só volta naquele projeto |
 | `delegate_to_agent` | Delega subtarefas à equipe de agentes (execução **paralela**) |
 | `get_datetime` / `play_animation` | Data/hora · reações do avatar |
 

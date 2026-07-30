@@ -146,8 +146,9 @@ contextBridge.exposeInMainWorld('api', {
   onDiff: (cb) => ipcRenderer.on('chat:diff', (_e, d) => cb(d)),
   clearFacts: () => ipcRenderer.invoke('facts:clear'),
   factsList: () => ipcRenderer.invoke('facts:list'),
-  factsAdd: (fact) => ipcRenderer.invoke('facts:add', fact),
-  factsSet: (index, fact) => ipcRenderer.invoke('facts:set', { index, fact }),
+  factsAdd: (fact, scope) => ipcRenderer.invoke('facts:add', fact, scope),
+  factsSet: (index, fact, scope) => ipcRenderer.invoke('facts:set', { index, fact, scope }),
+  factsScope: () => ipcRenderer.invoke('facts:scope'),
   factsDelete: (index) => ipcRenderer.invoke('facts:delete', index),
   openMemoryPage: () => ipcRenderer.send('memory:open'),
   openChatWindow: () => ipcRenderer.send('chat:open-window'), // nova conversa em nova janela

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "source": {
     "path": "src/main/main.js",
-    "lines": 15101,
-    "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+    "lines": 15263,
+    "sha256": "178b0aa44b9c15612007e2dedc1eb7409c0a363a938412b1514df6fc04de0877"
   },
   "protocols": [
     "openai-compatible",
@@ -13,23 +13,23 @@
   "detectedTurnFunctions": [
     {
       "name": "anthropicTurn",
-      "line": 1057
+      "line": 1059
     },
     {
       "name": "responsesTurn",
-      "line": 1246
+      "line": 1248
     },
     {
       "name": "geminiTurn",
-      "line": 1385
+      "line": 1387
     },
     {
       "name": "openaiTurn",
-      "line": 7884
+      "line": 7992
     },
     {
       "name": "runChatTurn",
-      "line": 14045
+      "line": 14205
     }
   ],
   "specialRoutes": [

@@ -20,6 +20,7 @@
     { "id": "chats", "target": "main/domains/chats", "status": "implemented-isolated", "sourceArea": "multi-chat state and persistence" },
     { "id": "chat-sessions", "target": "main/domains/chats/session-manager.js", "status": "implemented-isolated", "sourceArea": "AsyncLocalStorage foreground/background session orchestration" },
     { "id": "memory", "target": "main/domains/memory", "status": "started", "sourceArea": "facts/project memory/worklog/artifacts" },
+    { "id": "memory-scope", "target": "main/domains/memory/facts-repository.js + main/domains/context/journal.js + main/domains/workspace/workspace-path.js", "status": "implemented-isolated", "sourceArea": "escopo user/project de fatos, retenção por escopo e diário técnico carimbado por workspace" },
     { "id": "usage", "target": "main/domains/usage", "status": "implemented-isolated", "sourceArea": "daily provider token and cost accounting" },
     { "id": "scheduling", "target": "main/domains/scheduling", "status": "implemented-isolated", "sourceArea": "reminders and scheduled tasks" },
     { "id": "artifacts", "target": "main/domains/artifacts", "status": "implemented-isolated", "sourceArea": "content-addressed large tool results and retention" },

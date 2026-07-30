@@ -1,5 +1,20 @@
 'use strict';
 
+const nodePath = require('node:path');
+
+// Chave canônica de projeto, para COMPARAÇÃO apenas (não faz I/O). A mesma pasta escrita de
+// formas diferentes — barra, caixa no Windows, caminho relativo — tem que cair na mesma chave,
+// senão memória e diário de um projeto vazam no contexto de outro.
+function scopeKey(workspace) {
+  if (!workspace) return '';
+  try {
+    const absolute = nodePath.resolve(String(workspace));
+    return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+  } catch (_) {
+    return String(workspace);
+  }
+}
+
 class WorkspacePath {
   constructor(root, filesystem) {
     if (!root) throw new Error('WorkspacePath exige root');
@@ -20,4 +35,4 @@ class WorkspacePath {
   }
 }
 
-module.exports = { WorkspacePath };
+module.exports = { WorkspacePath, scopeKey };

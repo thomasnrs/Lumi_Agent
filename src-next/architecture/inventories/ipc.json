@@ -3,20 +3,20 @@
   "source": {
     "main": {
       "path": "src/main/main.js",
-      "lines": 15101,
-      "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+      "lines": 15263,
+      "sha256": "178b0aa44b9c15612007e2dedc1eb7409c0a363a938412b1514df6fc04de0877"
     },
     "preload": {
       "path": "src/main/preload.js",
-      "lines": 298,
-      "sha256": "433d689a9d4a800dd9b08dd56f17557baaaaf2940d480b26e11b00be6231a26c"
+      "lines": 299,
+      "sha256": "542cd4c0b5f72fc85b4f1187d0fdd392e00378854f22e5c6b5f8a90fb1d3d196"
     }
   },
   "summary": {
-    "mainRegistrations": 180,
-    "uniqueMainChannels": 180,
-    "preloadCalls": 180,
-    "uniquePreloadChannels": 180
+    "mainRegistrations": 181,
+    "uniqueMainChannels": 181,
+    "preloadCalls": 181,
+    "uniquePreloadChannels": 181
   },
   "duplicates": [],
   "preloadWithoutMainRegistration": [],
@@ -25,1099 +25,1104 @@
     {
       "channel": "agents:defaults",
       "registration": "handle",
-      "line": 12488
+      "line": 12642
     },
     {
       "channel": "anim:preview",
       "registration": "on",
-      "line": 10911
+      "line": 11051
     },
     {
       "channel": "anim:stop",
       "registration": "on",
-      "line": 10912
+      "line": 11052
     },
     {
       "channel": "avatar-scale-by",
       "registration": "on",
-      "line": 10885
+      "line": 11025
     },
     {
       "channel": "avatar-scale-set",
       "registration": "on",
-      "line": 10884
+      "line": 11024
     },
     {
       "channel": "chat:ask-answer",
       "registration": "on",
-      "line": 4991
+      "line": 5080
     },
     {
       "channel": "chat:bind",
       "registration": "handle",
-      "line": 13806
+      "line": 13966
     },
     {
       "channel": "chat:config:get",
       "registration": "handle",
-      "line": 13843
+      "line": 14003
     },
     {
       "channel": "chat:config:set",
       "registration": "handle",
-      "line": 13844
+      "line": 14004
     },
     {
       "channel": "chat:fork",
       "registration": "handle",
-      "line": 13829
+      "line": 13989
     },
     {
       "channel": "chat:history",
       "registration": "handle",
-      "line": 13812
+      "line": 13972
     },
     {
       "channel": "chat:improve-prompt",
       "registration": "handle",
-      "line": 13781
+      "line": 13941
     },
     {
       "channel": "chat:open-window",
       "registration": "on",
-      "line": 12361
+      "line": 12515
     },
     {
       "channel": "chat:perm-answer",
       "registration": "on",
-      "line": 2568
+      "line": 2657
     },
     {
       "channel": "chat:regen",
       "registration": "on",
-      "line": 14182
+      "line": 14342
     },
     {
       "channel": "chat:reset",
       "registration": "on",
-      "line": 13826
+      "line": 13986
     },
     {
       "channel": "chat:send",
       "registration": "on",
-      "line": 13980
+      "line": 14140
     },
     {
       "channel": "chat:stop",
       "registration": "on",
-      "line": 14211
+      "line": 14371
     },
     {
       "channel": "chats:current",
       "registration": "handle",
-      "line": 13833
+      "line": 13993
     },
     {
       "channel": "chats:delete",
       "registration": "handle",
-      "line": 13857
+      "line": 14017
     },
     {
       "channel": "chats:list",
       "registration": "handle",
-      "line": 13832
+      "line": 13992
     },
     {
       "channel": "chats:new",
       "registration": "handle",
-      "line": 13845
+      "line": 14005
     },
     {
       "channel": "chats:open-window",
       "registration": "on",
-      "line": 12363
+      "line": 12517
     },
     {
       "channel": "chats:rename",
       "registration": "handle",
-      "line": 13853
+      "line": 14013
     },
     {
       "channel": "chats:switch",
       "registration": "handle",
-      "line": 13849
+      "line": 14009
     },
     {
       "channel": "checkpoint:undo",
       "registration": "handle",
-      "line": 7656
+      "line": 7764
     },
     {
       "channel": "claude-code:capabilities",
       "registration": "handle",
-      "line": 13222
+      "line": 13379
     },
     {
       "channel": "claude-code:login",
       "registration": "handle",
-      "line": 12837
+      "line": 12991
     },
     {
       "channel": "claude-code:logout",
       "registration": "handle",
-      "line": 12844
+      "line": 12998
     },
     {
       "channel": "claude-code:status",
       "registration": "handle",
-      "line": 12835
+      "line": 12989
     },
     {
       "channel": "codex:login",
       "registration": "handle",
-      "line": 12873
+      "line": 13027
     },
     {
       "channel": "codex:logout",
       "registration": "handle",
-      "line": 12880
+      "line": 13034
     },
     {
       "channel": "codex:models",
       "registration": "handle",
-      "line": 12866
+      "line": 13020
     },
     {
       "channel": "codex:status",
       "registration": "handle",
-      "line": 12865
+      "line": 13019
     },
     {
       "channel": "config:get",
       "registration": "handle",
-      "line": 12421
+      "line": 12575
     },
     {
       "channel": "config:set",
       "registration": "handle",
-      "line": 12426
+      "line": 12580
     },
     {
       "channel": "ctx:click",
       "registration": "on",
-      "line": 10540
+      "line": 10680
     },
     {
       "channel": "ctx:close",
       "registration": "on",
-      "line": 10552
+      "line": 10692
     },
     {
       "channel": "ctx:size",
       "registration": "on",
-      "line": 10521
+      "line": 10661
     },
     {
       "channel": "db:ai-sql",
       "registration": "handle",
-      "line": 11850
+      "line": 11990
     },
     {
       "channel": "db:connect",
       "registration": "handle",
-      "line": 11701
+      "line": 11841
     },
     {
       "channel": "db:detect",
       "registration": "handle",
-      "line": 11689
+      "line": 11829
     },
     {
       "channel": "db:disconnect",
       "registration": "handle",
-      "line": 11733
+      "line": 11873
     },
     {
       "channel": "db:query",
       "registration": "handle",
-      "line": 11807
+      "line": 11947
     },
     {
       "channel": "db:tables",
       "registration": "handle",
-      "line": 11806
+      "line": 11946
     },
     {
       "channel": "design:install",
       "registration": "handle",
-      "line": 12264
+      "line": 12404
     },
     {
       "channel": "design:list",
       "registration": "handle",
-      "line": 12252
+      "line": 12392
     },
     {
       "channel": "design:status",
       "registration": "handle",
-      "line": 12263
+      "line": 12403
     },
     {
       "channel": "diag:check",
       "registration": "handle",
-      "line": 10378
+      "line": 10518
     },
     {
       "channel": "diag:system",
       "registration": "handle",
-      "line": 10379
+      "line": 10519
     },
     {
       "channel": "docker:action",
       "registration": "handle",
-      "line": 4896
+      "line": 4985
     },
     {
       "channel": "docker:compose-file",
       "registration": "handle",
-      "line": 4029
+      "line": 4118
     },
     {
       "channel": "docker:list",
       "registration": "handle",
-      "line": 4004
+      "line": 4093
     },
     {
       "channel": "editor:active",
       "registration": "on",
-      "line": 12451
+      "line": 12605
     },
     {
       "channel": "env:list",
       "registration": "handle",
-      "line": 11618
+      "line": 11758
     },
     {
       "channel": "env:read",
       "registration": "handle",
-      "line": 11619
+      "line": 11759
     },
     {
       "channel": "env:save",
       "registration": "handle",
-      "line": 11630
+      "line": 11770
     },
     {
       "channel": "facts:add",
       "registration": "handle",
-      "line": 12312
+      "line": 12452
     },
     {
       "channel": "facts:clear",
       "registration": "handle",
-      "line": 12302
+      "line": 12442
     },
     {
       "channel": "facts:delete",
       "registration": "handle",
-      "line": 12326
+      "line": 12480
     },
     {
       "channel": "facts:list",
       "registration": "handle",
-      "line": 12311
+      "line": 12451
+    },
+    {
+      "channel": "facts:scope",
+      "registration": "handle",
+      "line": 12476
     },
     {
       "channel": "facts:set",
       "registration": "handle",
-      "line": 12320
+      "line": 12459
     },
     {
       "channel": "foot-pixel",
       "registration": "on",
-      "line": 10906
+      "line": 11046
     },
     {
       "channel": "gallery:list",
       "registration": "handle",
-      "line": 10918
+      "line": 11058
     },
     {
       "channel": "gallery:open",
       "registration": "on",
-      "line": 10930
+      "line": 11070
     },
     {
       "channel": "get-hook-status",
       "registration": "handle",
-      "line": 10902
+      "line": 11042
     },
     {
       "channel": "get-unity-idle",
       "registration": "handle",
-      "line": 12368
+      "line": 12522
     },
     {
       "channel": "get-vrm-path",
       "registration": "handle",
-      "line": 10914
+      "line": 11054
     },
     {
       "channel": "get-vrma-paths",
       "registration": "handle",
-      "line": 10915
+      "line": 11055
     },
     {
       "channel": "get-window-bounds",
       "registration": "handle",
-      "line": 12394
+      "line": 12548
     },
     {
       "channel": "get-window-pos",
       "registration": "handle",
-      "line": 12398
+      "line": 12552
     },
     {
       "channel": "get-work-area",
       "registration": "handle",
-      "line": 12380
+      "line": 12534
     },
     {
       "channel": "gh:check",
       "registration": "handle",
-      "line": 4097
+      "line": 4186
     },
     {
       "channel": "gh:ci",
       "registration": "handle",
-      "line": 4121
+      "line": 4210
     },
     {
       "channel": "gh:pr-create",
       "registration": "handle",
-      "line": 4136
+      "line": 4225
     },
     {
       "channel": "gh:prs",
       "registration": "handle",
-      "line": 4107
+      "line": 4196
     },
     {
       "channel": "git:ai-message",
       "registration": "handle",
-      "line": 11336
+      "line": 11476
     },
     {
       "channel": "git:ai-review",
       "registration": "handle",
-      "line": 11370
+      "line": 11510
     },
     {
       "channel": "git:blame",
       "registration": "handle",
-      "line": 11559
+      "line": 11699
     },
     {
       "channel": "git:branches",
       "registration": "handle",
-      "line": 11447
+      "line": 11587
     },
     {
       "channel": "git:checkout",
       "registration": "handle",
-      "line": 11458
+      "line": 11598
     },
     {
       "channel": "git:commit",
       "registration": "handle",
-      "line": 11322
+      "line": 11462
     },
     {
       "channel": "git:conflicts",
       "registration": "handle",
-      "line": 11533
+      "line": 11673
     },
     {
       "channel": "git:discard",
       "registration": "handle",
-      "line": 11301
+      "line": 11441
     },
     {
       "channel": "git:head-file",
       "registration": "handle",
-      "line": 11266
+      "line": 11406
     },
     {
       "channel": "git:line-status",
       "registration": "handle",
-      "line": 11423
+      "line": 11563
     },
     {
       "channel": "git:log",
       "registration": "handle",
-      "line": 11395
+      "line": 11535
     },
     {
       "channel": "git:panel-status",
       "registration": "handle",
-      "line": 11226
+      "line": 11366
     },
     {
       "channel": "git:pull",
       "registration": "handle",
-      "line": 11491
+      "line": 11631
     },
     {
       "channel": "git:push",
       "registration": "handle",
-      "line": 11469
+      "line": 11609
     },
     {
       "channel": "git:resolve",
       "registration": "handle",
-      "line": 11543
+      "line": 11683
     },
     {
       "channel": "git:show-commit",
       "registration": "handle",
-      "line": 11411
+      "line": 11551
     },
     {
       "channel": "git:stage",
       "registration": "handle",
-      "line": 11277
+      "line": 11417
     },
     {
       "channel": "git:stash",
       "registration": "handle",
-      "line": 11516
+      "line": 11656
     },
     {
       "channel": "git:stash-list",
       "registration": "handle",
-      "line": 11503
+      "line": 11643
     },
     {
       "channel": "git:unstage",
       "registration": "handle",
-      "line": 11288
+      "line": 11428
     },
     {
       "channel": "glm-code:status",
       "registration": "handle",
-      "line": 12836
+      "line": 12990
     },
     {
       "channel": "hover-interactive",
       "registration": "on",
-      "line": 10819
+      "line": 10959
     },
     {
       "channel": "image:generate",
       "registration": "handle",
-      "line": 10933
+      "line": 11073
     },
     {
       "channel": "live:start",
       "registration": "handle",
-      "line": 12016
+      "line": 12156
     },
     {
       "channel": "live:stop",
       "registration": "handle",
-      "line": 12044
+      "line": 12184
     },
     {
       "channel": "mcp:connect",
       "registration": "handle",
-      "line": 10936
+      "line": 11076
     },
     {
       "channel": "mcp:status",
       "registration": "handle",
-      "line": 10940
+      "line": 11080
     },
     {
       "channel": "mem:data",
       "registration": "on",
-      "line": 10826
+      "line": 10966
     },
     {
       "channel": "memory:open",
       "registration": "on",
-      "line": 12332
+      "line": 12486
     },
     {
       "channel": "models:catalog",
       "registration": "handle",
-      "line": 12562
+      "line": 12716
     },
     {
       "channel": "models:favorite",
       "registration": "handle",
-      "line": 12635
+      "line": 12789
     },
     {
       "channel": "models:get",
       "registration": "handle",
-      "line": 12537
+      "line": 12691
     },
     {
       "channel": "models:list",
       "registration": "handle",
-      "line": 12534
+      "line": 12688
     },
     {
       "channel": "models:refresh",
       "registration": "handle",
-      "line": 12601
+      "line": 12755
     },
     {
       "channel": "models:select",
       "registration": "handle",
-      "line": 12620
+      "line": 12774
     },
     {
       "channel": "open-external-url",
       "registration": "on",
-      "line": 11580
+      "line": 11720
     },
     {
       "channel": "over-body",
       "registration": "on",
-      "line": 10903
+      "line": 11043
     },
     {
       "channel": "page-set-opacity",
       "registration": "on",
-      "line": 10896
+      "line": 11036
     },
     {
       "channel": "performance:snapshot",
       "registration": "handle",
-      "line": 10858
+      "line": 10998
     },
     {
       "channel": "pick-folder",
       "registration": "handle",
-      "line": 10943
+      "line": 11083
     },
     {
       "channel": "ports:kill",
       "registration": "handle",
-      "line": 4977
+      "line": 5066
     },
     {
       "channel": "ports:list",
       "registration": "handle",
-      "line": 4976
+      "line": 5065
     },
     {
       "channel": "ports:open",
       "registration": "on",
-      "line": 4986
+      "line": 5075
     },
     {
       "channel": "presets:delete",
       "registration": "handle",
-      "line": 12526
+      "line": 12680
     },
     {
       "channel": "presets:list",
       "registration": "handle",
-      "line": 12504
+      "line": 12658
     },
     {
       "channel": "presets:load",
       "registration": "handle",
-      "line": 12525
+      "line": 12679
     },
     {
       "channel": "presets:save",
       "registration": "handle",
-      "line": 12505
+      "line": 12659
     },
     {
       "channel": "project-tasks:list",
       "registration": "handle",
-      "line": 4044
+      "line": 4133
     },
     {
       "channel": "rest:send",
       "registration": "handle",
-      "line": 4384
+      "line": 4473
     },
     {
       "channel": "server:action",
       "registration": "handle",
-      "line": 4463
+      "line": 4552
     },
     {
       "channel": "server:context",
       "registration": "handle",
-      "line": 4418
+      "line": 4507
     },
     {
       "channel": "server:logs",
       "registration": "handle",
-      "line": 4475
+      "line": 4564
     },
     {
       "channel": "server:services",
       "registration": "handle",
-      "line": 4448
+      "line": 4537
     },
     {
       "channel": "server:stats",
       "registration": "handle",
-      "line": 4419
+      "line": 4508
     },
     {
       "channel": "set-window-pos",
       "registration": "on",
-      "line": 12399
+      "line": 12553
     },
     {
       "channel": "settings:open-window",
       "registration": "on",
-      "line": 10230
+      "line": 10370
     },
     {
       "channel": "show-context-menu",
       "registration": "on",
-      "line": 10816
+      "line": 10956
     },
     {
       "channel": "ssh:available",
       "registration": "handle",
-      "line": 4252
+      "line": 4341
     },
     {
       "channel": "ssh:ensure-key",
       "registration": "handle",
-      "line": 4277
+      "line": 4366
     },
     {
       "channel": "ssh:hosts",
       "registration": "handle",
-      "line": 4220
+      "line": 4309
     },
     {
       "channel": "ssh:install-cmd",
       "registration": "handle",
-      "line": 4255
+      "line": 4344
     },
     {
       "channel": "ssh:listdir",
       "registration": "handle",
-      "line": 4486
+      "line": 4575
     },
     {
       "channel": "ssh:mount",
       "registration": "handle",
-      "line": 4880
+      "line": 4969
     },
     {
       "channel": "ssh:recents",
       "registration": "handle",
-      "line": 4884
+      "line": 4973
     },
     {
       "channel": "ssh:status",
       "registration": "handle",
-      "line": 4885
+      "line": 4974
     },
     {
       "channel": "ssh:unmount",
       "registration": "handle",
-      "line": 4889
+      "line": 4978
     },
     {
       "channel": "stt:transcribe",
       "registration": "handle",
-      "line": 12654
+      "line": 12808
     },
     {
       "channel": "tasks:delete",
       "registration": "handle",
-      "line": 14596
+      "line": 14758
     },
     {
       "channel": "tasks:list",
       "registration": "handle",
-      "line": 14583
+      "line": 14745
     },
     {
       "channel": "tasks:run-now",
       "registration": "handle",
-      "line": 14601
+      "line": 14763
     },
     {
       "channel": "tasks:save",
       "registration": "handle",
-      "line": 14584
+      "line": 14746
     },
     {
       "channel": "term:buffer",
       "registration": "handle",
-      "line": 4931
+      "line": 5020
     },
     {
       "channel": "term:create",
       "registration": "handle",
-      "line": 3920
+      "line": 4009
     },
     {
       "channel": "term:input",
       "registration": "on",
-      "line": 4908
+      "line": 4997
     },
     {
       "channel": "term:kill",
       "registration": "on",
-      "line": 4922
+      "line": 5011
     },
     {
       "channel": "term:list",
       "registration": "handle",
-      "line": 4926
+      "line": 5015
     },
     {
       "channel": "term:profiles",
       "registration": "handle",
-      "line": 3947
+      "line": 4036
     },
     {
       "channel": "term:resize",
       "registration": "on",
-      "line": 4912
+      "line": 5001
     },
     {
       "channel": "theme-set",
       "registration": "on",
-      "line": 10888
+      "line": 11028
     },
     {
       "channel": "tts:speak",
       "registration": "handle",
-      "line": 12649
+      "line": 12803
     },
     {
       "channel": "tunnel:check",
       "registration": "handle",
-      "line": 4076
+      "line": 4165
     },
     {
       "channel": "usage:today",
       "registration": "handle",
-      "line": 8078
+      "line": 8186
     },
     {
       "channel": "window:control",
       "registration": "handle",
-      "line": 12400
+      "line": 12554
     },
     {
       "channel": "wizard:install-vrm",
       "registration": "handle",
-      "line": 12340
+      "line": 12494
     },
     {
       "channel": "wizard:vrms",
       "registration": "handle",
-      "line": 12335
+      "line": 12489
     },
     {
       "channel": "workspace:children",
       "registration": "handle",
-      "line": 11090
+      "line": 11230
     },
     {
       "channel": "workspace:create",
       "registration": "handle",
-      "line": 12080
+      "line": 12220
     },
     {
       "channel": "workspace:delete",
       "registration": "handle",
-      "line": 12098
+      "line": 12238
     },
     {
       "channel": "workspace:fulltree",
       "registration": "handle",
-      "line": 11084
+      "line": 11224
     },
     {
       "channel": "workspace:get-memory",
       "registration": "handle",
-      "line": 12284
+      "line": 12424
     },
     {
       "channel": "workspace:gitinfo",
       "registration": "handle",
-      "line": 11163
+      "line": 11303
     },
     {
       "channel": "workspace:gitstatus",
       "registration": "handle",
-      "line": 11176
+      "line": 11316
     },
     {
       "channel": "workspace:import-file",
       "registration": "handle",
-      "line": 12063
+      "line": 12203
     },
     {
       "channel": "workspace:move",
       "registration": "handle",
-      "line": 12127
+      "line": 12267
     },
     {
       "channel": "workspace:open-window",
       "registration": "handle",
-      "line": 10371
+      "line": 10511
     },
     {
       "channel": "workspace:read",
       "registration": "handle",
-      "line": 10989
+      "line": 11129
     },
     {
       "channel": "workspace:read-image",
       "registration": "handle",
-      "line": 11000
+      "line": 11140
     },
     {
       "channel": "workspace:rename",
       "registration": "handle",
-      "line": 12110
+      "line": 12250
     },
     {
       "channel": "workspace:reveal",
       "registration": "on",
-      "line": 12481
+      "line": 12635
     },
     {
       "channel": "workspace:search",
       "registration": "handle",
-      "line": 11098
+      "line": 11238
     },
     {
       "channel": "workspace:set-memory",
       "registration": "handle",
-      "line": 12293
+      "line": 12433
     },
     {
       "channel": "workspace:tree",
       "registration": "handle",
-      "line": 10982
+      "line": 11122
     },
     {
       "channel": "workspace:write",
       "registration": "handle",
-      "line": 11018
+      "line": 11158
     },
     {
       "channel": "ws:bind",
       "registration": "handle",
-      "line": 10346
+      "line": 10486
     }
   ],
   "preloadCalls": [
     {
       "channel": "agents:defaults",
       "transport": "invoke",
-      "line": 230
+      "line": 231
     },
     {
       "channel": "anim:preview",
       "transport": "send",
-      "line": 204
+      "line": 205
     },
     {
       "channel": "anim:stop",
       "transport": "send",
-      "line": 205
+      "line": 206
     },
     {
       "channel": "avatar-scale-by",
       "transport": "send",
-      "line": 174
+      "line": 175
     },
     {
       "channel": "avatar-scale-set",
       "transport": "send",
-      "line": 173
+      "line": 174
     },
     {
       "channel": "chat:ask-answer",
       "transport": "send",
-      "line": 294
+      "line": 295
     },
     {
       "channel": "chat:bind",
       "transport": "invoke",
-      "line": 155
+      "line": 156
     },
     {
       "channel": "chat:config:get",
       "transport": "invoke",
-      "line": 265
+      "line": 266
     },
     {
       "channel": "chat:config:set",
       "transport": "invoke",
-      "line": 266
+      "line": 267
     },
     {
       "channel": "chat:fork",
       "transport": "invoke",
-      "line": 255
+      "line": 256
     },
     {
       "channel": "chat:history",
       "transport": "invoke",
-      "line": 270
+      "line": 271
     },
     {
       "channel": "chat:improve-prompt",
       "transport": "invoke",
-      "line": 156
+      "line": 157
     },
     {
       "channel": "chat:open-window",
       "transport": "send",
-      "line": 153
+      "line": 154
     },
     {
       "channel": "chat:perm-answer",
       "transport": "send",
-      "line": 291
+      "line": 292
     },
     {
       "channel": "chat:regen",
       "transport": "send",
-      "line": 252
+      "line": 253
     },
     {
       "channel": "chat:reset",
       "transport": "send",
-      "line": 254
+      "line": 255
     },
     {
       "channel": "chat:send",
       "transport": "send",
-      "line": 250
+      "line": 251
     },
     {
       "channel": "chat:stop",
       "transport": "send",
-      "line": 251
+      "line": 252
     },
     {
       "channel": "chats:current",
       "transport": "invoke",
-      "line": 260
+      "line": 261
     },
     {
       "channel": "chats:delete",
       "transport": "invoke",
-      "line": 264
+      "line": 265
     },
     {
       "channel": "chats:list",
       "transport": "invoke",
-      "line": 259
+      "line": 260
     },
     {
       "channel": "chats:new",
       "transport": "invoke",
-      "line": 261
+      "line": 262
     },
     {
       "channel": "chats:open-window",
       "transport": "send",
-      "line": 154
+      "line": 155
     },
     {
       "channel": "chats:rename",
       "transport": "invoke",
-      "line": 263
+      "line": 264
     },
     {
       "channel": "chats:switch",
       "transport": "invoke",
-      "line": 262
+      "line": 263
     },
     {
       "channel": "checkpoint:undo",
       "transport": "invoke",
-      "line": 288
+      "line": 289
     },
     {
       "channel": "claude-code:capabilities",
       "transport": "invoke",
-      "line": 217
+      "line": 218
     },
     {
       "channel": "claude-code:login",
       "transport": "invoke",
-      "line": 215
+      "line": 216
     },
     {
       "channel": "claude-code:logout",
       "transport": "invoke",
-      "line": 216
+      "line": 217
     },
     {
       "channel": "claude-code:status",
       "transport": "invoke",
-      "line": 214
+      "line": 215
     },
     {
       "channel": "codex:login",
       "transport": "invoke",
-      "line": 220
+      "line": 221
     },
     {
       "channel": "codex:logout",
       "transport": "invoke",
-      "line": 221
+      "line": 222
     },
     {
       "channel": "codex:models",
       "transport": "invoke",
-      "line": 222
+      "line": 223
     },
     {
       "channel": "codex:status",
       "transport": "invoke",
-      "line": 219
+      "line": 220
     },
     {
       "channel": "config:get",
       "transport": "invoke",
-      "line": 210
+      "line": 211
     },
     {
       "channel": "config:set",
       "transport": "invoke",
-      "line": 211
+      "line": 212
     },
     {
       "channel": "ctx:click",
       "transport": "send",
-      "line": 187
+      "line": 188
     },
     {
       "channel": "ctx:close",
       "transport": "send",
-      "line": 188
+      "line": 189
     },
     {
       "channel": "ctx:size",
       "transport": "send",
-      "line": 186
+      "line": 187
     },
     {
       "channel": "db:ai-sql",
@@ -1222,12 +1227,17 @@
     {
       "channel": "facts:delete",
       "transport": "invoke",
-      "line": 151
+      "line": 152
     },
     {
       "channel": "facts:list",
       "transport": "invoke",
       "line": 148
+    },
+    {
+      "channel": "facts:scope",
+      "transport": "invoke",
+      "line": 151
     },
     {
       "channel": "facts:set",
@@ -1237,7 +1247,7 @@
     {
       "channel": "foot-pixel",
       "transport": "send",
-      "line": 199
+      "line": 200
     },
     {
       "channel": "gallery:list",
@@ -1252,7 +1262,7 @@
     {
       "channel": "get-hook-status",
       "transport": "invoke",
-      "line": 197
+      "line": 198
     },
     {
       "channel": "get-unity-idle",
@@ -1272,12 +1282,12 @@
     {
       "channel": "get-window-bounds",
       "transport": "invoke",
-      "line": 167
+      "line": 168
     },
     {
       "channel": "get-window-pos",
       "transport": "invoke",
-      "line": 166
+      "line": 167
     },
     {
       "channel": "get-work-area",
@@ -1407,12 +1417,12 @@
     {
       "channel": "glm-code:status",
       "transport": "invoke",
-      "line": 218
+      "line": 219
     },
     {
       "channel": "hover-interactive",
       "transport": "send",
-      "line": 193
+      "line": 194
     },
     {
       "channel": "image:generate",
@@ -1432,52 +1442,52 @@
     {
       "channel": "mcp:connect",
       "transport": "invoke",
-      "line": 225
+      "line": 226
     },
     {
       "channel": "mcp:status",
       "transport": "invoke",
-      "line": 226
+      "line": 227
     },
     {
       "channel": "mem:data",
       "transport": "send",
-      "line": 164
+      "line": 165
     },
     {
       "channel": "memory:open",
       "transport": "send",
-      "line": 152
+      "line": 153
     },
     {
       "channel": "models:catalog",
       "transport": "invoke",
-      "line": 242
+      "line": 243
     },
     {
       "channel": "models:favorite",
       "transport": "invoke",
-      "line": 245
+      "line": 246
     },
     {
       "channel": "models:get",
       "transport": "invoke",
-      "line": 240
+      "line": 241
     },
     {
       "channel": "models:list",
       "transport": "invoke",
-      "line": 239
+      "line": 240
     },
     {
       "channel": "models:refresh",
       "transport": "invoke",
-      "line": 243
+      "line": 244
     },
     {
       "channel": "models:select",
       "transport": "invoke",
-      "line": 244
+      "line": 245
     },
     {
       "channel": "open-external-url",
@@ -1487,17 +1497,17 @@
     {
       "channel": "over-body",
       "transport": "send",
-      "line": 198
+      "line": 199
     },
     {
       "channel": "page-set-opacity",
       "transport": "send",
-      "line": 176
+      "line": 177
     },
     {
       "channel": "performance:snapshot",
       "transport": "invoke",
-      "line": 165
+      "line": 166
     },
     {
       "channel": "pick-folder",
@@ -1522,22 +1532,22 @@
     {
       "channel": "presets:delete",
       "transport": "invoke",
-      "line": 236
+      "line": 237
     },
     {
       "channel": "presets:list",
       "transport": "invoke",
-      "line": 233
+      "line": 234
     },
     {
       "channel": "presets:load",
       "transport": "invoke",
-      "line": 235
+      "line": 236
     },
     {
       "channel": "presets:save",
       "transport": "invoke",
-      "line": 234
+      "line": 235
     },
     {
       "channel": "project-tasks:list",
@@ -1577,17 +1587,17 @@
     {
       "channel": "set-window-pos",
       "transport": "send",
-      "line": 168
+      "line": 169
     },
     {
       "channel": "settings:open-window",
       "transport": "send",
-      "line": 213
+      "line": 214
     },
     {
       "channel": "show-context-menu",
       "transport": "send",
-      "line": 183
+      "line": 184
     },
     {
       "channel": "ssh:available",
@@ -1637,7 +1647,7 @@
     {
       "channel": "stt:transcribe",
       "transport": "invoke",
-      "line": 247
+      "line": 248
     },
     {
       "channel": "tasks:delete",
@@ -1697,12 +1707,12 @@
     {
       "channel": "theme-set",
       "transport": "send",
-      "line": 179
+      "line": 180
     },
     {
       "channel": "tts:speak",
       "transport": "invoke",
-      "line": 246
+      "line": 247
     },
     {
       "channel": "tunnel:check",
@@ -1712,22 +1722,22 @@
     {
       "channel": "usage:today",
       "transport": "invoke",
-      "line": 276
+      "line": 277
     },
     {
       "channel": "window:control",
       "transport": "invoke",
-      "line": 169
+      "line": 170
     },
     {
       "channel": "wizard:install-vrm",
       "transport": "invoke",
-      "line": 160
+      "line": 161
     },
     {
       "channel": "wizard:vrms",
       "transport": "invoke",
-      "line": 159
+      "line": 160
     },
     {
       "channel": "workspace:children",

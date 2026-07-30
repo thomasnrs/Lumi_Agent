@@ -21,7 +21,7 @@ Estado da fundação já implementada isoladamente: lifecycle, container, event 
 | config | Configuração, profiles, migrations e defaults |
 | persistence | Escrita atômica, backups e recuperação |
 | chats | Sessões, histórico, timeline, fork e archive |
-| memory | Facts, memória de projeto, diário e artefatos |
+| memory | Facts com escopo user/projeto, memória de projeto, diário e artefatos |
 | ai-providers | Streaming, modelos, rate limit, retry e usage |
 | context | Construção, orçamento, compactação e arquivos ativos |
 | agent-runtime | Loop, steering, conclusão, planos e checkpoints |
@@ -67,3 +67,7 @@ Estado da fundação já implementada isoladamente: lifecycle, container, event 
 ## Progresso de persistência
 
 Já existem repositories isolados para facts, usage diário, reminders/tasks, chats multi-arquivo e artifacts content-addressed. O domínio `memory` continua parcial porque memória de workspace, diário e ledger serão concluídos junto do runtime de contexto.
+
+## Escopo de memória por projeto
+
+Fato, ledger e worklog carregam o projeto a que pertencem; nada de escopo global implícito. A canonicalização de caminho (`scopeKey`) vive em `domains/workspace/workspace-path.js` e é compartilhada por `memory` e `context`. Detalhes e garantias em [`PERSISTENCE_STATUS.md`](../main/domains/PERSISTENCE_STATUS.md).

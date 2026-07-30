@@ -36,8 +36,18 @@
         flex: 1; background: var(--surface-2); color: var(--text); border: 1px solid var(--accent);
         border-radius: 7px; padding: 6px 8px; font: 13px/1.5 "Segoe UI", sans-serif; resize: vertical; min-height: 40px; outline: none;
       }
-      .fact .dt { font-size: 10.5px; color: #667; margin-top: 3px; }
+      .fact .dt { font-size: 10.5px; color: #667; margin-top: 3px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
       .fact .col { flex: 1; min-width: 0; }
+      .badge {
+        font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px;
+        border: 1px solid var(--border); color: #8a8a99; white-space: nowrap;
+      }
+      .badge.project { border-color: #3a4a6a; color: #9ab4ff; background: #1b2233; }
+      button.scope { width: auto !important; padding: 0 9px; font-size: 11px !important; color: #8a8a99; }
+      #addRow select {
+        border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2);
+        color: var(--text); font-size: 12px; font-family: inherit; padding: 0 8px; outline: none;
+      }
       .fact button {
         flex: 0 0 auto; width: 26px; height: 26px; border: none; border-radius: 6px; cursor: pointer;
         background: transparent; color: #9aa; font-size: 13px; display: flex; align-items: center; justify-content: center;
@@ -61,11 +71,16 @@
     <div class="scroll">
       <h1 class="lumi-page-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Memória da Lumi</h1>
       <div class="sub lumi-page-subtitle">
-        Tudo que ela memorizou sobre você (e que entra no contexto de cada conversa).
-        Clique num fato para <b>editar</b>; ✕ apaga só aquele fato. Você no controle. 💚
+        Tudo que ela memorizou (e que entra no contexto das conversas).
+        Fatos <b>gerais</b> valem em qualquer projeto; fatos <b>de projeto</b> só entram no contexto
+        daquele projeto — é o que impede um trabalho de vazar no outro.
+        Clique num fato para <b>editar</b>, no botão de escopo para <b>reclassificar</b>; ✕ apaga só aquele. 💚
       </div>
       <div id="addRow">
         <input id="addInput" type="text" placeholder="Adicionar um fato manualmente (ex.: prefiro respostas curtas)..." spellcheck="false" />
+        <select id="addScope" title="Escopo do fato">
+          <option value="user">geral</option>
+        </select>
         <button id="addBtn" class="lumi-icon-btn" aria-label="Adicionar fato" title="Adicionar fato">＋</button>
       </div>
       <div id="list"></div>
@@ -84,6 +99,14 @@
       const listEl = document.getElementById('list');
       const countEl = document.getElementById('count');
       const addInput = document.getElementById('addInput');
+      const addScope = document.getElementById('addScope');
+      let scopeInfo = { workspace: '', name: '' }; // projeto aberto nesta janela
+
+      function projectLabel(f) {
+        if (f.scope !== 'project') return '';
+        const p = String(f.project || '').replace(/[\\/]+$/, '');
+        return p.split(/[\\/]/).pop() || 'projeto';
+      }
 
       function fmtDate(iso) {
         try {
@@ -95,7 +118,10 @@
 
       function render(facts) {
         listEl.innerHTML = '';
-        countEl.textContent = facts.length ? facts.length + ' fato(s) memorizado(s) · máx. 100' : '';
+        const nProject = facts.filter((f) => f.scope === 'project').length;
+        countEl.textContent = facts.length
+          ? facts.length + ' fato(s) · ' + (facts.length - nProject) + ' geral(is) · ' + nProject + ' de projeto'
+          : '';
         if (!facts.length) {
           listEl.innerHTML = '<div id="empty">Nada memorizado ainda — converse com ela, ou peça "lembre que..." 😊</div>';
           return;
@@ -111,7 +137,17 @@
           tx.title = 'Clique para editar';
           const dt = document.createElement('div');
           dt.className = 'dt';
-          dt.textContent = f.at ? 'memorizado em ' + fmtDate(f.at) : '';
+          const when = document.createElement('span');
+          when.textContent = f.at ? 'memorizado em ' + fmtDate(f.at) : '';
+          const badge = document.createElement('span');
+          const isProject = f.scope === 'project';
+          badge.className = 'badge' + (isProject ? ' project' : '');
+          badge.textContent = isProject ? '📁 ' + projectLabel(f) : 'geral';
+          badge.title = isProject
+            ? 'Só entra no contexto deste projeto'
+            : 'Entra no contexto de qualquer projeto';
+          dt.appendChild(when);
+          dt.appendChild(badge);
           col.appendChild(tx);
           col.appendChild(dt);
           // editar no lugar: clique vira textarea; Enter/blur salva, Esc cancela
@@ -140,6 +176,23 @@
               }
             });
           });
+          // reclassificar: só dá pra marcar como "de projeto" se houver um projeto conhecido
+          const target = isProject ? 'user' : 'project';
+          const canScope = isProject || !!scopeInfo.workspace;
+          const scopeBtn = document.createElement('button');
+          scopeBtn.className = 'scope';
+          scopeBtn.textContent = isProject ? '→ geral' : '→ projeto';
+          scopeBtn.disabled = !canScope;
+          scopeBtn.title = canScope
+            ? isProject
+              ? 'Passar a valer em qualquer projeto'
+              : 'Limitar este fato ao projeto ' + scopeInfo.name
+            : 'Abra um projeto para poder limitar um fato a ele';
+          scopeBtn.style.opacity = canScope ? '' : '0.4';
+          scopeBtn.addEventListener('click', async () => {
+            if (!canScope) return;
+            render(await window.api.factsSet(i, f.fact, target));
+          });
           const del = document.createElement('button');
           del.className = 'del';
           del.textContent = '✕';
@@ -147,6 +200,7 @@
           del.setAttribute('aria-label', 'Apagar este fato');
           del.addEventListener('click', async () => render(await window.api.factsDelete(i)));
           d.appendChild(col);
+          d.appendChild(scopeBtn);
           d.appendChild(del);
           listEl.appendChild(d);
         });
@@ -156,7 +210,7 @@
         const v = addInput.value.trim();
         if (!v) return;
         addInput.value = '';
-        render(await window.api.factsAdd(v));
+        render(await window.api.factsAdd(v, addScope.value));
       }
       document.getElementById('addBtn').addEventListener('click', addFact);
       addInput.addEventListener('keydown', (e) => {
@@ -172,7 +226,23 @@
         render([]);
       });
 
-      window.api.factsList().then(render);
+      // descobre o projeto aberto ANTES de desenhar (os botões de escopo dependem dele)
+      (async () => {
+        try {
+          if (window.api.factsScope) scopeInfo = (await window.api.factsScope()) || scopeInfo;
+        } catch (e) {
+          /* sem projeto aberto */
+        }
+        if (scopeInfo.name) {
+          const opt = document.createElement('option');
+          opt.value = 'project';
+          opt.textContent = '📁 ' + scopeInfo.name;
+          addScope.appendChild(opt);
+        } else {
+          addScope.title = 'Abra um projeto para poder criar fatos limitados a ele';
+        }
+        render(await window.api.factsList());
+      })();
     </script>
   </body>
 </html>

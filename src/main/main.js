@@ -154,6 +154,8 @@ function makeSession(id) {
   return {
     id: id || '', // chatId desta sessão
     workspace: null, // pasta em que a IA trabalha NESTA sessão (janela de workspace própria)
+    projectRoot: '', // projeto LÓGICO quando o workspace físico é temporário (worktree de subagente)
+    chatWorkspace: '', // procedência: projeto a que esta CONVERSA pertence (escopo de worklog/ledger)
     workspaceOwner: null, // webContents.id da janela dona (mount SSH/terminal/contexto por janela)
     running: false, // turno em andamento?
     deleted: false, // impede saves atrasados de ressuscitarem uma aba fechada
@@ -1466,15 +1468,95 @@ async function geminiTurn(cfg, messages, tools, onToken, onThink) {
 function factsPath() {
   return path.join(app.getPath('userData'), 'facts.json');
 }
+// Chave canônica de projeto: o mesmo workspace escrito de formas diferentes (barra,
+// maiúscula no Windows, caminho relativo) tem que cair no MESMO balde, senão o escopo vaza.
+function scopeKey(ws) {
+  if (!ws) return '';
+  try {
+    const abs = path.resolve(String(ws));
+    return process.platform === 'win32' ? abs.toLowerCase() : abs;
+  } catch (e) {
+    return String(ws);
+  }
+}
+// Projeto ao qual o trabalho desta sessão PERTENCE. Um subagente isolado roda num worktree
+// Git temporário: o caminho físico muda, o projeto não — por isso projectRoot vem primeiro.
+function sessionWorkspace() {
+  try {
+    return S().projectRoot || S().workspace || loadConfig().workspace || '';
+  } catch (e) {
+    return '';
+  }
+}
+// O escopo vale para o projeto lógico, nunca para o worktree efêmero.
+function scopeHere(cfg) {
+  return scopeKey(S().projectRoot || (cfg || {}).workspace);
+}
+// Fato sem escopo é legado (gravado antes da separação por projeto): entra como 'user'
+// para não sumir da memória de ninguém — só os novos nascem com escopo explícito.
+function normalizeFact(entry) {
+  const raw = typeof entry === 'string' ? { fact: entry } : entry && typeof entry === 'object' ? entry : null;
+  if (!raw) return null;
+  const fact = String(raw.fact || '').trim();
+  if (!fact) return null;
+  const project = raw.scope === 'project' ? String(raw.project || '') : '';
+  return {
+    fact,
+    at: raw.at || new Date().toISOString(),
+    scope: project ? 'project' : 'user',
+    ...(project ? { project } : {}),
+  };
+}
 function loadFacts() {
   try {
-    return JSON.parse(fs.readFileSync(factsPath(), 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(factsPath(), 'utf8'));
+    return (Array.isArray(raw) ? raw : []).map(normalizeFact).filter(Boolean);
   } catch (e) {
     return [];
   }
 }
 function saveFacts(f) {
-  fs.writeFileSync(factsPath(), JSON.stringify(f, null, 2));
+  fs.writeFileSync(factsPath(), JSON.stringify((f || []).map(normalizeFact).filter(Boolean), null, 2));
+}
+// O que a Lumi pode LEMBRAR no contexto atual: fatos do usuário sempre; fatos de projeto
+// só dentro do projeto onde foram aprendidos. É isto que impede um projeto de vazar no outro.
+function factsInScope(cfg) {
+  const here = scopeHere(cfg);
+  return loadFacts().filter((f) => f.scope !== 'project' || (!!here && scopeKey(f.project) === here));
+}
+// Os dois baldes já separados e cortados, prontos para qualquer construtor de prompt
+// (nativo, Claude Code/GLM, Codex, subagentes): nenhum deles pode ver fato de outro projeto.
+function scopedFactLists(cfg, userMax, projectMax) {
+  const visible = factsInScope(cfg);
+  return {
+    user: visible.filter((f) => f.scope !== 'project').map((f) => f.fact).slice(-(userMax || 50)),
+    project: visible.filter((f) => f.scope === 'project').map((f) => f.fact).slice(-(projectMax || 30)),
+  };
+}
+// Retenção POR ESCOPO: antes o teto global de 100 fazia um projeto movimentado expulsar
+// os fatos do usuário (e os de outros projetos) por pura ordem de chegada.
+const FACTS_MAX_USER = 100;
+const FACTS_MAX_PROJECT = 60;
+function trimFacts(list) {
+  const user = [];
+  const byProject = new Map();
+  for (const f of list || []) {
+    if (!f) continue;
+    if (f.scope === 'project') {
+      const key = scopeKey(f.project);
+      if (!byProject.has(key)) byProject.set(key, []);
+      byProject.get(key).push(f);
+    } else user.push(f);
+  }
+  const kept = new Set([...user.slice(-FACTS_MAX_USER), ...[...byProject.values()].flatMap((v) => v.slice(-FACTS_MAX_PROJECT))]);
+  return (list || []).filter((f) => kept.has(f)); // preserva a ordem cronológica original
+}
+function addFact(fact, scope, workspace) {
+  const project = scope === 'project' ? String(workspace || '') : '';
+  const item = normalizeFact({ fact, at: new Date().toISOString(), scope: project ? 'project' : 'user', project });
+  if (!item) return null;
+  saveFacts(trimFacts([...loadFacts(), item]));
+  return item;
 }
 
 // ---- memoria persistente: historico da conversa em disco ----
@@ -2377,9 +2459,16 @@ function buildSystemPrompt(cfg) {
       'Apesar do aplicativo local poder ser Windows, comandos da tarefa rodam automaticamente no servidor remoto; escreva comandos para o SO remoto e não para o PowerShell local.';
   }
   if (cfg.memoryEnabled !== false) {
-    const facts = loadFacts().map((x) => x.fact).slice(-50);
-    if (facts.length) {
-      sp += '\n\n# O que você lembra sobre o usuário (use naturalmente):\n' + facts.map((f) => '- ' + f).join('\n');
+    // Dois baldes SEPARADOS: fatos do usuário viajam com ela; fatos de projeto só existem
+    // dentro do projeto onde foram aprendidos (factsInScope já descartou os dos outros).
+    const { user: userFacts, project: projectFacts } = scopedFactLists(cfg, 50, 30);
+    if (userFacts.length) {
+      sp += '\n\n# O que você lembra sobre o usuário (use naturalmente):\n' + userFacts.map((f) => '- ' + f).join('\n');
+    }
+    if (projectFacts.length) {
+      sp +=
+        '\n\n# O que você aprendeu NESTE projeto (' + path.basename(cfg.workspace || '') + ' — não vale para outros projetos):\n' +
+        projectFacts.map((f) => '- ' + f).join('\n');
     }
   }
   if (S().convSummary) {
@@ -5366,20 +5455,39 @@ const TOOLS = {
     category: null,
     schema: {
       name: 'remember_fact',
-      description: 'Memoriza um fato sobre o usuário para lembrar depois.',
-      parameters: { type: 'object', properties: { fact: { type: 'string' } }, required: ['fact'] },
+      description:
+        'Memoriza um fato para lembrar depois. ESCOLHA O ESCOPO CERTO: scope="user" para o que vale em QUALQUER projeto (quem o usuário é, preferências de comunicação, jeito de trabalhar); scope="project" para o que só vale NESTE projeto (decisões técnicas, portas, comandos, apelidos de módulo, credenciais de ambiente de teste). Errar o escopo faz um projeto vazar no outro — na dúvida entre os dois, use "project".',
+      parameters: {
+        type: 'object',
+        properties: {
+          fact: { type: 'string' },
+          scope: { type: 'string', enum: ['user', 'project'], description: 'user = vale sempre; project = só no projeto atual. Padrão: user.' },
+        },
+        required: ['fact'],
+      },
     },
-    run: async ({ fact }) => {
-      const f = loadFacts();
-      f.push({ fact, at: new Date().toISOString() });
-      saveFacts(f.slice(-100));
-      return { remembered: fact };
+    run: async ({ fact, scope }) => {
+      const cfg = effectiveChatConfig();
+      const wanted = scope === 'project' && cfg.workspace ? 'project' : 'user';
+      const item = addFact(fact, wanted, cfg.workspace);
+      if (!item) return { error: 'fato vazio' };
+      return { remembered: item.fact, scope: item.scope, ...(item.project ? { project: path.basename(item.project) } : {}) };
     },
   },
   recall_facts: {
     category: null,
-    schema: { name: 'recall_facts', description: 'Lista os fatos memorizados sobre o usuário.', parameters: { type: 'object', properties: {} } },
-    run: async () => ({ facts: loadFacts().map((x) => x.fact) }),
+    schema: {
+      name: 'recall_facts',
+      description: 'Lista os fatos memorizados que valem no contexto atual (os seus sobre o usuário + os deste projeto). Fatos de outros projetos não aparecem.',
+      parameters: { type: 'object', properties: {} },
+    },
+    run: async () => {
+      const visible = factsInScope(effectiveChatConfig());
+      return {
+        user: visible.filter((f) => f.scope !== 'project').map((f) => f.fact),
+        project: visible.filter((f) => f.scope === 'project').map((f) => f.fact),
+      };
+    },
   },
   see_screen: {
     category: 'screen',
@@ -8224,6 +8332,9 @@ async function runSubAgentWithIsolation(cfg, agent, task, label) {
   broadcast('chat:note', { text: `🌿 ${label} trabalhando em snapshot Git isolado` });
   const isolated = makeSession(parent.id);
   isolated.workspace = ctx.isolatedWorkspace;
+  // O worktree é temporário; memória e diário continuam pertencendo ao projeto de verdade.
+  isolated.projectRoot = parent.projectRoot || parent.workspace || loadConfig().workspace || '';
+  isolated.chatWorkspace = parent.chatWorkspace;
   isolated.workspaceOwner = parent.workspaceOwner;
   isolated.abort = parent.abort;
   isolated.history = parent.history;
@@ -9095,10 +9206,15 @@ function finishTurnLog(outcome, status) {
     S().currentTurnLog = null;
     return;
   }
+  // Carimbo de PROCEDÊNCIA: sem ele, o diário técnico de um projeto reaparece no prompt de
+  // outro (mesma conversa depois de trocar de pasta, ou chat semeado por fork/compactação).
+  const ws = sessionWorkspace();
+  if (ws && !S().chatWorkspace) S().chatWorkspace = ws;
   const entry = {
     at: S().currentTurnLog.at,
     goal: S().currentTurnLog.goal,
     status: status || 'completed',
+    ws,
     filesRead: [...S().currentTurnLog.filesRead].slice(0, 40),
     filesChanged: [...S().currentTurnLog.filesChanged].slice(0, 40),
     tools: S().currentTurnLog.tools,
@@ -9109,6 +9225,7 @@ function finishTurnLog(outcome, status) {
     at: S().currentTurnLog.at,
     goal: S().currentTurnLog.goal,
     status: status || 'completed',
+    ws,
     mutations: S().stateSeq || 0,
     filesRead: [...S().currentTurnLog.filesRead].slice(0, 40),
     filesChanged: [...S().currentTurnLog.filesChanged].slice(0, 40),
@@ -9129,9 +9246,22 @@ function finishTurnLog(outcome, status) {
   if (S().worklog.length > 60) S().worklog = S().worklog.slice(-60);
   S().currentTurnLog = null;
 }
+// Só o que foi registrado NESTE projeto. Entrada sem carimbo é anterior à separação: passa
+// apenas quando a conversa também não tem projeto conhecido (aí não há como estar misturada).
+function entriesForWorkspace(list, cfg) {
+  const here = scopeHere(cfg);
+  const chatWs = scopeKey(S().chatWorkspace);
+  return (list || []).filter((e) => {
+    const stamped = scopeKey(e && e.ws);
+    if (stamped) return stamped === here;
+    return !chatWs || chatWs === here;
+  });
+}
 function ledgerPrompt(cfg) {
   if (!Array.isArray(S().ledger) || !S().ledger.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
-  const recent = S().ledger.slice(-12).map((e) => {
+  const scoped = entriesForWorkspace(S().ledger, cfg);
+  if (!scoped.length) return '';
+  const recent = scoped.slice(-12).map((e) => {
     const lines = [
       `## ${String(e.at || '').slice(0, 16).replace('T', ' ')} · ${e.mutations || 0} mutação(ões) · ${e.status || 'completed'}`,
       `Objetivo: ${e.goal || '(não registrado)'}`,
@@ -9151,7 +9281,9 @@ function ledgerPrompt(cfg) {
 }
 function worklogPrompt(cfg) {
   if (!S().worklog.length || !cfg.workspace || cfg.memoryEnabled === false) return '';
-  const recent = S().worklog.slice(-10).map((e) => {
+  const scoped = entriesForWorkspace(S().worklog, cfg);
+  if (!scoped.length) return '';
+  const recent = scoped.slice(-10).map((e) => {
     const tools = (e.tools || []).map((t) => `${t.status === 'success' ? '✓' : '✗'} ${t.tool}${t.target ? ` (${t.target})` : ''}: ${t.summary}`).join('\n');
     return [
       `## ${String(e.at || '').slice(0, 16).replace('T', ' ')} — ${e.goal || 'turno técnico'} [${e.status || 'completed'}]`,
@@ -9390,6 +9522,7 @@ function saveCurrentChat() {
       customTitle: !!meta.customTitle,
       createdAt: meta.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      workspace: S().chatWorkspace || sessionWorkspace() || '', // projeto a que a conversa pertence
       summary: S().convSummary,
       history: sanitizeForSave(S().history),
       events: S().chatEvents, // linha do tempo (tools/agentes/diffs/horários) — sobrevive ao reiniciar
@@ -9452,8 +9585,11 @@ function loadChatInto(id) {
     S().convSummary = j.summary || '';
     S().chatEvents = Array.isArray(j.events) ? j.events : [];
     S().chatArchive = Array.isArray(j.archive) ? j.archive : [];
-    S().worklog = Array.isArray(j.worklog) ? j.worklog.slice(-60) : [];
-    S().ledger = Array.isArray(j.ledger) ? j.ledger.slice(-40) : [];
+    S().chatWorkspace = String(j.workspace || '');
+    // Backfill: entradas gravadas antes do carimbo herdam o projeto da própria conversa.
+    const stamp = (list, max) => (Array.isArray(list) ? list.slice(-max).map((e) => (e && !e.ws && S().chatWorkspace ? { ...e, ws: S().chatWorkspace } : e)) : []);
+    S().worklog = stamp(j.worklog, 60);
+    S().ledger = stamp(j.ledger, 40);
     S().lastTurnContext = j.lastTurnContext && Array.isArray(j.lastTurnContext.messages) ? j.lastTurnContext : null;
     S().claudeSessionId = j.claudeSessionId || '';
     S().claudeSessionWorkspace = j.claudeSessionWorkspace || '';
@@ -9488,6 +9624,7 @@ function newChat(seedSummary, seedWorklog, seedLedger) {
   S().convSummary = seedSummary || '';
   S().chatEvents = [];
   S().chatArchive = [];
+  S().chatWorkspace = sessionWorkspace() || '';
   S().worklog = Array.isArray(seedWorklog) ? seedWorklog.slice(-12) : [];
   S().ledger = Array.isArray(seedLedger) ? seedLedger.slice(-12) : [];
   S().lastTurnContext = null;
@@ -9650,6 +9787,7 @@ function initChats() {
     S().convSummary = '';
     S().worklog = [];
     S().ledger = [];
+    S().chatWorkspace = '';
     S().lastTurnContext = null;
     S().pendingTurnTranscript = null;
     currentChatId = '';
@@ -9718,8 +9856,10 @@ async function forkConversation() {
   } catch (e) {
     /* se o resumo falhar, segue com o resumo atual */
   }
-  const technicalSeed = S().worklog.slice(-12);
-  const ledgerSeed = S().ledger.slice(-12);
+  // O chat novo só herda o diário técnico DO PROJETO ATUAL — fork/compactação eram uma das
+  // portas por onde registro de um projeto entrava no contexto de outro.
+  const technicalSeed = entriesForWorkspace(S().worklog, cfg).slice(-12);
+  const ledgerSeed = entriesForWorkspace(S().ledger, cfg).slice(-12);
   saveCurrentChat(); // o chat original continua salvo (na sua própria conversa)
   activateFreshChat(seed, technicalSeed, ledgerSeed); // novo chat, leve, com fatos técnicos verificáveis
   broadcast('chat:reload');
@@ -12308,20 +12448,34 @@ ipcMain.handle('facts:clear', () => {
   return true;
 });
 // página de memória: ver/editar/apagar fatos um a um (transparência total)
-ipcMain.handle('facts:list', () => loadFacts());
-ipcMain.handle('facts:add', (_e, fact) => {
+ipcMain.handle('facts:list', () => loadFacts()); // a página mostra TUDO (transparência); o filtro por escopo é só do prompt
+ipcMain.handle('facts:add', (e, fact, scope) => {
   const t = String(fact || '').trim();
   if (!t) return loadFacts();
-  const f = loadFacts();
-  f.push({ fact: t, at: new Date().toISOString() });
-  saveFacts(f.slice(-100));
+  const cfg = wsCfg(e);
+  addFact(t, scope === 'project' && cfg.workspace ? 'project' : 'user', cfg.workspace);
   return loadFacts();
 });
-ipcMain.handle('facts:set', (_e, { index, fact }) => {
+ipcMain.handle('facts:set', (e, { index, fact, scope }) => {
   const f = loadFacts();
-  if (f[index] && String(fact || '').trim()) f[index].fact = String(fact).trim();
+  const item = f[index];
+  if (!item) return f;
+  if (String(fact || '').trim()) item.fact = String(fact).trim();
+  if (scope === 'user' || scope === 'project') {
+    const cfg = wsCfg(e);
+    // Reclassificar só faz sentido com um projeto aberto; sem workspace o fato continua do usuário.
+    const project = scope === 'project' ? item.project || cfg.workspace || '' : '';
+    item.scope = project ? 'project' : 'user';
+    if (project) item.project = project;
+    else delete item.project;
+  }
   saveFacts(f);
-  return f;
+  return loadFacts();
+});
+// A página de memória precisa saber qual projeto está aberto para rotular e reclassificar fatos.
+ipcMain.handle('facts:scope', (e) => {
+  const ws = wsCfg(e).workspace || '';
+  return { workspace: ws, name: ws ? path.basename(ws) : '' };
 });
 ipcMain.handle('facts:delete', (_e, index) => {
   const f = loadFacts();
@@ -13190,8 +13344,11 @@ function buildClaudeCodePrompt(cfg) {
     parts.push('', `# Instruções extras para o Modo ${engineLabel}`, String(extraPrompt).trim().slice(0, 12000));
   }
   if (cfg.memoryEnabled !== false) {
-    const facts = loadFacts().map((x) => x.fact).slice(-30);
-    if (facts.length) parts.push('', '# Memórias relevantes sobre o usuário', ...facts.map((f) => '- ' + f));
+    const scoped = scopedFactLists(cfg, 30, 20);
+    if (scoped.user.length) parts.push('', '# Memórias relevantes sobre o usuário', ...scoped.user.map((f) => '- ' + f));
+    if (scoped.project.length) {
+      parts.push('', `# Aprendizados deste projeto (${path.basename(cfg.workspace || '')} — não valem para outros)`, ...scoped.project.map((f) => '- ' + f));
+    }
   }
   if (cfg.workspace) {
     try {
@@ -13645,8 +13802,11 @@ function buildCodexPrompt(cfg) {
     parts.push('', '# Instruções extras para o Modo Codex', String(cfg.codexPrompt).trim().slice(0, 12000));
   }
   if (cfg.memoryEnabled !== false) {
-    const facts = loadFacts().map((x) => x.fact).slice(-30);
-    if (facts.length) parts.push('', '# Memórias relevantes sobre o usuário', ...facts.map((f) => '- ' + f));
+    const scoped = scopedFactLists(cfg, 30, 20);
+    if (scoped.user.length) parts.push('', '# Memórias relevantes sobre o usuário', ...scoped.user.map((f) => '- ' + f));
+    if (scoped.project.length) {
+      parts.push('', `# Aprendizados deste projeto (${path.basename(cfg.workspace || '')} — não valem para outros)`, ...scoped.project.map((f) => '- ' + f));
+    }
   }
   if (cfg.workspace) {
     try {
@@ -14261,7 +14421,8 @@ let lastNightNudge = ''; // "vai dormir não?" — no máximo 1x por noite
 const MONTHS_PT = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
 function findBirthday() {
   try {
-    const txt = loadFacts().map((x) => x.fact).join('\n').toLowerCase();
+    // aniversário é fato DO USUÁRIO; varrer fatos de projeto aqui só traria ruído
+    const txt = loadFacts().filter((x) => x.scope !== 'project').map((x) => x.fact).join('\n').toLowerCase();
     const m = /(?:anivers[aá]rio|nasc(?:eu|imento))[^\n.]{0,40}?(\d{1,2})\s*(?:de\s+|\/|-)\s*(\d{1,2}|janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/i.exec(txt);
     if (!m) return null;
     const d = parseInt(m[1], 10);
@@ -14440,7 +14601,8 @@ function proactiveSay(text, emotion) {
 async function proactiveLLM(instruction, fallback) {
   try {
     const cfg = loadConfig();
-    const facts = cfg.memoryEnabled !== false ? loadFacts().map((x) => x.fact).slice(-30) : [];
+    // fala proativa é companhia, não trabalho: só fatos do usuário (nada de detalhe de projeto)
+    const facts = cfg.memoryEnabled !== false ? loadFacts().filter((x) => x.scope !== 'project').map((x) => x.fact).slice(-30) : [];
     const out = await llmComplete(cfg, [
       {
         role: 'system',

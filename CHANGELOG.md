@@ -2,6 +2,18 @@
 
 Todas as mudanças relevantes da Lumi são registradas aqui.
 
+## [Não publicado]
+
+### Memória separada por projeto
+
+- **Fatos agora têm escopo.** `remember_fact` escolhe entre `user` (vale sempre) e `project` (só naquele projeto). Antes tudo ia para um `facts.json` global e reaparecia em qualquer conversa, de qualquer projeto.
+- **Retenção por escopo**: 100 fatos de usuário e 60 por projeto, em vez de um teto global de 100 — um projeto movimentado não expulsa mais a memória dos outros.
+- **Diário técnico carimbado**: cada entrada de worklog/ledger guarda o projeto em que foi registrada e só volta ao contexto naquele projeto. Fork e compactação deixaram de semear a conversa nova com registro de outro projeto.
+- **Conversa lembra a que projeto pertence**: o campo `workspace` do chat passou a ser realmente persistido e lido (antes era gravado na criação e perdido no primeiro save).
+- **Subagentes isolados**: o worktree Git temporário não é mais confundido com o projeto — memória e diário seguem o projeto lógico.
+- **Página de memória** mostra o escopo de cada fato e permite reclassificar entre geral e projeto.
+- Fatos antigos sem escopo continuam valendo como fatos de usuário: nada é perdido na migração.
+
 ## [1.1.0] — 2026-07-02
 
 ### Destaques

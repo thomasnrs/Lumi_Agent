@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "source": {
     "path": "src/main/main.js",
-    "lines": 15101,
-    "sha256": "bee616916884dbe440b9865c9545a4609b98c10aea8656973fd4f86e044f9ba6"
+    "lines": 15263,
+    "sha256": "178b0aa44b9c15612007e2dedc1eb7409c0a363a938412b1514df6fc04de0877"
   },
   "summary": {
     "tools": 65,
@@ -13,378 +13,378 @@
   "tools": [
     {
       "name": "append_file",
-      "line": 6546,
+      "line": 6654,
       "category": "write"
     },
     {
       "name": "apply_patch",
-      "line": 6107,
+      "line": 6215,
       "category": "write"
     },
     {
       "name": "ask_user",
-      "line": 6815,
+      "line": 6923,
       "category": null
     },
     {
       "name": "cancel_reminder",
-      "line": 6909,
+      "line": 7017,
       "category": null
     },
     {
       "name": "cancel_scheduled_task",
-      "line": 6497,
+      "line": 6605,
       "category": "exec"
     },
     {
       "name": "click",
-      "line": 5427,
+      "line": 5535,
       "category": "control"
     },
     {
       "name": "connect_remote",
-      "line": 5151,
+      "line": 5240,
       "category": "exec"
     },
     {
       "name": "db_query",
-      "line": 6429,
+      "line": 6537,
       "category": "read"
     },
     {
       "name": "db_schema",
-      "line": 6410,
+      "line": 6518,
       "category": "read"
     },
     {
       "name": "delegate_to_agent",
-      "line": 6969,
+      "line": 7077,
       "category": null
     },
     {
       "name": "delete_file",
-      "line": 6588,
+      "line": 6696,
       "category": "delete"
     },
     {
       "name": "edit_file",
-      "line": 5702,
+      "line": 5810,
       "category": "write"
     },
     {
       "name": "env_info",
-      "line": 6344,
+      "line": 6452,
       "category": "read"
     },
     {
       "name": "fetch_url",
-      "line": 6653,
+      "line": 6761,
       "category": "network"
     },
     {
       "name": "find_in_code",
-      "line": 5239,
+      "line": 5328,
       "category": null
     },
     {
       "name": "find_usages",
-      "line": 6309,
+      "line": 6417,
       "category": "read"
     },
     {
       "name": "focus_window",
-      "line": 5501,
+      "line": 5609,
       "category": "control"
     },
     {
       "name": "generate_image",
-      "line": 6639,
+      "line": 6747,
       "category": null
     },
     {
       "name": "generate_project_doc",
-      "line": 6171,
+      "line": 6279,
       "category": "write"
     },
     {
       "name": "get_datetime",
-      "line": 5146,
+      "line": 5235,
       "category": null
     },
     {
       "name": "get_problems",
-      "line": 6148,
+      "line": 6256,
       "category": "read"
     },
     {
       "name": "git_diff",
-      "line": 5932,
+      "line": 6040,
       "category": "read"
     },
     {
       "name": "git_log",
-      "line": 5955,
+      "line": 6063,
       "category": "read"
     },
     {
       "name": "git_status",
-      "line": 5890,
+      "line": 5998,
       "category": "read"
     },
     {
       "name": "grep_files",
-      "line": 5764,
+      "line": 5872,
       "category": "read"
     },
     {
       "name": "http_request",
-      "line": 6693,
+      "line": 6801,
       "category": "network"
     },
     {
       "name": "kill_terminal",
-      "line": 5130,
+      "line": 5219,
       "category": "exec"
     },
     {
       "name": "list_dir",
-      "line": 5610,
+      "line": 5718,
       "category": "read"
     },
     {
       "name": "list_reminders",
-      "line": 6903,
+      "line": 7011,
       "category": null
     },
     {
       "name": "list_scheduled_tasks",
-      "line": 6490,
+      "line": 6598,
       "category": null
     },
     {
       "name": "list_ssh_hosts",
-      "line": 5185,
+      "line": 5274,
       "category": null
     },
     {
       "name": "list_terminals",
-      "line": 5116,
+      "line": 5205,
       "category": null
     },
     {
       "name": "load_toolset",
-      "line": 6944,
+      "line": 7052,
       "category": null
     },
     {
       "name": "locate_stack",
-      "line": 6047,
+      "line": 6155,
       "category": "read"
     },
     {
       "name": "make_dir",
-      "line": 6575,
+      "line": 6683,
       "category": "write"
     },
     {
       "name": "move_mouse",
-      "line": 5411,
+      "line": 5519,
       "category": "control"
     },
     {
       "name": "open_url",
-      "line": 5595,
+      "line": 5703,
       "category": "open"
     },
     {
       "name": "outline",
-      "line": 6276,
+      "line": 6384,
       "category": "read"
     },
     {
       "name": "play_animation",
-      "line": 5352,
+      "line": 5441,
       "category": null
     },
     {
       "name": "press_keys",
-      "line": 5482,
+      "line": 5590,
       "category": "control"
     },
     {
       "name": "project_overview",
-      "line": 5190,
+      "line": 5279,
       "category": null
     },
     {
       "name": "read_artifact",
-      "line": 6925,
+      "line": 7033,
       "category": null
     },
     {
       "name": "read_clipboard",
-      "line": 5326,
+      "line": 5415,
       "category": "screen"
     },
     {
       "name": "read_file",
-      "line": 5623,
+      "line": 5731,
       "category": "read"
     },
     {
       "name": "read_project_memory",
-      "line": 5530,
+      "line": 5638,
       "category": "read"
     },
     {
       "name": "read_terminal",
-      "line": 5094,
+      "line": 5183,
       "category": null
     },
     {
       "name": "recall_facts",
-      "line": 5379,
+      "line": 5477,
       "category": null
     },
     {
       "name": "remember_fact",
-      "line": 5365,
+      "line": 5454,
       "category": null
     },
     {
       "name": "run_command",
-      "line": 6603,
+      "line": 6711,
       "category": "exec"
     },
     {
       "name": "run_in_terminal",
-      "line": 5021,
+      "line": 5110,
       "category": "exec"
     },
     {
       "name": "run_tests",
-      "line": 5984,
+      "line": 6092,
       "category": "exec"
     },
     {
       "name": "schedule_task",
-      "line": 6461,
+      "line": 6569,
       "category": "exec"
     },
     {
       "name": "screen_info",
-      "line": 5403,
+      "line": 5511,
       "category": null
     },
     {
       "name": "scroll",
-      "line": 5450,
+      "line": 5558,
       "category": "control"
     },
     {
       "name": "see_page",
-      "line": 6734,
+      "line": 6842,
       "category": "network"
     },
     {
       "name": "see_screen",
-      "line": 5384,
+      "line": 5492,
       "category": "screen"
     },
     {
       "name": "set_reminder",
-      "line": 6869,
+      "line": 6977,
       "category": null
     },
     {
       "name": "system_logs",
-      "line": 6244,
+      "line": 6352,
       "category": "exec"
     },
     {
       "name": "type_text",
-      "line": 5467,
+      "line": 5575,
       "category": "control"
     },
     {
       "name": "update_plan",
-      "line": 6838,
+      "line": 6946,
       "category": null
     },
     {
       "name": "update_project_memory",
-      "line": 5548,
+      "line": 5656,
       "category": "write"
     },
     {
       "name": "view_image",
-      "line": 6781,
+      "line": 6889,
       "category": "read"
     },
     {
       "name": "web_search",
-      "line": 6800,
+      "line": 6908,
       "category": "network"
     },
     {
       "name": "write_clipboard",
-      "line": 5339,
+      "line": 5428,
       "category": "control"
     },
     {
       "name": "write_file",
-      "line": 6508,
+      "line": 6616,
       "category": "write"
     }
   ],
   "toolsets": [
     {
       "name": "agents",
-      "line": 7031
+      "line": 7139
     },
     {
       "name": "code_read",
-      "line": 7014
+      "line": 7122
     },
     {
       "name": "code_write",
-      "line": 7019
+      "line": 7127
     },
     {
       "name": "computer",
-      "line": 7025
+      "line": 7133
     },
     {
       "name": "data",
-      "line": 7027
+      "line": 7135
     },
     {
       "name": "mcp",
-      "line": 7032
+      "line": 7140
     },
     {
       "name": "media",
-      "line": 7028
+      "line": 7136
     },
     {
       "name": "reminders",
-      "line": 7029
+      "line": 7137
     },
     {
       "name": "remote",
-      "line": 7030
+      "line": 7138
     },
     {
       "name": "system",
-      "line": 7026
+      "line": 7134
     },
     {
       "name": "terminal",
-      "line": 7023
+      "line": 7131
     },
     {
       "name": "web",
-      "line": 7024
+      "line": 7132
     }
   ]
 }
